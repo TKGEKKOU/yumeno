@@ -4,6 +4,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from agents.capabilities import CapabilityPolicy
+
 
 @dataclass(frozen=True)
 class PersonaAgentContext:
@@ -23,6 +25,8 @@ class PersonaAgentContext:
     persona_profile: dict[str, Any] = field(default_factory=dict)
     session_factory: Callable[[], Session] | None = None
     conversation_summary: str = ""
+    capability_policies: tuple[CapabilityPolicy, ...] = field(default_factory=tuple)
+    telemetry: Any | None = None
 
     def __post_init__(self) -> None:
         # 没有知识空间意味着该角色不可检索，属于配置错误而非合法状态。

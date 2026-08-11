@@ -1,7 +1,7 @@
 "use strict";
 window.PL = window.PL || { modules: {} };
 window.PL.modules.create = { init: initCreatePage };
-window.PL.modules.manage = { init: initManagePage, onShow: refreshManageReference };
+window.PL.modules.manage = { init: initManagePage, onShow: onShowManagePage };
 window.PL.modules.test = { init: initTestPage };
 
 const DRAFT_STATUS_LABELS = { analyzing: "分析中", draft: "待确认", confirmed: "已创建" };
@@ -14,6 +14,86 @@ const DOCUMENT_STATUS_LABELS = {
   index_failed: { label: "Milvus 写入失败", tone: "failed" },
 };
 const CREATE_STEP_ORDER = ["upload", "analyze", "confirm"];
+let editCapabilityData = null;
+
+function applyCapabilityPackagePolicy(data, packageId, mode) {
+  const next = {
+    ...data,
+    overrides: { ...(data.overrides || {}) },
+    servers: (data.servers || []).map((server) => ({ ...server })),
+  };
+  const capabilityPackage = (data.packages || []).find((item) => item.id === packageId);
+  if (!capabilityPackage) return next;
+  if (mode === "inherit") delete next.overrides[packageId];
+  else next.overrides[packageId] = mode === "allow";
+  if (mode !== "allow") return next;
+  (capabilityPackage.dependencies || []).forEach((dependency) => {
+    if (dependency.id) next.overrides[dependency.id] = true;
+  });
+  const requiredServers = new Set(capabilityPackage.required_servers || []);
+  next.servers.forEach((server) => {
+    if (requiredServers.has(server.name) && !server.global) server.authorized = true;
+  });
+  return next;
+}
+
+function buildPersonaCapabilityChains({ skills = [], servers = [], tools = [], overrides = {}, packages = [] }) {
+  const packageById = new Map(packages.map((item) => [item.id, item]));
+  const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
+  const serversByName = new Map(servers.map((server) => [server.name, server]));
+  const chains = skills.map((skill) => {
+    const capabilityPackage = packageById.get(`skill/${skill.name}`) || null;
+    const skillOverride = overrides[`skill/${skill.name}`];
+    const packageAssigned = capabilityPackage ? capabilityPackage.assigned : true;
+    const skillAllowed = skill.enabled && skill.trusted && packageAssigned && skillOverride !== false;
+    const chainTools = (skill.tool_names || []).map((name) => {
+      const tool = toolsByName.get(name);
+      if (!tool) return { name, id: "", source: "missing", server: "", effective: false, reason: "工具未注册" };
+      const toolOverride = overrides[tool.id];
+      const server = tool.server ? serversByName.get(tool.server) : null;
+      const toolAllowed = toolOverride === undefined ? tool.default_allowed !== false : toolOverride;
+      let effective = skillAllowed && toolAllowed;
+      let reason = "可用";
+      if (!skill.enabled) { effective = false; reason = "Skill 已全局停用"; }
+      else if (!skill.trusted) { effective = false; reason = "Skill 尚未信任"; }
+      else if (!packageAssigned) { effective = false; reason = "能力包未分配给角色"; }
+      else if (skillOverride === false) { effective = false; reason = "角色已禁用 Skill"; }
+      else if (server && !server.enabled) { effective = false; reason = "MCP 服务已停用"; }
+      else if (server && server.status?.status !== "connected") { effective = false; reason = "MCP 服务未连接"; }
+      else if (server && !server.authorized) { effective = false; reason = "角色未授权 MCP"; }
+      else if (toolOverride === false) { effective = false; reason = "角色已禁用"; }
+      else if (toolOverride === true) reason = "角色已允许";
+      return { ...tool, effective, reason };
+    });
+    const usable = chainTools.filter((tool) => tool.effective).length;
+    let status = "partial";
+    if (!skillAllowed || (chainTools.length && !usable)) status = "off";
+    else if (!chainTools.length || usable === chainTools.length) status = "available";
+    return {
+      skill,
+      skillAllowed,
+      status,
+      tools: chainTools,
+      package: capabilityPackage,
+    };
+  });
+  const referenced = new Set(skills.flatMap((skill) => skill.tool_names || []));
+  const directTools = tools.filter((tool) => !referenced.has(tool.name));
+  if (directTools.length) {
+    const chainTools = directTools.map((tool) => {
+      const toolOverride = overrides[tool.id];
+      const server = tool.server ? serversByName.get(tool.server) : null;
+      let effective = tool.default_allowed !== false && toolOverride !== false;
+      let reason = toolOverride === false ? "角色已禁用" : toolOverride === true ? "角色已允许" : "可用";
+      if (server && !server.enabled) { effective = false; reason = "MCP 服务已停用"; }
+      else if (server && server.status?.status !== "connected") { effective = false; reason = "MCP 服务未连接"; }
+      else if (server && !server.authorized) { effective = false; reason = "角色未授权 MCP"; }
+      return { ...tool, effective, reason };
+    });
+    chains.push({ skill: { name: "直接能力", description: "未被 Skill 包装的工具" }, skillAllowed: true, status: chainTools.every((tool) => tool.effective) ? "available" : chainTools.some((tool) => tool.effective) ? "partial" : "off", tools: chainTools });
+  }
+  return chains;
+}
 
 function initCreatePage() {
   bindCreateEvents();
@@ -25,6 +105,11 @@ function initManagePage() {
   bindManageEvents();
   bindPreviewClose();
   loadPersonas();
+}
+
+async function onShowManagePage() {
+  await loadPersonas(state.manageSelectedId || "");
+  await refreshManageReference();
 }
 
 function initTestPage() {
@@ -54,15 +139,14 @@ function bindManageEvents() {
   bindSafe("edit-tts-confirm", "click", () => saveEditVoice());
   bindSafe("edit-tts-preview-asset", "click", previewEditAsset);
   bindSafe("edit-tts-remove-asset", "click", removeEditAsset);
+  bindSafe("edit-tts-asset", "change", syncEditAssetControls);
   bindSafe("edit-document-files", "change", () => addSelectedFiles("edit-document-files", "edit-files-selected", "files"));
   setupDropZone("edit-files-drop", "edit-document-files", "edit-files-selected", "files");
-  bindSafe("edit-tts-voice", "change", syncEditTtsControls);
-  bindSafe("edit-tts-preview-reference", "click", playEditReference);
-  bindSafe("edit-tts-generate-preview", "click", generateEditPreview);
   bindSafe("edit-tts-open-studio", "click", openVoiceStudio);
-  bindSafe("edit-tts-remove-reference", "click", removeEditReference);
   bindSafe("edit-tts-enabled", "change", syncEditTtsControls);
   bindSafe("edit-mcp-grants-save", "click", saveEditMCPGrants);
+  bindSafe("edit-capability-filter", "change", renderEditCapabilityChains);
+  bindSafe("edit-capability-search", "input", renderEditCapabilityChains);
   bindSafe("delete-persona", "click", requestPersonaDeletion);
   bindSafe("delete-persona-cancel", "click", () => $("delete-persona-dialog").close());
   bindSafe("delete-persona-confirm", "click", confirmPersonaDeletion);
@@ -315,7 +399,7 @@ async function saveDraft(required = false) {
   if (!state.draft) return;
   try {
     const assetId = $("create-tts-asset")?.value || "";
-    const tts = assetId ? { voice_asset_id: assetId, voice_lang: $("create-tts-asset-lang")?.value || "zh" } : {};
+    const tts = assetId ? { voice_asset_id: assetId, output_language: $("create-tts-asset-lang")?.value || "auto" } : {};
     state.draft = await api(fetch(`/api/persona-drafts/${state.draft.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: $("draft-name").value.trim(), profile: { ...(state.draft.profile || {}), description: $("draft-profile").value.trim(), generation_mode: state.draft.mode, tts } }) }));
     renderDraft();
   } catch (reason) { setText("upload-error", reason); if (required) throw reason; }
@@ -384,6 +468,10 @@ async function loadPersonas(selectId = "") {
     if ($("persona-list")) renderPersonaList();
     if ($("manage-persona-list")) renderManagePersonaList();
     if (selectId) await selectPersona(selectId);
+    else if ($("chat-view") && !state.activePersona && state.personas.length) {
+      const recentId = window.PL.chatPreferences?.resolveRecentPersonaId(state.personas);
+      if (recentId) await selectPersona(recentId);
+    }
   } catch (reason) {
     const node = $("chat-error");
     if (node) setText("chat-error", reason);
@@ -427,7 +515,7 @@ function renderManagePersonaList() {
     const meta = document.createElement("span");
     meta.className = "persona-card-meta";
     const kind = persona.persona_type === "knowledge_expert" ? "KNOWLEDGE" : "CHARACTER";
-    meta.textContent = `// ${kind} · ${String(persona.id || "").slice(0, 8) || "----"}`;
+    meta.textContent = kind === "KNOWLEDGE" ? "知识角色" : "角色";
     const bound = !!(persona.profile?.tts?.voice_asset_id);
     const tag = document.createElement("span");
     tag.className = "persona-card-tag" + (bound ? " is-bound" : "");
@@ -483,57 +571,168 @@ async function loadEditMCPGrants() {
   const message = $("edit-mcp-grants-message");
   if (!personaId) return;
   list.innerHTML = "";
-  let data;
+  let capabilityData;
+  let grantData;
+  let skills;
+  let runtimeServers;
   try {
-    data = await api(fetch(`/api/personas/${encodeURIComponent(personaId)}/mcp-grants`));
+    [capabilityData, grantData, skills, runtimeServers] = await Promise.all([
+      api(fetch(`/api/personas/${encodeURIComponent(personaId)}/capabilities`)),
+      api(fetch(`/api/personas/${encodeURIComponent(personaId)}/mcp-grants`)),
+      api(fetch("/api/skills")),
+      api(fetch("/api/mcp/servers")),
+    ]);
   } catch (reason) {
     message.textContent = reason.message || reason;
     message.classList.add("is-error");
     return;
   }
-  const servers = data.servers || [];
-  status.textContent = `${servers.filter((s) => s.authorized).length} / ${servers.length} 台`;
-  if (!servers.length) {
-    list.append(empty("暂无 MCP 服务器，请到插件页配置后再授权。"));
-    $("edit-mcp-grants-save").disabled = true;
+  const serverStatus = new Map((runtimeServers || []).map((server) => [server.name, server.status]));
+  const servers = (grantData.servers || []).map((server) => ({
+    ...server,
+    status: serverStatus.get(server.name) || { status: server.enabled ? "unknown" : "disabled", tool_count: 0 },
+  }));
+  editCapabilityData = {
+    skills: capabilityData.skills || skills || [],
+    servers,
+    tools: capabilityData.capabilities || [],
+    packages: capabilityData.packages || [],
+    overrides: { ...(capabilityData.overrides || {}) },
+  };
+  renderEditCapabilityChains();
+  const chains = buildPersonaCapabilityChains(editCapabilityData);
+  status.textContent = `${chains.filter((chain) => chain.status === "available").length} / ${chains.length} 条可用`;
+  $("edit-mcp-grants-save").disabled = false;
+  icons();
+}
+
+function renderEditCapabilityChains() {
+  const list = $("edit-mcp-grant-list");
+  if (!list || !editCapabilityData) return;
+  const filter = $("edit-capability-filter")?.value || "all";
+  const query = $("edit-capability-search")?.value.trim().toLowerCase() || "";
+  const chains = buildPersonaCapabilityChains(editCapabilityData).filter((chain) => {
+    if (filter === "available" && chain.status !== "available") return false;
+    if (filter === "issues" && chain.status === "available") return false;
+    if (!query) return true;
+    return [chain.skill.name, chain.skill.description, ...chain.tools.flatMap((tool) => [tool.name, tool.server])].some((value) => String(value || "").toLowerCase().includes(query));
+  });
+  list.replaceChildren();
+  if (!chains.length) {
+    list.append(empty("当前筛选下没有能力链。"));
     return;
   }
-  $("edit-mcp-grants-save").disabled = false;
-  for (const server of servers) {
-    const label = document.createElement("label");
-    label.className = "toggle-field skill-tool-option";
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.value = server.name;
-    checkbox.checked = Boolean(server.authorized);
-    if (server.global) {
-      checkbox.disabled = true;
-      label.classList.add("is-muted");
-    }
-    const span = document.createElement("span");
-    span.textContent =
-      `${server.name}` +
-      (server.global ? "（全局）" : "") +
-      (server.enabled ? "" : "（已停用）");
-    label.append(checkbox, span);
-    list.append(label);
+  chains.forEach((chain) => list.append(renderCapabilityChain(chain)));
+  icons();
+}
+
+function renderCapabilityChain(chain) {
+  const item = document.createElement("article");
+  item.className = `capability-chain-item is-${chain.status}`;
+  const head = document.createElement("header");
+  const title = document.createElement("div");
+  title.innerHTML = '<span class="capability-state-dot"></span><div><strong></strong><small></small></div>';
+  title.querySelector("strong").textContent = chain.skill.name;
+  title.querySelector("small").textContent = chain.skill.description || `${chain.tools.length} 个依赖工具`;
+  if (chain.package) {
+    const level = document.createElement("span");
+    level.className = `capability-level capability-level-${chain.package.level}`;
+    level.textContent = `L${chain.package.level}`;
+    level.title = ["核心知识", "本地辅助", "外部补充", "变更操作", "高风险能力"][chain.package.level] || "能力等级";
+    title.append(level);
   }
+  const select = document.createElement("select");
+  select.className = "capability-policy-select";
+  select.innerHTML = '<option value="inherit">未单独分配</option><option value="allow">分配给角色</option><option value="deny">对角色禁用</option>';
+  const packageId = chain.package?.id || `skill/${chain.skill.name}`;
+  const current = editCapabilityData.overrides[packageId];
+  select.value = current === true ? "allow" : current === false ? "deny" : "inherit";
+  if (chain.package?.level === 0) {
+    select.innerHTML = '<option value="core">核心默认</option>';
+    select.value = "core";
+    select.disabled = true;
+  } else {
+    select.addEventListener("change", () => {
+      if (chain.package) {
+        editCapabilityData = applyCapabilityPackagePolicy(editCapabilityData, packageId, select.value);
+        renderEditCapabilityChains();
+        moduleMessage("edit-mcp-grants-message", select.value === "allow" ? "能力包及所需依赖已准备，尚未保存。" : "能力包配置已修改，尚未保存。", false);
+      } else {
+        updatePendingOverride(packageId, select.value);
+      }
+    });
+  }
+  head.append(title, select);
+  item.append(head);
+  const body = document.createElement("div");
+  body.className = "capability-chain-tools";
+  chain.tools.forEach((tool) => body.append(renderCapabilityTool(tool)));
+  item.append(body);
+  return item;
+}
+
+function renderCapabilityTool(tool) {
+  const row = document.createElement("div");
+  row.className = `capability-chain-tool ${tool.effective ? "is-effective" : "is-blocked"}`;
+  const path = document.createElement("div");
+  const source = tool.source === "mcp" ? `MCP · ${tool.server}` : tool.source === "missing" ? "缺少依赖" : "内置 Tool";
+  path.innerHTML = '<strong></strong><span></span>';
+  path.querySelector("strong").textContent = tool.name;
+  path.querySelector("span").textContent = source;
+  const reason = document.createElement("span");
+  reason.className = "capability-tool-reason";
+  reason.textContent = tool.reason;
+  row.append(path, reason);
+  if (tool.server) {
+    const server = editCapabilityData.servers.find((item) => item.name === tool.server);
+    if (server) {
+      const serverSelect = document.createElement("select");
+      serverSelect.className = "capability-policy-select capability-mcp-policy";
+      serverSelect.innerHTML = server.global
+        ? '<option value="global">全局允许</option>'
+        : '<option value="inherit">继承授权</option><option value="allow">允许 MCP</option><option value="deny">禁用 MCP</option>';
+      serverSelect.value = server.global ? "global" : server.authorized ? "allow" : "deny";
+      serverSelect.disabled = Boolean(server.global);
+      serverSelect.addEventListener("change", () => {
+        server.authorized = serverSelect.value === "allow";
+        renderEditCapabilityChains();
+        moduleMessage("edit-mcp-grants-message", "MCP 授权已修改，尚未保存。", false);
+      });
+      row.append(serverSelect);
+    }
+  }
+  if (tool.id) {
+    const select = document.createElement("select");
+    select.className = "capability-policy-select capability-tool-policy";
+    select.innerHTML = '<option value="inherit">继承</option><option value="allow">允许</option><option value="deny">禁用</option>';
+    const current = editCapabilityData.overrides[tool.id];
+    select.value = current === true ? "allow" : current === false ? "deny" : "inherit";
+    select.addEventListener("change", () => updatePendingOverride(tool.id, select.value));
+    row.append(select);
+  }
+  return row;
+}
+
+function updatePendingOverride(id, value) {
+  if (!editCapabilityData) return;
+  if (value === "inherit") delete editCapabilityData.overrides[id];
+  else editCapabilityData.overrides[id] = value === "allow";
+  renderEditCapabilityChains();
+  moduleMessage("edit-mcp-grants-message", "能力配置已修改，尚未保存。", false);
 }
 
 async function saveEditMCPGrants() {
   const personaId = state.editPersona?.id;
   const message = $("edit-mcp-grants-message");
   if (!personaId) return;
-  const serverNames = Array.from(
-    $("edit-mcp-grant-list").querySelectorAll("input:checked:not(:disabled)")
-  ).map((input) => input.value);
+  if (!editCapabilityData) return;
+  const serverNames = editCapabilityData.servers.filter((server) => server.authorized && !server.global).map((server) => server.name);
   try {
-    await api(fetch(`/api/personas/${encodeURIComponent(personaId)}/mcp-grants`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ server_names: serverNames }),
-    }));
-    message.textContent = "授权已保存。";
+    await Promise.all([
+      api(fetch(`/api/personas/${encodeURIComponent(personaId)}/mcp-grants`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ server_names: serverNames }) })),
+      api(fetch(`/api/personas/${encodeURIComponent(personaId)}/capabilities`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ overrides: editCapabilityData.overrides }) })),
+    ]);
+    message.textContent = "能力配置已保存。";
     message.classList.remove("is-error");
     await loadEditMCPGrants();
   } catch (reason) {
@@ -589,19 +788,18 @@ async function loadEditAssets() {
     select.replaceChildren();
     const empty = document.createElement("option");
     empty.value = "";
-    empty.textContent = "未选择（使用上方参考音色）";
+    empty.textContent = "未选择（角色不生成语音）";
     select.append(empty);
     assets.forEach((asset) => {
       const option = document.createElement("option");
       option.value = asset.id;
-      option.textContent = `${asset.name}（GPT-SoVITS）`;
+      option.textContent = `${asset.name}（${asset.reference_language || "语言待确认"}）`;
       select.append(option);
     });
     select.value = current;
     const lang = $("edit-tts-asset-lang");
-    if (lang) lang.value = state.editPersona?.profile?.tts?.voice_lang || "zh";
-    $("edit-tts-preview-asset").disabled = !current;
-    $("edit-tts-remove-asset").disabled = !current;
+    if (lang) lang.value = state.editPersona?.profile?.tts?.output_language || state.editPersona?.profile?.tts?.voice_lang || "auto";
+    syncEditAssetControls();
   } catch (reason) {
     // trained-voice binding stays empty when assets are unavailable
   }
@@ -610,10 +808,19 @@ async function previewEditAsset() {
   const assetId = $("edit-tts-asset")?.value;
   if (!assetId) return;
   try {
+    const language = $("edit-tts-asset-lang")?.value || "auto";
+    const samples = {
+      zh: "你好，这是我的声音。很高兴认识你。",
+      ja: "こんにちは、これは私の声です。お会いできてうれしいです。",
+      en: "Hello, this is my voice. Nice to meet you.",
+      ko: "안녕하세요. 제 목소리입니다. 만나서 반갑습니다.",
+      yue: "你好，呢個係我嘅聲音，好高興認識你。",
+      auto: "こんにちは、这是我的声音。Hello!",
+    };
     const response = await fetch(`/api/voice-assets/${assetId}/synthesize`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
-      body: JSON.stringify({ text: "你好，这是我的声音。很高兴认识你。" }),
+      body: JSON.stringify({ text: samples[language], text_lang: language }),
     });
     if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail || "试听失败");
     if (window.PL && window.PL.unlockAudio) window.PL.unlockAudio();
@@ -628,33 +835,6 @@ function removeEditAsset() {
   $("edit-tts-preview-asset").disabled = true;
   $("edit-tts-remove-asset").disabled = true;
 }
-async function loadVoiceOptions() {
-  try {
-    const data = await api(fetch("/api/voice-studio/voices", { cache: "no-store", headers: { "X-YUMENO-Request": "web" } }));
-    const voices = data.voices || [];
-    const select = $("edit-tts-voice");
-    if (select) {
-      const current = select.value;
-      select.replaceChildren();
-      const empty = document.createElement("option");
-      empty.value = "";
-      empty.textContent = "未选择";
-      select.append(empty);
-      voices.forEach((voice) => {
-        const option = document.createElement("option");
-        option.value = voice.voice_id;
-        option.textContent = `${voice.name}${voice.duration_seconds ? `（${Math.round(voice.duration_seconds)} 秒）` : ""}`;
-        select.append(option);
-      });
-      select.value = voices.some((voice) => voice.voice_id === current) ? current : "";
-    }
-    return voices;
-  } catch (reason) {
-    moduleMessage("edit-tts-message", `加载音色失败：${reason.message || reason}`, true);
-    return [];
-  }
-}
-
 function refreshManageReference() {
   if (!state.manageSelectedId || !state.editPersona) return;
   loadEditReference().catch(() => {});
@@ -662,54 +842,11 @@ function refreshManageReference() {
 function syncEditTtsControls() {
   const enabled = $("edit-tts-enabled")?.checked;
   if ($("edit-tts-auto-play")) $("edit-tts-auto-play").disabled = !enabled;
-  if ($("edit-tts-voice")) $("edit-tts-voice").disabled = !enabled;
 }
-function syncEditTtsPreview(referenceConfigured) {
-  if ($("edit-tts-generate-preview")) $("edit-tts-generate-preview").disabled = !referenceConfigured;
-}
-async function playEditReference() {
-  if (!state.editPersona) return;
-  try {
-    const response = await fetch(`/api/tts/personas/${state.editPersona.id}/reference/audio`, { headers: { "X-YUMENO-Request": "web" } });
-    if (!response.ok) throw new Error("参考音色尚未配置");
-    if (state.editReferenceUrl) URL.revokeObjectURL(state.editReferenceUrl);
-    state.editReferenceUrl = URL.createObjectURL(await response.blob());
-    if (window.PL && window.PL.unlockAudio) window.PL.unlockAudio();
-    const audio = new Audio(state.editReferenceUrl);
-    const play = window.PL && window.PL.audio ? window.PL.audio.play(audio) : audio.play();
-    play.catch(() => {});
-  } catch (reason) { moduleMessage("edit-tts-message", reason, true); }
-}
-async function removeEditReference() {
-  if (!state.editPersona || !window.confirm("移除当前角色绑定的音色？音色本身仍保留在声音工坊中。")) return;
-  try {
-    const tts = { ...(state.editPersona.profile?.tts || {}) };
-    delete tts.reference_audio;
-    delete tts.voice_id;
-    delete tts.voice_name;
-    const profile = { ...(state.editPersona.profile || {}), tts };
-    state.editPersona = await api(fetch(`/api/personas/${state.editPersona.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile }) }));
-    moduleMessage("edit-tts-message", "音色已移除"); await loadEditReference();
-  } catch (reason) { moduleMessage("edit-tts-message", reason, true); }
-}
-async function generateEditPreview() {
-  if (!state.editPersona) return;
-  if (!state.ttsConfigured) return openTtsSettings();
-  const text = $("edit-tts-preview-text").value.trim();
-  if (!text) return setText("edit-tts-preview-status", "请输入示例文案");
-  const button = $("edit-tts-generate-preview"); button.disabled = true; setText("edit-tts-preview-status", "正在生成示例语音…");
-  try {
-    const response = await fetch(`/api/tts/personas/${state.editPersona.id}/reference/preview`, { method: "POST", headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" }, body: JSON.stringify({ text }) });
-    if (!response.ok) { const data = await response.json().catch(() => null); if (response.status === 409) { setText("edit-tts-preview-status", "请先安装 TTS 模型"); return openTtsSettings(); } throw new Error(data?.detail || `请求失败 (${response.status})`); }
-    const audio = $("edit-tts-preview-audio"); if (audio.src) URL.revokeObjectURL(audio.src); audio.src = URL.createObjectURL(await response.blob()); audio.classList.remove("is-hidden"); setText("edit-tts-preview-status", "示例语音已生成");
-    if (window.PL && window.PL.unlockAudio) window.PL.unlockAudio();
-    audio.play().catch((error) => {
-      if (error && error.name === "NotAllowedError") {
-        setText("edit-tts-preview-status", "示例语音已生成，点击播放按钮播放");
-      }
-    });
-  } catch (reason) { setText("edit-tts-preview-status", reason.message || reason); }
-  finally { await loadEditReference(); }
+function syncEditAssetControls() {
+  const selected = Boolean($("edit-tts-asset")?.value);
+  if ($("edit-tts-preview-asset")) $("edit-tts-preview-asset").disabled = !selected;
+  if ($("edit-tts-remove-asset")) $("edit-tts-remove-asset").disabled = !selected;
 }
 function openTtsSettings() { switchView("settings"); const section = $("tts-settings-anchor"); section.open = true; section.scrollIntoView({ behavior: "smooth", block: "start" }); }
 function openVoiceStudio() { switchView("voice"); }
@@ -811,7 +948,7 @@ async function saveEditVoice(fromAll = false) {
     const assetId = $("edit-tts-asset")?.value || "";
     if (assetId) {
       tts.voice_asset_id = assetId;
-      tts.voice_lang = $("edit-tts-asset-lang")?.value || "zh";
+      tts.output_language = $("edit-tts-asset-lang")?.value || "auto";
     } else {
       delete tts.voice_asset_id;
       delete tts.voice_lang;
@@ -841,7 +978,7 @@ function requestSaveAll() {
     `Live2D：${$("edit-live2d-model")?.value || "默认（不绑定）"}`,
     `语音：${$("edit-tts-enabled").checked ? "生成语音" : "关闭"}${$("edit-tts-auto-play").checked ? " · 自动播放" : ""}`,
     `资料：${pendingFiles ? `${pendingFiles} 个待上传` : "无新增"}`,
-    `音色：${$("edit-tts-voice")?.value ? ($("edit-tts-voice").selectedOptions?.[0]?.textContent || "已选择") : "未绑定音色"}`,
+    `音色：${$("edit-tts-asset")?.value ? ($("edit-tts-asset").selectedOptions?.[0]?.textContent || "已选择") : "未绑定音色"}`,
   ].join("\n");
   setText("save-all-detail", summary);
   setText("save-all-error");
@@ -868,10 +1005,10 @@ async function loadEvalPersonas() {
 }
 
 const EVAL_METRIC_LABELS = {
-  recall_at_k_answerable: "可答问题召回率 recall@k",
-  precision_at_k_answerable: "可答问题精确率 precision@k",
-  mrr_answerable: "可答问题 MRR",
-  hit_at_1_answerable: "可答问题首位命中 hit@1",
+  recall_at_3_answerable: "可答问题召回率 Recall@3",
+  precision_at_3_answerable: "可答问题精确率 Precision@3",
+  mrr_at_3_answerable: "可答问题 MRR@3",
+  hit_at_3_answerable: "可答问题命中 Hit@3",
   cases_answerable: "可答用例数",
   mean_latency_ms: "平均检索延迟 (ms)",
   p95_latency_ms: "P95 检索延迟 (ms)",
@@ -897,10 +1034,10 @@ const EVAL_METRIC_LABELS = {
 };
 
 const EVAL_PERCENT_KEYS = new Set([
-  "recall_at_k_answerable",
-  "precision_at_k_answerable",
-  "mrr_answerable",
-  "hit_at_1_answerable",
+  "recall_at_3_answerable",
+  "precision_at_3_answerable",
+  "mrr_at_3_answerable",
+  "hit_at_3_answerable",
   "grounded_rate",
   "useful_rate",
   "refusal_rate",
@@ -916,10 +1053,10 @@ const EVAL_PERCENT_KEYS = new Set([
 
 // 越高越好的核心质量指标:高值绿、极低才红(重大错误);触发率/改写率等行为统计保持中性黑色
 const EVAL_POSITIVE_PERCENT_KEYS = new Set([
-  "recall_at_k_answerable",
-  "precision_at_k_answerable",
-  "mrr_answerable",
-  "hit_at_1_answerable",
+  "recall_at_3_answerable",
+  "precision_at_3_answerable",
+  "mrr_at_3_answerable",
+  "hit_at_3_answerable",
   "grounded_rate",
   "useful_rate",
   "answer_rate",
@@ -929,7 +1066,7 @@ const EVAL_POSITIVE_PERCENT_KEYS = new Set([
 
 const EVAL_METRIC_GROUPS = [
   { title: "回答质量", keys: ["grounded_rate", "useful_rate", "accepted_rate", "answer_rate", "refusal_rate", "cases_checked", "mean_confidence", "scope_isolation_ok"] },
-  { title: "检索质量", keys: ["recall_at_k_answerable", "precision_at_k_answerable", "mrr_answerable", "hit_at_1_answerable", "cases_answerable", "mean_latency_ms", "p95_latency_ms"] },
+  { title: "检索质量", keys: ["recall_at_3_answerable", "precision_at_3_answerable", "mrr_at_3_answerable", "hit_at_3_answerable", "cases_answerable", "mean_latency_ms", "p95_latency_ms"] },
   { title: "行为与性能", keys: ["rewrite_rate", "correction_rate", "mean_rewrite_count", "mean_correction_count", "complex_rewrite_rate", "complex_correction_rate", "probe_refusal_rate", "cases_total", "cases_complex", "mean_total_latency_ms", "p95_total_latency_ms"] },
 ];
 
@@ -971,12 +1108,12 @@ function renderEvalSummary(metrics) {
   const accepted = Number(metrics.cases_accepted ?? metrics.cases_total ?? 0);
   const passRate = Number(metrics.accepted_rate);
   const confidence = Number(metrics.mean_confidence);
-  const isolation = Boolean(metrics.scope_isolation_ok);
+  const isolation = metrics.scope_isolation_ok === undefined ? null : Boolean(metrics.scope_isolation_ok);
   const fmtPct = (v) => (Number.isFinite(v) ? `${Math.round(v * 100)}%` : "—");
   const items = [
     { label: "符合预期", value: `${accepted}/${total}`, tone: total > 0 && accepted === total ? "is-good" : "" },
     { label: "通过率", value: fmtPct(passRate), tone: Number.isFinite(passRate) ? (passRate >= 0.8 ? "is-good" : passRate <= 0.2 ? "is-bad" : "") : "" },
-    { label: "角色隔离", value: isolation ? "通过" : "未通过", tone: isolation ? "is-good" : "is-bad" },
+    ...(isolation === null ? [] : [{ label: "角色隔离", value: isolation ? "通过" : "未通过", tone: isolation ? "is-good" : "is-bad" }]),
     { label: "平均置信度", value: fmtPct(confidence), tone: Number.isFinite(confidence) && confidence >= 0.8 ? "is-good" : "" },
   ];
   $("eval-summary").innerHTML = items
@@ -1051,8 +1188,10 @@ function renderEvalCases(cases) {
 async function pollEvalResult() {
   const autoButton = $("eval-auto-run");
   const analyzeButton = $("eval-analyze");
+  const exportButton = $("eval-export");
   autoButton.disabled = true;
   analyzeButton.disabled = true;
+  if (exportButton) exportButton.disabled = true;
   autoButton.textContent = "生成中…";
   $("eval-analysis").classList.add("is-hidden");
   const progress = $("eval-progress");
@@ -1088,6 +1227,7 @@ async function pollEvalResult() {
       }
       $("eval-state-pill").textContent = "已完成";
       analyzeButton.disabled = false;
+      if (exportButton) exportButton.disabled = false;
       const metricsNode = $("eval-metrics");
       if (metricsNode && !metricsNode.classList.contains("is-hidden")) {
         metricsNode.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1139,4 +1279,9 @@ function bindEvalEvents() {
   };
   bindSafe("eval-auto-run", "click", startEval);
   bindSafe("eval-analyze", "click", analyze);
+  bindSafe("eval-export", "click", () => { window.location.href = "/api/eval/export"; });
+}
+
+if (typeof module !== "undefined") {
+  module.exports = { buildPersonaCapabilityChains, applyCapabilityPackagePolicy };
 }

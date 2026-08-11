@@ -19,6 +19,7 @@ from ingestion.document_jobs import (
 )
 from ingestion.markdown_parser import DocumentScope
 from ingestion.milvus_store import MilvusRagStore
+from structured_data.service import delete_structured_document
 
 
 router = APIRouter(tags=["documents"])
@@ -113,6 +114,12 @@ def delete_document(job_id: str, session: Session = Depends(get_session)):
             MilvusRagStore().delete_document(scope, job.document_id)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Failed to remove document vectors: {exc}") from exc
+    delete_structured_document(
+        Settings.load().project_root,
+        job.workspace_id,
+        job.knowledge_space_id,
+        job.document_id,
+    )
     staging_parent = (Settings.load().project_root / "data" / "staging").resolve()
     if job.source_path:
         staging = Path(job.source_path).resolve().parent

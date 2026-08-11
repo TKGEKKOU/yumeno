@@ -12,6 +12,10 @@ def read_script(name: str) -> str:
     return (ROOT / "static" / "js" / f"{name}.js").read_text(encoding="utf-8")
 
 
+def read_manage_source(name: str) -> str:
+    return (ROOT / "frontend" / "src" / "manage" / name).read_text(encoding="utf-8")
+
+
 def test_frontend_renders_persistent_audio_messages():
     script = read_script("chat")
     styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
@@ -40,8 +44,8 @@ def test_local_asr_install_controls_are_present():
 
 
 def test_local_gptsovits_install_controls_are_present():
-    html = read_view("settings") + read_view("manage")
-    script = read_script("settings") + read_script("personas")
+    html = read_view("settings")
+    script = read_script("settings")
     for control in [
         "gptsovits-state",
         "gptsovits-progress",
@@ -59,37 +63,29 @@ def test_local_gptsovits_install_controls_are_present():
         assert f'id="{control}"' in html
     assert 'fetch("/api/gpt-sovits/status")' in script
     assert 'fetch("/api/gpt-sovits/install"' in script
-    for control in [
-        "edit-tts-asset",
-        "edit-tts-asset-lang",
-        "edit-tts-preview-asset",
-        "edit-tts-remove-asset",
-        "edit-tts-enabled",
-        "edit-tts-auto-play",
-        "edit-tts-confirm",
-        "edit-tts-open-studio",
-    ]:
-        assert f'id="{control}"' in html
-    assert "/api/voice-studio/voices" in script
-    assert "/api/voice-assets" in script
+    inspector = read_manage_source("components/NodeInspector.vue")
+    manage_api = read_manage_source("api.ts")
+    for control in ["生成语音", "自动播放", "角色音色", "输出语言", "试听", "声音工坊"]:
+        assert control in inspector
+    assert "/api/voice-studio/voices" not in script
+    assert "/api/voice-assets" in manage_api
+    assert "output_language" in inspector
 
 
 def test_tts_workflows_have_guidance_and_chat_controls():
-    html = read_view("chat") + read_view("create") + read_view("manage") + read_view("test") + read_view("settings")
-    script = read_script("chat") + read_script("personas")
+    html = read_view("chat") + read_view("create") + read_view("test") + read_view("settings")
+    script = read_script("chat")
     for control in [
         "chat-persona-toggle",
         "chat-persona-menu",
         "assistant-voice-toggle",
-        "edit-tts-confirm",
-        "edit-tts-asset",
-        "edit-tts-message",
-        "edit-tts-open-studio",
-        "edit-tts-preview-asset",
         "tts-settings-anchor",
     ]:
         assert f'id="{control}"' in html
-    assert "reference/preview" in script
+    inspector = read_manage_source("components/NodeInspector.vue")
+    assert "previewVoice" in inspector
+    assert "openVoiceStudio" in inspector
+    assert "reference/preview" not in script
     assert "assistant-voice-toggle" in script
     assert "feedVoiceText" in script
     assert "synthesize/ws" in script
@@ -109,7 +105,8 @@ def test_chat_is_default_and_home_guidance_is_removed():
     script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
     assert 'id="home-view"' not in html
     assert 'id="create-view" class="view is-hidden"' in read_view("create")
-    assert 'id="manage-view" class="view is-hidden"' in read_view("manage")
+    assert 'id="manage-view"' in read_view("manage")
+    assert 'class="view role-workbench-view is-hidden"' in read_view("manage")
     assert 'id="test-view" class="view is-hidden"' in read_view("test")
     assert 'id="brand-home"' not in html
     assert 'switchView("chat")' in script
@@ -125,8 +122,26 @@ def test_settings_service_status_covers_required_local_dependencies():
         assert f'data-service-status="{service}"' in html
     assert 'fetch("/api/status")' in script
     assert 'fetch("/api/asr/status")' in script
-    assert 'fetch("/api/tts/status")' in script
+    assert 'fetch("/api/gpt-sovits/status")' in script
     assert "renderServiceStatus" in script
+
+
+def test_frontend_contains_no_lunar_or_qwen3_tts_controls():
+    source = (
+        read_view("settings")
+        + read_view("create")
+        + read_view("manage")
+        + read_script("settings")
+        + read_script("personas")
+    )
+    for forbidden in ["Lunar", "Qwen3-TTS", "/api/tts/config", "/api/tts/install"]:
+        assert forbidden not in source
+
+
+def test_shell_refreshes_gpt_sovits_status_directly():
+    source = read_script("app") + read_script("common")
+    assert "loadGptSoVitsStatus()" in source
+    assert "loadTtsStatus()" not in source
 
 
 def test_fixed_local_embedding_controls_are_present():
@@ -210,6 +225,22 @@ def test_streaming_voice_feed_starts_on_first_sentence_and_finishes_at_final():
     assert "VOICE_SENTENCE_MARKS" in source
     assert "finishVoiceFeed(" in source
     assert "synthesize/ws" in source
+
+
+def test_late_stage_event_does_not_clear_streamed_reply_text():
+    source = read_script("chat")
+
+    assert source.count('if (body.classList.contains("loading-bubble")) body.textContent = "";') == 2
+    assert source.count('body.classList.remove("loading-bubble");\n    body.textContent = "";') == 0
+
+
+def test_gpt_sovits_status_enables_chat_before_settings_dom_guard():
+    source = read_script("settings")
+    function_start = source.index("async function loadGptSoVitsStatus()")
+    configured = source.index("state.ttsConfigured = Boolean(status.installed);", function_start)
+    settings_dom_guard = source.index('if (!$("gptsovits-state")) return;', function_start)
+
+    assert configured < settings_dom_guard
 
 
 def test_chat_process_panel_removed_and_loading_state_exists():

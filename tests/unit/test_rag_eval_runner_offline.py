@@ -92,6 +92,10 @@ def test_run_eval_auto_judges_retrieval_relevance(monkeypatch):
     assert results[0].expected_source == "auto"
     assert results[0].expected_ids == ["c0", "c2"]
     assert results[0].retrieved_ids == ["c0", "c1", "c2"]
+    assert results[0].recall_at_3 == 1.0
+    assert results[0].precision_at_3 == 2 / 3
+    assert results[0].hit_at_3 == 1.0
+    assert results[0].mrr_at_3 == 1.0
 
 
 def test_run_eval_refusal_is_not_regraded(monkeypatch):

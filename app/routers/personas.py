@@ -1,10 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import get_session
 from app.models import DocumentJob, Persona
 from app.schemas import DocumentJobResponse, PersonaCreate, PersonaResponse, PersonaUpdate
+from agents.policy import CapabilityPolicyStore
+from agents.registry import capability_catalog
+from agents.skills import list_skills
+from agents.capability_packages import build_capability_packages
 from integrations.mcp.config import GLOBAL_ALL
 from persona.service import LOCAL_WORKSPACE_ID, PersonaNotFound, create_persona
 from settings import Settings
@@ -93,6 +97,112 @@ def put_mcp_grants(persona_id: str, request: Request, payload: dict) -> dict:
 
     refresh_grants()
     return {"persona_id": persona_id, "server_names": sorted(wanted)}
+
+
+@router.get("/{persona_id}/capabilities")
+def get_persona_capabilities(
+    persona_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Return the unified Tool/MCP capability catalog and persona overrides."""
+
+    local_persona_or_404(session, persona_id)
+    store = CapabilityPolicyStore(
+        sessionmaker(bind=session.get_bind(), autoflush=False, expire_on_commit=False)
+    )
+    policies = store.list_for_persona(persona_id)
+    overrides = {
+        policy.capability_id: policy.enabled
+        for policy in policies
+        if policy.persona_id == persona_id
+    }
+    catalog = capability_catalog()
+    skills = list(list_skills())
+    server_states = {}
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if manager is not None:
+        statuses = manager.status()
+        for server in manager.list_configs():
+            runtime_status = statuses.get(server.name, {})
+            server_states[server.name] = {
+                "enabled": server.enabled,
+                "connected": runtime_status.get("status") == "connected",
+                "authorized": (
+                    GLOBAL_ALL in server.allowed_persona_ids
+                    or persona_id in server.allowed_persona_ids
+                ),
+            }
+    return {
+        "persona_id": persona_id,
+        "overrides": overrides,
+        "skills": [
+            {
+                "id": f"skill/{skill.name}",
+                "name": skill.name,
+                "description": skill.description,
+                "builtin": skill.builtin,
+                "enabled": skill.enabled,
+                "trusted": skill.trusted,
+                "tool_names": list(skill.tool_names),
+            }
+            for skill in skills
+        ],
+        "capabilities": [
+            {
+                "id": item.capability_id,
+                "name": item.name,
+                "model_name": item.model_name,
+                "source": item.source,
+                "server": item.server,
+                "requires_confirmation": item.confirmation_required,
+                "mutates_data": item.mutates_data,
+                "default_allowed": item.default_allowed,
+            }
+            for item in catalog.list()
+        ],
+        "packages": build_capability_packages(
+            skills=skills,
+            capabilities=catalog.list(),
+            persona_id=persona_id,
+            policies=policies,
+            server_states=server_states,
+        ),
+    }
+
+
+@router.put("/{persona_id}/capabilities")
+def put_persona_capabilities(
+    persona_id: str,
+    payload: dict,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Atomically replace explicit capability overrides for one persona."""
+
+    local_persona_or_404(session, persona_id)
+    values = payload.get("overrides") or {}
+    if not isinstance(values, dict):
+        raise HTTPException(status_code=422, detail="overrides must be an object")
+    known = {item.capability_id for item in capability_catalog().list()}
+    known.update(f"skill/{skill.name}" for skill in list_skills())
+    invalid = [key for key in values if key not in known and not str(key).endswith("/*")]
+    if invalid:
+        raise HTTPException(status_code=422, detail=f"Unknown capabilities: {', '.join(invalid)}")
+    store = CapabilityPolicyStore(
+        sessionmaker(bind=session.get_bind(), autoflush=False, expire_on_commit=False)
+    )
+    try:
+        saved = store.replace_for_persona(persona_id, values)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "persona_id": persona_id,
+        "overrides": {
+            item.capability_id: item.enabled
+            for item in saved
+            if item.persona_id == persona_id
+        },
+    }
 
 
 @router.get("/{persona_id}", response_model=PersonaResponse)

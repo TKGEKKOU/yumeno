@@ -21,6 +21,7 @@ from ingestion.document_jobs import DATA_DIR
 from ingestion.milvus_store import KnowledgeSpaceScope, MilvusRagStore
 from persona.service import LOCAL_WORKSPACE_ID, PersonaNotFound
 from settings import Settings
+from structured_data.service import delete_structured_knowledge_space
 
 
 logger = logging.getLogger(__name__)
@@ -55,11 +56,12 @@ class PersonaDeletionService:
         if persona is None:
             raise PersonaNotFound(persona_id)
 
+        workspace_id = persona.workspace_id
         knowledge_space_id = persona.knowledge_space_id
         jobs = list(
             session.scalars(
                 select(DocumentJob).where(
-                    DocumentJob.workspace_id == LOCAL_WORKSPACE_ID,
+                    DocumentJob.workspace_id == workspace_id,
                     DocumentJob.knowledge_space_id == knowledge_space_id,
                 )
             )
@@ -77,10 +79,18 @@ class PersonaDeletionService:
         # 避免向量库故障导致角色永远无法删除（孤儿向量不可见且无引用，无害）。
         try:
             self.vector_store.delete_knowledge_space(
-                KnowledgeSpaceScope(LOCAL_WORKSPACE_ID, knowledge_space_id)
+                KnowledgeSpaceScope(workspace_id, knowledge_space_id)
             )
         except Exception as exc:  # noqa: BLE001 - 向量清理失败不应阻塞角色删除
             logger.warning("删除角色 %s 时 Milvus 向量清理失败：%s", persona_id, exc)
+        try:
+            delete_structured_knowledge_space(
+                self.settings.project_root,
+                workspace_id,
+                knowledge_space_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - 本地清理失败不应阻塞角色删除
+            logger.warning("删除角色 %s 时结构化数据清理失败：%s", persona_id, exc)
         self.checkpoint_cleaner(persona_id)
 
         try:
@@ -100,7 +110,7 @@ class PersonaDeletionService:
             )
             session.execute(
                 delete(DocumentJob).where(
-                    DocumentJob.workspace_id == LOCAL_WORKSPACE_ID,
+                    DocumentJob.workspace_id == workspace_id,
                     DocumentJob.knowledge_space_id == knowledge_space_id,
                 )
             )

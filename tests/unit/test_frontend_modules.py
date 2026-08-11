@@ -11,18 +11,19 @@ def read_script(name: str) -> str:
 def test_integrations_module_registers_and_uses_api():
     script = read_script("integrations")
     assert "window.PL.modules.integrations" in script
-    assert 'fetch("/api/integrations")' in script
-    assert 'fetch("/api/integrations/onebot11",' in script
-    assert "renderIntegrationStatus" in script
+    assert 'fetch("/api/integrations/bilibili")' in script
+    assert 'fetch("/api/integrations/onebot11",' not in script
+    assert "renderBilibiliStatus" in script
 
 
-def test_plugins_module_registers_and_uses_api():
-    script = read_script("plugins")
+def test_vue_pages_bridge_registers_extension_and_eval_lifecycles():
+    script = read_script("vue-pages-bridge")
     assert "window.PL.modules.plugins" in script
-    assert 'fetch("/api/skills")' in script
-    assert 'fetch("/api/mcp/servers")' in script
-    assert "renderSkillList" in script
-    assert "renderMCPServers" in script
+    assert "window.PL.modules.test" in script
+    assert "showExtensionsApp" in script
+    assert "hideExtensionsApp" in script
+    assert "showEvaluationApp" in script
+    assert "hideEvaluationApp" in script
 
 
 def test_shell_registers_new_module_entries():
@@ -33,3 +34,16 @@ def test_shell_registers_new_module_entries():
     assert 'manage: { view: "manage"' in script
     assert 'test: { view: "test"' in script
     assert 'upload: { view: "personas"' not in script
+
+
+def test_settings_updates_tts_service_card_from_runtime_status():
+    script = read_script("settings")
+    assert 'renderServiceStatus("tts", "TTS", ttsState, ttsState)' in script
+    assert 'status.ready ? "ready"' in script
+
+
+def test_system_status_uses_current_gpt_sovits_resource_fields():
+    script = read_script("common")
+    assert "tts.install_dir" in script
+    assert "tts.service_running" in script
+    assert "tts.api_version" in script

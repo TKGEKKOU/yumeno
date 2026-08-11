@@ -53,6 +53,20 @@ def upgrade_persona_schema(engine: Engine) -> None:
         connection.execute(text("UPDATE persona_drafts SET candidates_json = JSON_ARRAY() WHERE candidates_json IS NULL"))
 
 
+def upgrade_voice_asset_schema(engine: Engine) -> None:
+    """Add GPT-SoVITS language metadata without changing existing assets."""
+
+    inspector = inspect(engine)
+    if "voice_assets" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("voice_assets")}
+    if "reference_language" not in columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE voice_assets ADD COLUMN reference_language VARCHAR(16) NULL")
+            )
+
+
 def get_session(request: Request) -> Generator[Session, None, None]:
     session_factory: sessionmaker[Session] = request.app.state.session_factory
     with session_factory() as session:

@@ -97,6 +97,10 @@ def run_skill_script(
         return {"status": "error", "error": f"Unknown skill: {skill_name}"}
     if not skill.enabled:
         return {"status": "error", "error": f"Skill disabled: {skill_name}"}
+    if not skill.trusted:
+        return {"status": "error", "error": f"Skill is not trusted: {skill_name}"}
+    if not skill.scripts_enabled:
+        return {"status": "error", "error": f"Skill scripts are disabled: {skill_name}"}
     if not skill.scripts:
         return {"status": "error", "error": f"Skill has no scripts: {skill_name}"}
     if not ensure_landed(skill):

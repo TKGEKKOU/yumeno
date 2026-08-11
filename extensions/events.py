@@ -20,6 +20,7 @@ class MessageEvent:
     content: str
     raw_content: str
     reply: Callable[[str], None]
+    reply_record: Callable[[str], None] | None = None
     is_at: bool = False
 
 

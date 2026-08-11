@@ -89,6 +89,15 @@ def install_skill_core(
     except OSError as exc:
         return {"status": "error", "error": f"写入失败: {exc}"}
     skills_module.refresh_skills()
+    # Newly downloaded packages are inert until the user explicitly enables
+    # and trusts them.  This prevents an install from immediately exposing
+    # tools or executable skill scripts to the agent.
+    skills_module.set_skill_state(
+        name,
+        enabled=False,
+        trusted=False,
+        scripts_enabled=False,
+    )
     return {
         "status": "installed",
         "skill": name,

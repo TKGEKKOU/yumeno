@@ -1,19 +1,21 @@
 "use strict";
 
 const MODULES = {
-  chat: { view: "chat", init: window.PL.modules.chat?.init },
+  chat: { view: "chat", init: window.PL.modules.chat?.init, onShow: window.PL.modules.chat?.onShow },
   create: { view: "create", init: window.PL.modules.create?.init },
   manage: { view: "manage", init: window.PL.modules.manage?.init, onShow: window.PL.modules.manage?.onShow },
   voice: { view: "voice", init: window.PL.modules.voice?.init },
-  integrations: { view: "integrations", init: window.PL.modules.integrations?.init },
-  plugins: { view: "plugins", init: window.PL.modules.plugins?.init },
-  test: { view: "test", init: window.PL.modules.test?.init },
+  integrations: { view: "integrations", init: window.PL.modules.integrations?.init, onShow: window.PL.modules.integrations?.onShow },
+  napcat: { view: "napcat", init: window.PL.modules.napcat?.init, onShow: window.PL.modules.napcat?.onShow, onHide: window.PL.modules.napcat?.onHide },
+  plugins: { view: "plugins", init: window.PL.modules.plugins?.init, onShow: window.PL.modules.plugins?.onShow, onHide: window.PL.modules.plugins?.onHide },
+  test: { view: "test", init: window.PL.modules.test?.init, onShow: window.PL.modules.test?.onShow, onHide: window.PL.modules.test?.onHide },
   settings: { view: "settings", init: window.PL.modules.settings?.init },
 };
 
 /* 视图缓存：页面只加载并初始化一次，之后切换仅显隐切换，保留表单、
    评测结果等页面状态，避免每次切页都重建 DOM 导致状态丢失。 */
 const VIEW_NODES = {};
+let viewSwitchEpoch = 0;
 
 /* 音频解锁：浏览器自动播放策略下，AudioContext 可能处于 suspended 状态，
    经它路由的 <audio> 会静音（元素在"播放"但无声）。在首次用户交互时创建
@@ -89,12 +91,15 @@ function setSidebarPinned(pinned) {
 }
 
 async function switchView(view) {
+  const entry = MODULES[view];
+  if (!entry) return;
+  const switchEpoch = ++viewSwitchEpoch;
+  const previousView = document.querySelector("[data-view].is-active")?.dataset.view;
+  if (previousView && previousView !== view) MODULES[previousView]?.onHide?.();
   if (view !== "chat") {
     if (state.voiceActive) stopVoiceChat();
     closeRealtime();
   }
-  const entry = MODULES[view];
-  if (!entry) return;
   document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("is-active", button.dataset.view === view));
   const root = $("view-root");
   if (!root) return;
@@ -103,6 +108,7 @@ async function switchView(view) {
     const response = await fetch(`/static/views/${entry.view}.html`);
     const template = document.createElement("template");
     template.innerHTML = await response.text();
+    if (switchEpoch !== viewSwitchEpoch) return;
     node = template.content.firstElementChild;
     if (!node) return;
     VIEW_NODES[view] = node;
@@ -119,9 +125,11 @@ async function switchView(view) {
 document.addEventListener("DOMContentLoaded", async () => {
   bindShellEvents();
   await switchView("chat");
-  await Promise.all([loadStatus(), loadPersonas(), loadAsrStatus(), loadTtsStatus()]);
+  await Promise.all([loadStatus(), loadPersonas(), loadAsrStatus(), loadGptSoVitsStatus()]);
+  const requestedView = location.hash.slice(1);
+  if (MODULES[requestedView]) await switchView(requestedView);
   if (location.hash === "#plugins") {
-    await switchView("plugins");
+    // Already selected through the generic hash route above.
   }
   if (location.hash === "#docker-exit") {
     await switchView("settings");

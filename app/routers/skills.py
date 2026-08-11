@@ -39,6 +39,9 @@ def _to_dict(spec) -> dict:
         "builtin": spec.builtin,
         "format": spec.format,
         "enabled": spec.enabled,
+        "trusted": spec.trusted,
+        "scripts_enabled": spec.scripts_enabled,
+        "scripts": list(spec.scripts),
         "metadata": spec.metadata,
     }
 
@@ -92,6 +95,8 @@ def delete_skill_api(name: str) -> Response:
 
 class SkillUpdate(BaseModel):
     enabled: bool | None = None
+    trusted: bool | None = None
+    scripts_enabled: bool | None = None
     description: str | None = None
     instructions: str | None = None
     prompt_hint: str | None = None
@@ -101,8 +106,16 @@ class SkillUpdate(BaseModel):
 @router.patch("/{name}", response_model=None)
 def update_skill_api(name: str, payload: SkillUpdate) -> dict:
     try:
-        if payload.enabled is not None:
-            spec = skills_module.set_skill_enabled(name, payload.enabled)
+        if any(
+            value is not None
+            for value in (payload.enabled, payload.trusted, payload.scripts_enabled)
+        ):
+            spec = skills_module.set_skill_state(
+                name,
+                enabled=payload.enabled,
+                trusted=payload.trusted,
+                scripts_enabled=payload.scripts_enabled,
+            )
             if (
                 payload.description is None
                 and payload.instructions is None
@@ -183,4 +196,11 @@ async def upload_skills_api(file: UploadFile = File(...)) -> dict:
         raise HTTPException(status_code=400, detail="不是有效的 zip 文件")
     if installed:
         skills_module.refresh_skills()
+        for name in installed:
+            skills_module.set_skill_state(
+                name,
+                enabled=False,
+                trusted=False,
+                scripts_enabled=False,
+            )
     return {"installed": installed, "skipped": skipped}

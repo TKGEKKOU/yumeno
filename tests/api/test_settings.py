@@ -159,3 +159,66 @@ def test_saved_api_key_can_only_be_revealed_by_protected_whitelisted_endpoint(cl
     assert revealed.json() == {"value": "embedding-secret"}
     assert revealed.headers["cache-control"] == "no-store"
     assert invalid.status_code == 422
+
+
+def test_llm_connection_probe_uses_unsaved_openai_compatible_values(client, tmp_path, monkeypatch):
+    from app.routers import settings as settings_router
+
+    settings_path = tmp_path / "local_settings.json"
+    settings_path.write_text(json.dumps({"openai_api_key": "saved-key"}), encoding="utf-8")
+    monkeypatch.setattr(settings_router, "SETTINGS_PATH", settings_path)
+    observed = {}
+
+    def fake_probe(api_key, base_url, model):
+        observed.update(api_key=api_key, base_url=base_url, model=model)
+        return "YUMENO_OK"
+
+    monkeypatch.setattr(settings_router, "probe_llm", fake_probe)
+    response = client.post(
+        "/api/settings/llm/test",
+        headers={"X-YUMENO-Request": "web"},
+        json={
+            "api_key": "temporary-key",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen-plus",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "model": "qwen-plus",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "message": "连接成功，模型已返回文本。",
+    }
+    assert observed == {
+        "api_key": "temporary-key",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen-plus",
+    }
+
+
+def test_llm_connection_probe_falls_back_to_saved_key_and_requires_same_origin_header(client, tmp_path, monkeypatch):
+    from app.routers import settings as settings_router
+
+    settings_path = tmp_path / "local_settings.json"
+    settings_path.write_text(json.dumps({"openai_api_key": "saved-key"}), encoding="utf-8")
+    monkeypatch.setattr(settings_router, "SETTINGS_PATH", settings_path)
+    observed = {}
+    monkeypatch.setattr(
+        settings_router,
+        "probe_llm",
+        lambda api_key, base_url, model: observed.update(api_key=api_key) or "YUMENO_OK",
+    )
+    payload = {"api_key": "", "base_url": "https://api.deepseek.com", "model": "deepseek-chat"}
+
+    denied = client.post("/api/settings/llm/test", json=payload)
+    allowed = client.post(
+        "/api/settings/llm/test",
+        headers={"X-YUMENO-Request": "web"},
+        json=payload,
+    )
+
+    assert denied.status_code == 403
+    assert allowed.status_code == 200
+    assert observed["api_key"] == "saved-key"

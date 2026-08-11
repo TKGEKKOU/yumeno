@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "persona-live"
-version = "0.1.1"
+version = "0.2.0"
 requires-python = ">=3.11,<3.12"
 
 [tool.setuptools]
@@ -12,7 +12,7 @@ py-modules = ["settings"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*", "persona*", "ingestion*", "rag*", "agents*", "realtime*", "voice*", "live*", "desktop*"]
+include = ["app*", "persona*", "ingestion*", "rag*", "agents*", "realtime*", "voice*", "live*", "desktop*", "integrations*", "extensions*", "structured_data*"]
 exclude = ["tests*", "docs*"]
 
 [tool.setuptools.package-data]

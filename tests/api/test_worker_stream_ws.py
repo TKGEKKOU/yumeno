@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 from voice.asr.worker_server import create_worker_app
@@ -86,4 +87,29 @@ def test_worker_http_transcribe_still_works():
     with TestClient(app) as client:
         response = client.post("/transcribe", content=b"audio-bytes")
         assert response.status_code == 200
-        assert response.json() == {"text": "你好 world"}
+        assert response.json() == {"language": "Chinese", "text": "你好 world"}
+
+
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [
+        ("zh", "Chinese"),
+        ("ja", "Japanese"),
+        ("en", "English"),
+        ("ko", "Korean"),
+        ("yue", "Cantonese"),
+    ],
+)
+def test_worker_maps_iso_language_codes(language, expected):
+    fake = FakeModel()
+    app = create_worker_app(model_provider=lambda: fake)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/transcribe",
+            params={"language": language},
+            content=b"audio-bytes",
+        )
+
+    assert response.status_code == 200
+    assert fake.last_language == expected

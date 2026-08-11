@@ -2,14 +2,21 @@ from dataclasses import dataclass
 
 from langchain_core.tools import BaseTool
 
+from agents.capabilities import CapabilityCatalog, CapabilityDescriptor
+
 from agents.tools import (
     add_persona_knowledge,
     delete_persona_document,
     delete_persona_memory,
+    delete_workspace_memory,
     list_persona_documents,
+    list_structured_tables,
+    query_structured_data,
     read_persona_memories,
+    read_workspace_memories,
     rename_persona,
     save_persona_memory,
+    save_workspace_memory,
     search_persona_knowledge,
     update_persona_memory,
     update_persona_profile,
@@ -42,6 +49,11 @@ _TOOL_SPECS = (
     ToolSpec("save_persona_memory", "memory", save_persona_memory, False, True),
     ToolSpec("update_persona_memory", "memory", update_persona_memory, False, True),
     ToolSpec("delete_persona_memory", "memory", delete_persona_memory, False, True),
+    ToolSpec("read_workspace_memories", "memory", read_workspace_memories),
+    ToolSpec("list_structured_tables", "conversation", list_structured_tables),
+    ToolSpec("query_structured_data", "conversation", query_structured_data),
+    ToolSpec("save_workspace_memory", "memory", save_workspace_memory, True, True),
+    ToolSpec("delete_workspace_memory", "memory", delete_workspace_memory, True, True),
     ToolSpec("add_persona_knowledge", "management", add_persona_knowledge, True, True),
     ToolSpec("rename_persona", "management", rename_persona, True, True),
     ToolSpec("update_persona_profile", "management", update_persona_profile, True, True),
@@ -68,6 +80,36 @@ def tool_specs() -> tuple[ToolSpec, ...]:
     """全部工具（内置 + 运行时注册的 MCP 工具），单一事实来源。"""
 
     return _TOOL_SPECS + tuple(_EXTRA_TOOL_SPECS)
+
+
+def capability_catalog() -> CapabilityCatalog:
+    """Build the current capability catalog from the single tool registry."""
+
+    catalog = CapabilityCatalog()
+    for spec in tool_specs():
+        source = "mcp" if spec.specialist == "mcp" else "builtin"
+        capability_id = (
+            f"mcp/{spec.server}/{spec.name}"
+            if source == "mcp"
+            else f"builtin/{spec.name}"
+        )
+        catalog.register(
+            CapabilityDescriptor(
+                capability_id=capability_id,
+                name=spec.name,
+                source=source,
+                specialist=spec.specialist,
+                requires_confirmation=spec.requires_confirmation,
+                mutates_data=spec.mutates_data,
+                server=spec.server,
+                read_only_confirmed=(
+                    source != "mcp"
+                    or (not spec.requires_confirmation and not spec.mutates_data)
+                ),
+                default_allowed=source != "mcp",
+            )
+        )
+    return catalog
 
 
 def register_tool_specs(specs: list[ToolSpec]) -> int:

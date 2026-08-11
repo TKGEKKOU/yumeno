@@ -55,7 +55,7 @@ window.PLLive2D = (function () {
       this._talking = false;
       this._dragging = false;
 
-      this.mode = localStorage.getItem(LS.mode) || "embedded";
+      this.mode = "embedded";
       this.flip = localStorage.getItem(LS.flip) === "1";
       this.scale = parseFloat(localStorage.getItem(LS.scale)) || 1;
       this.agentState = "idle";
@@ -77,6 +77,7 @@ window.PLLive2D = (function () {
       this._hasAutoBlink = true;
       this._blinkAt = 0;
       this._blinkAmount = 0;
+      this._angleZMotion = window.PLAngleZMotion ? window.PLAngleZMotion.create() : null;
       this._wheelAcc = 0;
     }
 
@@ -107,13 +108,14 @@ window.PLLive2D = (function () {
       this._visible = true;
       this._startLoop();
       await this.refreshModels();
+      if (this.mode === "vts" && this.app) this.app.ticker.stop();
       this._ready = true;
       this._emitState();
     }
 
     show() {
       this._visible = true;
-      if (this.app) this.app.ticker.start();
+      if (this.app && this.mode === "embedded") this.app.ticker.start();
       this._startLoop();
       requestAnimationFrame(() => this._fit());
     }
@@ -167,12 +169,13 @@ window.PLLive2D = (function () {
       } catch (e) { /* offline / not ready */ }
       this.models = list;
       const saved = localStorage.getItem(LS.model);
-      const target = list.find((m) => m.id === this.preferredId)
-        || list.find((m) => m.id === saved)
-        || (saved ? null : list.find((m) => m.id === DEFAULT_MODEL_ID))
-        || list[0] || null;
+      const usable = (model) => model && model.compatible !== false;
+      const target = list.find((m) => m.id === this.preferredId && usable(m))
+        || list.find((m) => m.id === saved && usable(m))
+        || list.find((m) => m.id === DEFAULT_MODEL_ID && usable(m))
+        || list.find(usable) || null;
       if (target) {
-        await this.loadModel(target.id);
+        if (target.id !== this.currentId) await this.loadModel(target.id);
       } else {
         this._emit({ type: "status", level: "warn", message: "未找到 Live2D 模型，请将模型放入 data/live2d/" });
       }
@@ -183,6 +186,10 @@ window.PLLive2D = (function () {
     async loadModel(id) {
       const entry = this.models.find((m) => m.id === id);
       if (!entry || !this.app) return;
+      if (entry.compatible === false) {
+        this._emit({ type: "status", level: "error", message: `模型 ${entry.name} 使用 MOC3 v${entry.moc_version}，当前内嵌运行库最高支持 MOC3 v6（Cubism 5.3）` });
+        return;
+      }
       this._emit({ type: "status", level: "info", message: "正在加载模型…" });
       const url = "/live2d-assets/" + entry.entry;
       let next;
@@ -209,6 +216,7 @@ window.PLLive2D = (function () {
       this.currentId = entry.id;
       localStorage.setItem(LS.model, entry.id);
       this._detectAutoBlink();
+      if (this._angleZMotion) this._angleZMotion.reset(performance.now());
       this._emit({ type: "model", name: this._displayName(entry), id: entry.id });
       this._emit({ type: "status", level: "ok", message: this._displayName(entry) });
     }
@@ -354,7 +362,11 @@ window.PLLive2D = (function () {
     setMode(mode) {
       if (mode !== "embedded" && mode !== "vts") return;
       this.mode = mode;
-      localStorage.setItem(LS.mode, mode);
+      if (this._angleZMotion) this._angleZMotion.reset(performance.now());
+      if (this.app) {
+        if (mode === "vts") this.app.ticker.stop();
+        else if (this._visible) this.app.ticker.start();
+      }
       if (mode === "vts" && window.PLVTS) window.PLVTS.connect();
       this._emit({ type: "config", flip: this.flip, scale: this.scale, mode: this.mode });
       this._emitState();
@@ -546,11 +558,46 @@ window.PLLive2D = (function () {
       }
     }
 
+    _angleZRange(core) {
+      try {
+        const getIndex = typeof core.getParameterIndex === "function"
+          ? core.getParameterIndex.bind(core)
+          : typeof core.getParamIndex === "function" ? core.getParamIndex.bind(core) : null;
+        const index = getIndex ? getIndex("ParamAngleZ") : -1;
+        if (index < 0) return [-30, 30];
+        let minimum;
+        let maximum;
+        if (typeof core.getParameterMinimumValue === "function") minimum = core.getParameterMinimumValue(index);
+        if (typeof core.getParameterMaximumValue === "function") maximum = core.getParameterMaximumValue(index);
+        const parameters = core._model && core._model.parameters;
+        if (!Number.isFinite(minimum) && parameters && parameters.minimumValues) minimum = parameters.minimumValues[index];
+        if (!Number.isFinite(maximum) && parameters && parameters.maximumValues) maximum = parameters.maximumValues[index];
+        if (Number.isFinite(minimum) && Number.isFinite(maximum) && minimum < maximum) return [minimum, maximum];
+      } catch (e) { /* use the standard Angle Z range */ }
+      return [-30, 30];
+    }
+
+    _setParameter(core, id, value) {
+      try {
+        if (typeof core.setParameterValueById === "function") {
+          core.setParameterValueById(id, value);
+        } else if (typeof core.getParamIndex === "function") {
+          const index = core.getParamIndex(id);
+          if (index >= 0) core.setParamFloat(index, value);
+        }
+      } catch (e) { /* parameter missing */ }
+    }
+
     _applyLife() {
-      if (!this.model || this._hasAutoBlink) return;
+      if (!this.model) return;
       const core = this.model.internalModel && this.model.internalModel.coreModel;
       if (!core) return;
       const now = performance.now();
+      if (this._angleZMotion) {
+        const [minimum, maximum] = this._angleZRange(core);
+        this._setParameter(core, "ParamAngleZ", this._angleZMotion.sample(now, minimum, maximum));
+      }
+      if (this._hasAutoBlink) return;
       if (now >= this._blinkAt) {
         this._blinkAmount = 0.999;
         this._blinkAt = now + 2200 + Math.random() * 3400;
@@ -578,7 +625,7 @@ window.PLLive2D = (function () {
 
     _vtsSend(open, form) {
       if (this.mode !== "vts" || !window.PLVTS || !window.PLVTS.connected) return;
-      window.PLVTS.setMouth(open, form);
+      window.PLVTS.setMouth(open, form, this._getState());
     }
 
     /* ---------- events ---------- */

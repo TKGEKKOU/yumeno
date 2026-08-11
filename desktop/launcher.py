@@ -47,10 +47,7 @@ def run(project_root: Path | None = None) -> int:
         ensure_local_env(root)
         import webview
 
-        if server.is_running():
-            initial_url = f"{server.url}/static/index.html"
-        else:
-            initial_url = api.onboarding_url()
+        initial_url = api.onboarding_url()
         window = webview.create_window(
             "YUMENO",
             initial_url,
@@ -62,7 +59,7 @@ def run(project_root: Path | None = None) -> int:
         api.bind_window(window)
         api.auto_start_if_needed()
         window.events.closing += api.on_closing
-        window.events.closed += lambda: (server.stop(), shutdown_asr_workers())
+        window.events.closed += api.on_closed
         os.environ.setdefault(
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
             "--autoplay-policy=no-user-gesture-required",
@@ -74,6 +71,8 @@ def run(project_root: Path | None = None) -> int:
             icon=str(root / "resources" / "app.ico"),
             func=lambda: apply_window_icon(window, root / "resources" / "app.ico"),
         )
+        if api.keep_services_after_close:
+            server.wait()
         return 0
     except (DesktopStartupError, RuntimeError, OSError, ImportError) as exc:
         server.stop()

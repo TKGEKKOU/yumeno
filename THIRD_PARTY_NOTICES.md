@@ -35,19 +35,6 @@ governed by separate licenses.
 Files that directly incorporate upstream code must retain their applicable
 copyright and license notices.
 
-## qwen3-tts.cpp
-
-YUMENO can download a Windows runtime built from the MIT-licensed
-qwen3-tts.cpp project:
-
-- Project: qwen3-tts.cpp
-- Repository: <https://github.com/predict-woo/qwen3-tts.cpp>
-- Reviewed commit: `b3ba14077cf1b3e11b86e5f84aa9184605c89b28`
-- License: MIT
-
-The runtime archive includes the upstream license. GGUF model files are
-downloaded separately from ModelScope and are not committed to this repository.
-
 ## PixiJS
 
 - Project: PixiJS v7 (`pixi.js`)
@@ -65,16 +52,16 @@ downloaded separately from ModelScope and are not committed to this repository.
 ## Live2D Cubism Core
 
 The Cubism runtime libraries (`live2d.min.js` for Cubism 2.1 and
-`live2dcubismcore.min.js` for Cubism 3/4) are proprietary software distributed
-by Live2D Inc. under the Live2D Proprietary Software License Agreement
+`live2dcubismcore.min.js` for Cubism 3 and later) are proprietary software
+distributed by Live2D Inc. under the Live2D Proprietary Software License Agreement
 (<https://www.live2d.com/eula/live2d-proprietary-software-license-agreement_en.html>).
+The bundled Cubism Core 6.00.0001 was obtained from the official
+Cubism SDK for Web 5-r.5 package published by Live2D Inc.
 They are included only for local rendering; review the agreement before
 redistributing this application.
 
-## Live2D Sample Models (Haru / Shizuku)
+## Live2D Models
 
-The bundled demo models under `data/live2d/` are official Live2D sample
-models and are redistributed under the Live2D Free Material License
-(<https://www.live2d.com/eula/live2d-free-material-license-agreement_en.html>).
-They are provided for local evaluation only; replace them with models you are
-licensed to distribute before shipping the application to end users.
+Live2D model files under the ignored local `data/live2d/` directory are not
+included in source control or official release packages. Users must provide
+models they are licensed to use and distribute.

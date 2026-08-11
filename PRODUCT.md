@@ -12,7 +12,7 @@ web（本地桌面应用：FastAPI 服务 + pywebview/WebView2 外壳，`http://
 
 ## Product Purpose
 
-YUMENO 是本地优先的角色对话应用。声音工坊把"素材 → 参考音色"的全流程可视化：从视频/音频提取人声、切片、生成参考音色、命名保存，并供角色编辑页绑定。
+YUMENO 是本地优先的角色对话应用。声音工坊把"素材 → GPT-SoVITS 音色"的全流程可视化：从视频/音频提取人声、切片、校验转写、训练模型，并供角色编辑页绑定。
 
 ## Positioning
 
@@ -27,8 +27,8 @@ Windows 桌面；流程包含大文件上传（视频 ≤400MB、音频 ≤200MB
 - 声音工坊主链：视频 → 提取/转换 → 人声分离 → 切片 → 选段 → 参考音色 → 试听/命名保存。
 - 中途插入（用户确认的语义）：任意节点可直接投放"已处理到这一步"的文件——视频节点传视频、音频节点传音频、片段节点传干净片段、参考节点传参考音频，均跳过前置步骤。
 - 音色库：试听、删除、时长/片段数元信息；角色编辑页从音色库选择绑定。
-- TTS 引擎：Lunar（本地 Vulkan/CPU）；相似度自评走 qwen3tts.dll。
-- 约束：依赖本地 ffmpeg；草稿存 `data/voice_studio/sessions`；音色存 `data/tts/voices`。
+- TTS 引擎：GPT-SoVITS；同一音色的参考语言与输出语言独立，混合文本按语种分段合成。
+- 约束：依赖本地 ffmpeg 与 GPT-SoVITS 服务；草稿存 `data/voice_studio/sessions`；训练音色存 `data/gpt_sovits/voices`。
 
 ## Brand Commitments
 
@@ -37,8 +37,8 @@ Windows 桌面；流程包含大文件上传（视频 ≤400MB、音频 ≤200MB
 
 ## Evidence on Hand
 
-- `data/tts/voices` 已有 3 个保存音色；`audios/lunar-template.wav` 为默认音色。
-- 声音工坊后端 API：`/api/voice-studio/*`（会话、上传、分离、片段、参考、试听、保存、音色库）。
+- `data/gpt_sovits/voices` 保存训练数据、权重与参考音频；异常旧资产会标记为 `needs_retraining`，文件不删除。
+- 声音工坊后端 API：`/api/voice-studio/*`（会话、上传、分离、片段、训练、音色库）。
 
 ## Product Principles
 

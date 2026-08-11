@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.routers.settings import require_local
@@ -62,6 +64,7 @@ def _execute(payload: EvalRunPayload, session_factory, job: dict[str, Any]) -> N
         # 按角色知识空间生成档位题集（含无关探针），无需人工准备。
         from rag.eval.question_generator import generate_questions_for_persona
 
+        job["state"] = "generating"
         job["phase"] = "generating"
         job["status_text"] = "准备生成问题…"
         dataset_path = generate_questions_for_persona(
@@ -114,7 +117,7 @@ def _execute(payload: EvalRunPayload, session_factory, job: dict[str, Any]) -> N
 def start_eval(payload: EvalRunPayload, request: Request) -> dict:
     require_local(request)
     job = _job(request)
-    if job.get("state") == "running":
+    if job.get("state") in {"pending", "generating", "running"}:
         raise HTTPException(status_code=409, detail="已有评测任务在运行")
     job.clear()
     job.update(
@@ -130,6 +133,13 @@ def start_eval(payload: EvalRunPayload, request: Request) -> dict:
             "metrics": {},
             "cases": [],
             "error": "",
+            "config": {
+                "persona_id": payload.persona_id,
+                "tier": payload.tier,
+                "max_cases": payload.max_cases,
+                "web_fallback": payload.web_fallback,
+                "metric_k": 3,
+            },
         }
     )
     threading.Thread(
@@ -166,6 +176,25 @@ def eval_results(request: Request) -> dict:
         "metrics": job.get("metrics", {}),
         "cases": job.get("cases", []),
     }
+
+
+@router.get("/export")
+def export_eval(request: Request) -> Response:
+    require_local(request)
+    job = _job(request)
+    if job.get("state") != "done":
+        raise HTTPException(status_code=409, detail="评测尚未完成，无法导出")
+    payload = {
+        "schema_version": 1,
+        "config": job.get("config", {}),
+        "metrics": job.get("metrics", {}),
+        "cases": job.get("cases", []),
+    }
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="yumeno-rag-eval.json"'},
+    )
 
 
 @router.post("/analyze")

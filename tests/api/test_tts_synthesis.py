@@ -6,12 +6,7 @@ from pathlib import Path
 
 from app.models import VoiceAsset
 from persona.service import LOCAL_WORKSPACE_ID
-
-
-class FakeTTS:
-    def synthesize(self, text, output, reference_audio=None):
-        Path(output).write_bytes(b"RIFFaudio")
-        return output
+from voice.gpt_sovits.synthesis import GPTSoVITSSynthesisService
 
 
 def wav_bytes(seconds: float = 1.0) -> bytes:
@@ -22,40 +17,6 @@ def wav_bytes(seconds: float = 1.0) -> bytes:
         output.setframerate(24000)
         output.writeframes(b"\x00\x00" * int(24000 * seconds))
     return stream.getvalue()
-
-
-class FakeStreamTTS:
-    def __init__(self):
-        self.segments = []
-        self.synthesized = []
-
-    def stream_segments(self, text, max_chars=50):
-        self.segments = ["第一句。", "第二句。"]
-        return self.segments
-
-    def synthesize_to_bytes(self, text, reference_audio=None):
-        self.synthesized.append(text)
-        return wav_bytes()
-
-    @staticmethod
-    def merge_wavs(parts):
-        return b"".join(parts)
-
-
-def test_tts_preview_returns_generated_audio_without_persona(client, tmp_path, monkeypatch):
-    client.app.state.tts_factory = lambda: FakeTTS()
-    monkeypatch.setattr(client.app.state.tts_resources, "status", lambda: {"ready": True})
-    monkeypatch.setattr("app.routers.tts.TTS_PREVIEW_ROOT", tmp_path)
-
-    response = client.post(
-        "/api/tts/preview",
-        json={"text": "测试语音"},
-        headers={"X-YUMENO-Request": "web"},
-    )
-
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "audio/wav"
-    assert response.content == b"RIFFaudio"
 
 
 def test_tts_synthesis_requires_trained_voice(client, tmp_path, monkeypatch):
@@ -69,40 +30,8 @@ def test_tts_synthesis_requires_trained_voice(client, tmp_path, monkeypatch):
         headers={"X-YUMENO-Request": "web"},
     )
 
-    assert response.status_code == 502
-    assert "未绑定训练音色" in response.json()["detail"]
-
-
-def test_tts_stream_synthesis_progressively_returns_segments_and_persists_message(
-    client, tmp_path, monkeypatch
-):
-    persona = client.post("/api/personas", json={"name": "Voice", "profile": {}}).json()
-    fake = FakeStreamTTS()
-    client.app.state.tts_factory = lambda: fake
-    monkeypatch.setattr(client.app.state.tts_resources, "status", lambda: {"ready": True})
-    monkeypatch.setattr("app.routers.tts.TTS_PREVIEW_ROOT", tmp_path)
-    monkeypatch.setattr("app.routers.tts.AUDIO_ROOT", tmp_path / "audio")
-    monkeypatch.setattr("app.routers.messages.AUDIO_ROOT", tmp_path / "audio")
-    (tmp_path / "audio").mkdir(parents=True, exist_ok=True)
-
-    response = client.post(
-        f"/api/tts/personas/{persona['id']}/conversations/c1/synthesize/stream",
-        json={"text": "第一句。第二句。"},
-        headers={"X-YUMENO-Request": "web"},
-    )
-
-    assert response.status_code == 200
-    lines = [json.loads(line) for line in response.text.strip().splitlines() if line.strip()]
-    assert [line["type"] for line in lines] == ["segment", "segment", "done"]
-    assert fake.segments == ["第一句。", "第二句。"]
-    assert [line.get("text") for line in lines if line["type"] == "segment"] == ["第一句。", "第二句。"]
-    message = lines[-1]["message"]
-    assert message["role"] == "assistant"
-    assert message["kind"] == "audio"
-    assert message["content"] == "第一句。第二句。"
-    audio = client.get(message["audio_url"])
-    assert audio.status_code == 200
-    assert len(audio.content) > 44
+    assert response.status_code == 409
+    assert "未绑定可用的 GPT-SoVITS 音色" in response.json()["detail"]
 
 
 def test_tts_incremental_ws_synthesizes_lines_and_persists_one_message(
@@ -118,6 +47,7 @@ def test_tts_incremental_ws_synthesizes_lines_and_persists_one_message(
             gpt_weights_path="D:/g.ckpt",
             sovits_weights_path="D:/s.pth",
             refer_audio_path="D:/ref.wav",
+            reference_language="zh",
             dataset_dir="D:/dataset",
             workspace_id=LOCAL_WORKSPACE_ID,
         )
@@ -127,14 +57,17 @@ def test_tts_incremental_ws_synthesizes_lines_and_persists_one_message(
         asset_id = asset.id
     persona = client.post(
         "/api/personas",
-        json={"name": "Voice", "profile": {"tts": {"voice_asset_id": asset_id}}},
+        json={
+            "name": "Voice",
+            "profile": {"tts": {"voice_asset_id": asset_id, "output_language": "zh"}},
+        },
     ).json()
     synthesized = []
 
     class FakeGPT:
         def synthesize(self, text, **kwargs):
             synthesized.append(text)
-            return wav_bytes()
+            return wav_bytes(seconds=0.25 * len(synthesized))
 
         def status(self):
             return {"installed": True}
@@ -143,6 +76,7 @@ def test_tts_incremental_ws_synthesizes_lines_and_persists_one_message(
             pass
 
     client.app.state.gpt_sovits = FakeGPT()
+    client.app.state.tts_synthesis = GPTSoVITSSynthesisService(client.app.state.gpt_sovits)
     monkeypatch.setattr("app.routers.tts.AUDIO_ROOT", tmp_path / "audio")
     monkeypatch.setattr("app.routers.messages.AUDIO_ROOT", tmp_path / "audio")
     (tmp_path / "audio").mkdir(parents=True, exist_ok=True)
@@ -186,6 +120,7 @@ def test_tts_synthesis_routes_to_gpt_sovits_when_persona_binds_trained_voice(
             status="ready",
             gpt_weights_path="D:/g.ckpt",
             sovits_weights_path="D:/s.pth",
+            reference_language="zh",
             workspace_id=LOCAL_WORKSPACE_ID,
         )
         db.add(asset)
@@ -208,11 +143,11 @@ def test_tts_synthesis_routes_to_gpt_sovits_when_persona_binds_trained_voice(
             pass
 
     client.app.state.gpt_sovits = FakeGPT()
+    client.app.state.tts_synthesis = GPTSoVITSSynthesisService(client.app.state.gpt_sovits)
 
     def boom(*args, **kwargs):
         raise AssertionError("Lunar worker must not be called for a trained voice")
 
-    client.app.state.tts_factory = lambda: type("T", (), {"synthesize": boom})()
     monkeypatch.setattr("app.routers.tts.AUDIO_ROOT", tmp_path)
     monkeypatch.setattr("app.routers.messages.AUDIO_ROOT", tmp_path)
 

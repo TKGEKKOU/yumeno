@@ -2,15 +2,137 @@
 window.PL = window.PL || { modules: {} };
 window.PL.modules.plugins = { init: initPlugins };
 let editingSkillName = null;
+const pluginState = { skills: [], servers: [], tools: [] };
+const extensionCatalogState = { items: [], selected: null };
+
+function pluginViewNames() {
+  return ["overview", "skills", "mcp", "tools", "catalog"];
+}
+
+function derivePluginOverview(state) {
+  const skills = Array.isArray(state?.skills) ? state.skills : [];
+  const servers = Array.isArray(state?.servers) ? state.servers : [];
+  const tools = Array.isArray(state?.tools) ? state.tools : [];
+  const enabledSkills = skills.filter((skill) => skill.enabled).length;
+  const mcpOnline = servers.filter((server) => server.enabled && server.status?.status === "connected").length;
+  const mcpIssues = servers.filter((server) => server.status?.status === "error" || (server.enabled && server.status?.status !== "connected")).length;
+  const untrustedSkills = skills.filter((skill) => !skill.builtin && !skill.trusted).length;
+  return {
+    enabledSkills,
+    mcpOnline,
+    mcpIssues,
+    toolCount: tools.length,
+    attentionCount: mcpIssues + untrustedSkills,
+  };
+}
+
+function currentPluginTab() {
+  return document.querySelector(".plugin-tab.is-active")?.dataset.pluginTab || "overview";
+}
+
+function setPluginTab(tab) {
+  if (!pluginViewNames().includes(tab)) return;
+  document.querySelectorAll("[data-plugin-tab]").forEach((node) =>
+    node.classList.toggle("is-active", node.dataset.pluginTab === tab)
+  );
+  document.querySelectorAll("[data-plugin-panel]").forEach((node) => {
+    node.hidden = node.dataset.pluginPanel !== tab;
+  });
+  if (tab === "tools") renderMCPTools();
+  if (tab === "catalog") renderExtensionCatalog();
+}
+
+function renderPluginOverview() {
+  const summary = derivePluginOverview(pluginState);
+  const set = (id, value) => { const node = $(id); if (node) node.textContent = value; };
+  set("plugins-stat-skills", summary.enabledSkills);
+  set("plugins-stat-skills-note", `共 ${pluginState.skills.length} 个技能`);
+  set("plugins-stat-mcp", `${summary.mcpOnline} / ${summary.mcpIssues}`);
+  set("plugins-stat-mcp-note", `${pluginState.servers.length} 台已配置`);
+  set("plugins-stat-tools", summary.toolCount);
+  set("plugins-stat-attention", summary.attentionCount);
+  set("plugin-attention-count", summary.attentionCount);
+  set("mcp-count", `${pluginState.servers.length} 台服务器`);
+  set("mcp-count-detail", `${pluginState.servers.length} 台服务器`);
+  set("mcp-tool-count", `${pluginState.tools.length} 个工具`);
+  const overall = $("plugins-overall-status");
+  if (overall) {
+    overall.textContent = summary.attentionCount ? `${summary.attentionCount} 项待处理` : "运行正常";
+    overall.className = `status-pill ${summary.attentionCount ? "status-pill-warn" : "status-pill-ok"}`;
+  }
+  renderOverviewHealth();
+  renderAttention(summary);
+}
+
+function renderOverviewHealth() {
+  const list = $("plugin-overview-health");
+  if (!list) return;
+  list.innerHTML = "";
+  if (!pluginState.servers.length) {
+    list.append(empty("还没有 MCP 服务。前往 MCP 服务视图添加一个连接。"));
+    return;
+  }
+  pluginState.servers.forEach((server) => {
+    const row = document.createElement("div");
+    row.className = "plugin-health-row";
+    const icon = document.createElement("span");
+    icon.className = `plugin-health-dot ${server.status?.status === "connected" ? "is-ok" : server.status?.status === "error" ? "is-error" : "is-muted"}`;
+    const body = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = server.name;
+    const meta = document.createElement("span");
+    meta.textContent = `${MCP_TRANSPORT_LABELS[server.transport] || server.transport} · ${server.status?.tool_count || 0} 个工具`;
+    body.append(title, meta);
+    const status = document.createElement("span");
+    status.className = `status-pill ${mcpStatusPillClass(server.status?.status)}`;
+    status.textContent = mcpStatusText(server.status || {});
+    row.append(icon, body, status);
+    list.append(row);
+  });
+}
+
+function renderAttention(summary) {
+  const panel = $("plugin-attention-panel");
+  const list = $("plugin-attention-list");
+  if (!panel || !list) return;
+  list.innerHTML = "";
+  const items = [];
+  pluginState.servers.filter((server) => server.status?.status === "error").forEach((server) => items.push({ label: `${server.name} 连接失败`, detail: server.status.error || "请在 MCP 服务视图测试连接。", tab: "mcp" }));
+  pluginState.skills.filter((skill) => !skill.builtin && !skill.trusted).forEach((skill) => items.push({ label: `${skill.name} 尚未信任`, detail: "信任后才能把指令和工具交给角色。", tab: "skills" }));
+  panel.hidden = !items.length;
+  items.forEach((item) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "plugin-attention-item";
+    row.innerHTML = `<span><strong></strong><small></small></span><i data-lucide="arrow-up-right"></i>`;
+    row.querySelector("strong").textContent = item.label;
+    row.querySelector("small").textContent = item.detail;
+    row.addEventListener("click", () => setPluginTab(item.tab));
+    list.append(row);
+  });
+  set("plugin-attention-count", summary.attentionCount);
+  icons();
+}
+
+function set(id, value) { const node = $(id); if (node) node.textContent = value; }
 
 async function initPlugins() {
   window.clearInterval(window.__mcpPollTimer);
-  const skillForm = $("skill-create-form");
-  const mcpForm = $("mcp-create-form");
-  if (skillForm && mcpForm) {
-    skillForm.addEventListener("toggle", () => { if (skillForm.open) mcpForm.open = false; });
-    mcpForm.addEventListener("toggle", () => { if (mcpForm.open) skillForm.open = false; });
-  }
+  document.querySelectorAll("[data-plugin-tab]").forEach((button) => button.addEventListener("click", () => setPluginTab(button.dataset.pluginTab)));
+  document.querySelectorAll("[data-open-plugin-drawer]").forEach((button) => button.addEventListener("click", () => {
+    if (button.dataset.openPluginDrawer === "skill") resetSkillForm();
+    openPluginDrawer(button.dataset.openPluginDrawer);
+  }));
+  $("plugins-refresh")?.addEventListener("click", () => refreshPluginData());
+  $("plugin-drawer-close")?.addEventListener("click", closePluginDrawer);
+  $("plugin-drawer")?.addEventListener("click", (event) => { if (event.target === event.currentTarget) closePluginDrawer(); });
+  $("mcp-tool-filter")?.addEventListener("input", () => renderMCPTools());
+  $("extension-catalog-refresh")?.addEventListener("click", () => loadExtensionCatalog(true));
+  $("extension-catalog-search")?.addEventListener("input", () => renderExtensionCatalog());
+  $("extension-catalog-kind")?.addEventListener("change", () => loadExtensionCatalog(false));
+  $("extension-catalog-close")?.addEventListener("click", closeExtensionDetails);
+  $("extension-catalog-drawer")?.addEventListener("click", (event) => { if (event.target === event.currentTarget) closeExtensionDetails(); });
+  $("extension-catalog-install")?.addEventListener("click", installSelectedExtension);
   await renderSkillList();
   renderToolOptions(await loadSkillTools());
   $("skill-create-submit").addEventListener("click", createSkill);
@@ -25,10 +147,36 @@ async function initPlugins() {
   bindMCPTransport();
   await renderMCPServers();
   await renderMCPTools();
+  await loadExtensionCatalog(false);
   $("mcp-create-submit").addEventListener("click", createMCPServer);
   window.__mcpPollTimer = window.setInterval(() => {
-    renderMCPServers().catch(() => {});
+    refreshPluginData().catch(() => {});
   }, 30000);
+  setPluginTab("overview");
+}
+
+async function refreshPluginData() {
+  await Promise.all([renderSkillList(), renderMCPServers(), renderMCPTools()]);
+  renderPluginOverview();
+  if (currentPluginTab() === "catalog") await loadExtensionCatalog(false);
+}
+
+function openPluginDrawer(type) {
+  const drawer = $("plugin-drawer");
+  const skill = $("skill-create-form");
+  const mcp = $("mcp-create-form");
+  if (!drawer || !skill || !mcp) return;
+  skill.hidden = type !== "skill";
+  mcp.hidden = type !== "mcp";
+  $("plugin-drawer-title").textContent = type === "skill" ? (editingSkillName ? `编辑技能：${editingSkillName}` : "新增技能") : "新增 MCP 服务";
+  $("plugin-drawer-error").textContent = "";
+  if (!drawer.open) drawer.showModal();
+  icons();
+}
+
+function closePluginDrawer() {
+  const drawer = $("plugin-drawer");
+  if (drawer?.open) drawer.close();
 }
 
 
@@ -42,6 +190,8 @@ async function renderSkillList() {
     setSkillStatus(reason.message || reason, true);
     return;
   }
+  pluginState.skills = skills;
+  renderPluginOverview();
   $("skills-count").textContent = `${skills.length} 个技能`;
   if (!skills.length) {
     list.append(empty("还没有技能。在上方新增一个提示词技能，或把 JSON 放入 data/skills/。"));
@@ -105,6 +255,30 @@ function renderSkillCard(skill) {
     disabled.className = "status-pill status-pill-warn";
     disabled.textContent = "已停用";
     card.append(disabled);
+  }
+  if (!skill.builtin && !skill.trusted) {
+    const trust = document.createElement("button");
+    trust.type = "button";
+    trust.className = "button button-secondary";
+    trust.textContent = "信任此技能";
+    trust.title = "确认后才允许把该技能的指令和工具交给角色";
+    trust.addEventListener("click", () => updateSkillState(skill.name, { trusted: true }));
+    head.append(trust);
+  }
+  if (skill.scripts && skill.scripts.length) {
+    const scripts = document.createElement("label");
+    scripts.className = "toggle-field";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = Boolean(skill.scripts_enabled);
+    input.disabled = !skill.trusted;
+    input.addEventListener("change", () =>
+      updateSkillState(skill.name, { scripts_enabled: input.checked })
+    );
+    const text = document.createElement("span");
+    text.textContent = "允许脚本";
+    scripts.append(input, text);
+    head.append(scripts);
   }
   card.append(head);
   if (skill.description) {
@@ -207,7 +381,7 @@ async function createSkill() {
       setSkillStatus("技能已保存。", false);
     }
     resetSkillForm();
-    $("skill-create-form").open = false;
+    closePluginDrawer();
     renderToolOptions(await loadSkillTools());
     await renderSkillList();
   } catch (reason) {
@@ -229,6 +403,20 @@ async function toggleSkill(name, enabled) {
   }
 }
 
+async function updateSkillState(name, state) {
+  try {
+    await api(fetch(`/api/skills/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state),
+    }));
+    await renderSkillList();
+    setSkillStatus("技能安全状态已更新。", false);
+  } catch (reason) {
+    setSkillStatus(reason.message || reason, true);
+  }
+}
+
 function editSkill(skill) {
   editingSkillName = skill.name;
   $("skill-name").value = skill.name;
@@ -239,12 +427,10 @@ function editSkill(skill) {
   $("skill-tools").querySelectorAll("input").forEach((input) => {
     input.checked = skill.tool_names.includes(input.value);
   });
-  const form = $("skill-create-form");
   const title = $("skill-create-title");
   if (title) title.textContent = `编辑技能：${skill.name}`;
   $("skill-create-submit").textContent = "保存修改";
-  form.open = true;
-  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  openPluginDrawer("skill");
 }
 
 function resetSkillForm() {
@@ -271,10 +457,10 @@ async function deleteSkill(name) {
 }
 
 function setSkillStatus(message, isError) {
-  const node = $("skills-status");
-  if (!node) return;
-  node.textContent = message || "";
-  node.classList.toggle("is-error", Boolean(isError));
+  [$("skills-status"), $("skills-drawer-status")].filter(Boolean).forEach((node) => {
+    node.textContent = message || "";
+    node.classList.toggle("is-error", Boolean(isError));
+  });
 }
 
 async function uploadSkillPackage(file) {
@@ -327,7 +513,10 @@ async function renderMCPServers() {
     setMCPStatus(reason.message || reason, true);
     return;
   }
+  pluginState.servers = servers;
+  renderPluginOverview();
   $("mcp-count").textContent = `${servers.length} 台服务器`;
+  $("mcp-count-detail").textContent = `${servers.length} 台服务器`;
   if (!servers.length) {
     list.append(empty("还没有配置 MCP 服务器。在上方新增一个服务器，重启应用后其工具会自动注册。"));
     return;
@@ -494,7 +683,7 @@ async function createMCPServer() {
         description: $("mcp-description").value.trim(),
       }),
     }));
-    $("mcp-create-form").open = false;
+    closePluginDrawer();
     resetMCPForm();
     await renderMCPServers();
     setMCPStatus("已保存并连接。", false);
@@ -549,6 +738,11 @@ async function renderMCPTools() {
     setMCPStatus(reason.message || reason, true);
     return;
   }
+  pluginState.tools = tools;
+  renderPluginOverview();
+  const filter = $("mcp-tool-filter")?.value.trim().toLowerCase() || "";
+  const visibleTools = tools.filter((tool) => !filter || [tool.name, tool.server, tool.description].some((value) => String(value || "").toLowerCase().includes(filter)));
+  $("mcp-tool-count").textContent = `${tools.length} 个工具`;
   if (!tools.length) {
     const note = document.createElement("p");
     note.className = "inline-status";
@@ -556,18 +750,131 @@ async function renderMCPTools() {
     container.append(note);
     return;
   }
-  for (const tool of tools) {
-    const tag = document.createElement("span");
-    tag.className = "skill-tool";
-    tag.textContent = tool.requires_confirmation ? `${tool.name}（需确认）` : tool.name;
-    tag.title = `${tool.server} · ${tool.description || "无描述"}`;
-    container.append(tag);
+  for (const tool of visibleTools) {
+    const row = document.createElement("article");
+    row.className = "plugin-tool-row";
+    const name = document.createElement("strong");
+    name.textContent = tool.name;
+    const server = document.createElement("span");
+    server.textContent = tool.server;
+    const description = document.createElement("p");
+    description.textContent = tool.description || "无描述";
+    const status = document.createElement("span");
+    status.className = `status-pill ${tool.requires_confirmation ? "status-pill-warn" : "status-pill-ok"}`;
+    status.textContent = tool.requires_confirmation ? "需确认" : "只读";
+    row.append(name, server, description, status);
+    container.append(row);
   }
 }
 
 function setMCPStatus(message, isError) {
-  const node = $("mcp-status");
-  if (!node) return;
-  node.textContent = message || "";
-  node.classList.toggle("is-error", Boolean(isError));
+  [$("mcp-status"), $("mcp-drawer-status")].filter(Boolean).forEach((node) => {
+    node.textContent = message || "";
+    node.classList.toggle("is-error", Boolean(isError));
+  });
+}
+
+/* ---- 在线扩展目录 ---- */
+async function loadExtensionCatalog(refresh) {
+  const kind = $("extension-catalog-kind")?.value || "all";
+  const status = $("extension-catalog-status");
+  if (status) status.textContent = "加载中";
+  try {
+    const suffix = `?kind=${encodeURIComponent(kind)}${refresh ? "&refresh=true" : ""}`;
+    const snapshot = await api(fetch(`/api/extensions/catalog${suffix}`));
+    extensionCatalogState.items = Array.isArray(snapshot.items) ? snapshot.items : [];
+    if (status) {
+      status.textContent = snapshot.stale ? "缓存目录" : `${extensionCatalogState.items.length} 个条目`;
+      status.className = `status-pill ${snapshot.stale ? "status-pill-warn" : "status-pill-ok"}`;
+    }
+    const notice = $("extension-catalog-notice");
+    if (notice) {
+      notice.textContent = snapshot.stale ? "在线目录暂时不可用，当前展示上次成功缓存。" : "目录已更新。安装前请检查来源、运行时和权限。";
+      notice.classList.remove("is-error");
+    }
+    renderExtensionCatalog();
+  } catch (reason) {
+    if (status) { status.textContent = "目录不可用"; status.className = "status-pill status-pill-err"; }
+    const notice = $("extension-catalog-notice");
+    if (notice) { notice.textContent = reason.message || String(reason); notice.classList.add("is-error"); }
+    const list = $("extension-catalog-list");
+    if (list) { list.innerHTML = ""; list.append(empty("无法加载在线目录。可检查网络，或稍后重试。")); }
+  }
+}
+
+function renderExtensionCatalog() {
+  const list = $("extension-catalog-list");
+  if (!list) return;
+  const query = ($("extension-catalog-search")?.value || "").trim().toLowerCase();
+  const installedSkills = new Set(pluginState.skills.map((item) => item.name));
+  const installedMCP = new Set(pluginState.servers.map((item) => item.name));
+  const visible = extensionCatalogState.items.filter((item) => {
+    const haystack = [item.id, item.name, item.description, ...(item.categories || [])].join(" ").toLowerCase();
+    return !query || haystack.includes(query);
+  });
+  list.innerHTML = "";
+  if (!visible.length) { list.append(empty("没有匹配的扩展。")); return; }
+  visible.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "extension-catalog-card";
+    const head = document.createElement("div"); head.className = "extension-catalog-card-head";
+    const title = document.createElement("strong"); title.textContent = item.name || item.id;
+    const kind = document.createElement("span"); kind.className = "status-pill"; kind.textContent = item.kind.toUpperCase();
+    head.append(title, kind);
+    const version = document.createElement("small"); version.textContent = `v${item.version || "未知"} · ${item.id}`;
+    const description = document.createElement("p"); description.textContent = item.description || "暂无说明";
+    const tags = document.createElement("div"); tags.className = "extension-catalog-tags";
+    (item.categories || []).forEach((category) => { const tag = document.createElement("span"); tag.textContent = category; tags.append(tag); });
+    const installed = item.kind === "skill" ? installedSkills.has(item.id) : installedMCP.has(item.id);
+    const action = document.createElement("button"); action.type = "button"; action.className = "button button-secondary";
+    action.textContent = installed ? "已安装" : "查看详情"; action.disabled = installed;
+    action.addEventListener("click", () => openExtensionDetails(item));
+    card.append(head, version, description, tags, action); list.append(card);
+  });
+}
+
+function openExtensionDetails(item) {
+  extensionCatalogState.selected = item;
+  const drawer = $("extension-catalog-drawer");
+  const detail = $("extension-catalog-detail");
+  if (!drawer || !detail) return;
+  $("extension-catalog-title").textContent = item.name || item.id;
+  $("extension-catalog-install-status").textContent = "";
+  $("extension-catalog-install").disabled = false;
+  detail.innerHTML = "";
+  const summary = document.createElement("p"); summary.className = "plugin-description"; summary.textContent = item.description || "暂无说明"; detail.append(summary);
+  const rows = [["类型", item.kind.toUpperCase()], ["版本", item.version || "未知"], ["来源", item.source?.type || "未知"], ["运行要求", Object.keys(item.requires || {}).join(", ") || "无"]];
+  const list = document.createElement("dl"); list.className = "extension-catalog-detail-list";
+  rows.forEach(([label, value]) => { const dt = document.createElement("dt"); dt.textContent = label; const dd = document.createElement("dd"); dd.textContent = value; list.append(dt, dd); });
+  detail.append(list);
+  if (!drawer.open) drawer.showModal();
+  icons();
+}
+
+function closeExtensionDetails() { const drawer = $("extension-catalog-drawer"); if (drawer?.open) drawer.close(); }
+
+async function installSelectedExtension() {
+  const item = extensionCatalogState.selected;
+  if (!item) return;
+  const status = $("extension-catalog-install-status"); const button = $("extension-catalog-install");
+  button.disabled = true; status.classList.remove("is-error"); status.textContent = "正在检查安装条件…";
+  try {
+    const preview = await api(fetch(`/api/extensions/catalog/${encodeURIComponent(item.id)}/install`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmed: false }) }));
+    if (preview.status === "awaiting_confirmation" && preview.preview?.conflicts?.length) throw new Error(preview.preview.conflicts.join("；"));
+    status.textContent = "已完成预览，正在安装…";
+    const result = await api(fetch(`/api/extensions/catalog/${encodeURIComponent(item.id)}/install`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmed: true }) }));
+    if (result.status === "installed") {
+      status.textContent = item.kind === "skill" ? "安装完成。请前往 Skill 列表手动启用并信任。" : "安装完成。请前往 MCP 服务手动启用并授权角色。";
+      await refreshPluginData();
+      renderExtensionCatalog();
+    } else {
+      throw new Error(result.message || "安装未完成");
+    }
+  } catch (reason) {
+    status.textContent = reason.message || String(reason); status.classList.add("is-error");
+  } finally { button.disabled = false; }
+}
+
+if (typeof module !== "undefined") {
+  module.exports = { derivePluginOverview, pluginViewNames };
 }

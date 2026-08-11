@@ -16,6 +16,20 @@ MANAGED_MODEL = Path(__file__).resolve().parents[2] / "models" / "Qwen3-ASR-0.6B
 MODEL_ID = os.getenv("YUMENO_ASR_MODEL") or str(MANAGED_MODEL)
 INFER_LOCK = asyncio.Lock()
 MAX_PCM_BYTES_PER_MESSAGE = 1 << 20
+LANGUAGE_ALIASES = {
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "en": "English",
+    "ko": "Korean",
+    "yue": "Cantonese",
+}
+
+
+def _model_language(language: str | None) -> str | None:
+    if language is None:
+        return None
+    value = str(language).strip()
+    return LANGUAGE_ALIASES.get(value.lower(), value) or None
 
 
 def _default_model_provider() -> Any:
@@ -51,7 +65,10 @@ def create_worker_app(model_provider: Callable[[], Any] | None = None) -> FastAP
         # The HTTP path passes a file path (str); the streaming path passes a
         # bare PCM array, which qwen_asr only accepts as (array, sample_rate).
         payload = audio if isinstance(audio, str) else (audio, SAMPLE_RATE)
-        result = state["model"].transcribe(audio=payload, language=language)[0]
+        result = state["model"].transcribe(
+            audio=payload,
+            language=_model_language(language),
+        )[0]
         return str(result.language), str(result.text).strip()
 
     async def infer(audio: Any, language: str | None = None) -> tuple[str, str]:
@@ -64,7 +81,11 @@ def create_worker_app(model_provider: Callable[[], Any] | None = None) -> FastAP
         return {"status": "ready" if state["model"] is not None else "loading"}
 
     @app.post("/transcribe")
-    async def transcribe(request: Request, x_audio_filename: str = Header(default="recording.webm")) -> dict[str, str]:
+    async def transcribe(
+        request: Request,
+        language: str | None = None,
+        x_audio_filename: str = Header(default="recording.webm"),
+    ) -> dict[str, str]:
         audio = await request.body()
         if not audio:
             raise HTTPException(status_code=422, detail="Audio is empty")
@@ -74,8 +95,8 @@ def create_worker_app(model_provider: Callable[[], Any] | None = None) -> FastAP
             with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary:
                 temporary.write(audio)
                 path = temporary.name
-            _, text = await infer(path, None)
-            return {"text": text}
+            detected_language, text = await infer(path, language)
+            return {"language": detected_language, "text": text}
         finally:
             if path:
                 Path(path).unlink(missing_ok=True)

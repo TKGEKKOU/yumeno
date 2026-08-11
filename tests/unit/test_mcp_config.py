@@ -88,7 +88,8 @@ def test_to_connection_shapes():
 def test_atomic_write_has_no_tmp_leftover(tmp_path):
     path = tmp_path / "mcp_servers.json"
     save_servers(path, [MCPServerConfig(name="s", command="python")])
-    assert json.loads(path.read_text(encoding="utf-8"))[0]["name"] == "s"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["mcpServers"]["s"]["command"] == "python"
     assert not list(tmp_path.glob("*.tmp"))
 
 

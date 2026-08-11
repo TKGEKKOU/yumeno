@@ -112,7 +112,7 @@ async def upsert_server_api(request: Request, payload: MCPServerPayload) -> dict
 
 
 @router.delete("/servers/{name}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_server_api(request: Request, name: str) -> Response:
+async def delete_server_api(request: Request, name: str) -> Response:
     """删除服务器配置。"""
 
     manager = _manager(request)
@@ -121,7 +121,7 @@ def delete_server_api(request: Request, name: str) -> Response:
     if len(remaining) == len(servers):
         raise HTTPException(status_code=404, detail="MCP 服务器不存在")
     manager.save_configs(remaining)
-    manager.disable_server(name)
+    await manager.disable_server_async(name)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -140,13 +140,13 @@ async def enable_server_api(request: Request, name: str) -> dict:
 
 
 @router.post("/servers/{name}/disable")
-def disable_server_api(request: Request, name: str) -> dict:
+async def disable_server_api(request: Request, name: str) -> dict:
     """即时停用服务器，注销其已注册工具。"""
 
     manager = _manager(request)
     if manager.get_config(name) is None:
         raise HTTPException(status_code=404, detail="MCP 服务器不存在")
-    return manager.disable_server(name)
+    return await manager.disable_server_async(name)
 
 
 @router.post("/servers/{name}/reload")

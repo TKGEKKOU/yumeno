@@ -1,32 +1,67 @@
 <section id="integrations-view" class="view">
-  <div class="panel integrations-panel">
-    <div class="panel-heading"><div><h2>接入</h2><p class="panel-subtitle">把角色接到 QQ：官方机器人直连官方网关，或通过 OneBot 11（NapCat）转发。</p></div></div>
-
-    <details class="fold-card">
-      <summary><div><strong>QQ 官方机器人</strong><p class="panel-subtitle">官方 WebSocket 直连通道，当前暂不可用。</p></div><span id="qq-official-status-pill" class="status-pill">暂不可用</span></summary>
-      <div class="integrations-unavailable">
-        <i data-lucide="clock"></i>
-        <div>
-          <strong>暂不可用</strong>
-          <p>官方网关要求机器人完成开放平台主体认证、IP 白名单与群聊权限配置，当前账号环境暂未满足，因此该接入暂不可用。待权限开通后此入口会自动恢复，无需重新安装。</p>
-        </div>
+  <div class="live-console">
+    <header class="live-console-head">
+      <div class="live-console-title">
+        <h2>B 站直播控制台</h2>
+        <p id="bili-room-title">尚未读取直播间标题</p>
       </div>
-    </details>
+      <div class="live-console-status" aria-live="polite">
+        <span id="bili-dot" class="live-dot"></span>
+        <strong id="bili-state">未连接</strong>
+        <span id="bili-live-state" class="live-status-label">开播状态未知</span>
+        <span id="bili-channel" data-tone="muted">等待连接</span>
+        <span id="bili-queue-count">等待 0</span>
+      </div>
+    </header>
 
-    <details class="fold-card">
-      <summary><div><strong>OneBot 11 转发（NapCat）</strong><p class="panel-subtitle">通过 OneBot 11 正向 WebSocket 连接 NapCat 等转发端。</p></div><span id="integration-status-pill" class="status-pill">未启用</span></summary>
-      <form id="onebot-form" class="settings-form">
-        <div class="settings-grid settings-grid-form">
-          <label class="toggle-field settings-feature-toggle"><input id="onebot-enabled" type="checkbox"><span>启用 QQ 接入</span></label>
-          <label class="field base-url-field"><span>连接地址（NapCat 填这个）</span><input id="onebot-ws-path" readonly></label>
-          <label class="field key-field"><span>Access Token（可选）</span><span class="secret-input"><input id="onebot-access-token" type="password" autocomplete="off" placeholder="留空则不鉴权"><span class="secret-actions"><button id="toggle-onebot-token" type="button" title="显示或隐藏" aria-label="显示或隐藏"><i data-lucide="eye"></i></button></span></span></label>
-          <label class="field provider-field"><span>群聊触发</span><select id="onebot-group-trigger"><option value="at">@机器人</option><option value="prefix">关键词前缀</option></select></label>
-          <label id="onebot-prefix-field" class="field is-hidden"><span>触发前缀</span><input id="onebot-prefix" placeholder="例如：机器人，"></label>
-          <label class="field"><span>默认角色</span><select id="onebot-default-persona"><option value="">未设置</option></select></label>
+    <div class="live-console-grid">
+      <section class="live-feed-pane" aria-labelledby="bili-feed-title">
+        <div class="live-pane-head">
+          <div><strong id="bili-feed-title">直播事件流</strong><small id="bili-room-label">等待连接直播间</small></div>
+          <button id="bili-clear-feed" class="icon-button" type="button" title="清空事件显示" aria-label="清空事件显示"><i data-lucide="list-x"></i></button>
         </div>
-        <div class="asr-resource-bar"><div><strong id="onebot-state">未启用</strong><p id="onebot-status" class="inline-status"></p></div><div class="asr-actions"><button id="save-onebot" class="button button-primary" type="submit">保存配置</button></div></div>
-        <p id="onebot-save-status" class="inline-status"></p>
-      </form>
-    </details>
+        <div id="bili-event-feed" class="live-event-feed selectable"><p class="empty-state">连接后，普通弹幕和进场消息会按时间进入队列</p></div>
+      </section>
+
+      <section class="live-character-pane" aria-labelledby="bili-stage-title">
+        <div class="live-pane-head">
+          <div><strong id="bili-stage-title">角色舞台</strong><small id="bili-processing">当前空闲</small></div>
+          <span id="bili-processed">已完成 0</span>
+        </div>
+        <div id="bili-live2d-host" class="bili-live2d-host"></div>
+        <article id="bili-current" class="bili-current-item is-empty">
+          <div class="bili-current-label"><span>当前处理项</span><span>FIFO</span></div>
+          <strong id="bili-current-user">等待下一条消息</strong>
+          <p id="bili-current-content">队列会按接收顺序逐条交给角色。</p>
+          <div id="bili-current-audio" class="bili-current-audio" aria-live="polite"></div>
+        </article>
+      </section>
+
+      <section class="live-replies-pane" aria-labelledby="bili-replies-title">
+        <div class="live-pane-head">
+          <div><strong id="bili-replies-title">已发出的回复</strong><small>仅保留文本记录，最多 100 条</small></div>
+          <span>TEXT LOG</span>
+        </div>
+        <div id="bili-reply-list" class="live-reply-list"><p class="empty-state">角色完成回复后，会在这里留下独立记录</p></div>
+      </section>
+    </div>
+
+    <form id="bili-config-form" class="live-console-controls">
+      <label class="field"><span>直播间号</span><input id="bili-room-id" inputmode="numeric" pattern="[0-9]*" placeholder="输入直播间号" required></label>
+      <label class="field"><span>回复角色</span><select id="bili-persona"><option value="">选择角色</option></select></label>
+      <label class="toggle-field"><input id="bili-danmaku" type="checkbox" checked><span>普通弹幕</span></label>
+      <label id="bili-enter-control" class="toggle-field live-capability-control"><input id="bili-enter" type="checkbox" checked><span>进场消息</span><small id="bili-enter-capability" data-tone="muted">等待连接</small></label>
+      <label class="toggle-field"><input id="bili-auto-voice" type="checkbox" checked><span>自动语音</span></label>
+      <div class="live-console-actions">
+        <button id="bili-connect" class="button button-primary" type="submit"><i data-lucide="radio"></i><span>连接直播间</span></button>
+        <button id="bili-pause" class="button button-secondary" type="button" disabled><i data-lucide="pause"></i><span>暂停</span></button>
+        <button id="bili-disconnect" class="button button-secondary" type="button" disabled><i data-lucide="power"></i><span>断开</span></button>
+        <button id="bili-clear-queue" class="icon-button" type="button" title="仅清空等待队列" aria-label="仅清空等待队列" disabled><i data-lucide="trash-2"></i></button>
+        <button id="bili-clear-session" class="button button-danger" type="button" title="停止当前语音并清空本次直播的队列、事件、回复和角色记忆"><i data-lucide="eraser"></i><span>清空本次直播</span></button>
+      </div>
+      <p id="bili-notice" class="live-channel-notice" aria-live="polite"></p>
+      <p id="bili-action-feedback" class="live-action-feedback" aria-live="polite"></p>
+      <p id="bili-error" class="inline-error" role="alert"></p>
+    </form>
   </div>
 </section>

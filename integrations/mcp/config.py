@@ -95,7 +95,14 @@ def load_servers(path: Path) -> list[MCPServerConfig]:
     except (OSError, json.JSONDecodeError):
         return []
     servers: list[MCPServerConfig] = []
-    for item in raw if isinstance(raw, list) else []:
+    if isinstance(raw, dict) and isinstance(raw.get("mcpServers"), dict):
+        items = []
+        for name, value in raw["mcpServers"].items():
+            if isinstance(value, dict):
+                items.append({"name": name, **value})
+    else:
+        items = raw if isinstance(raw, list) else []
+    for item in items:
         if not isinstance(item, dict):
             continue
         try:
@@ -135,9 +142,9 @@ def default_servers() -> list[MCPServerConfig]:
             command="uvx",
             args=[
                 "--from",
-                "free-search-mcp==0.4.2",
+                "free-search-mcp==0.9.2",
                 "--with",
-                "mcp==1.29.0",
+                "mcp==2.0.0",
                 "free-search-mcp",
             ],
             env={
@@ -168,9 +175,19 @@ def ensure_default_servers(path: Path) -> None:
         return
     servers = load_servers(target)
     free_search = next((s for s in servers if s.name == "free-search"), None)
-    if free_search is None or GLOBAL_ALL in free_search.allowed_persona_ids:
+    if free_search is None:
         return
-    free_search.allowed_persona_ids = [GLOBAL_ALL]
+    defaults = default_servers()[0]
+    changed = False
+    if GLOBAL_ALL not in free_search.allowed_persona_ids:
+        free_search.allowed_persona_ids = [GLOBAL_ALL]
+        changed = True
+    if "free-search-mcp==0.4.2" in free_search.args or "mcp==1.29.0" in free_search.args:
+        free_search.args = list(defaults.args)
+        free_search.env = {**defaults.env, **free_search.env}
+        changed = True
+    if not changed:
+        return
     save_servers(target, servers)
 
 
@@ -179,7 +196,16 @@ def save_servers(path: Path, servers: list[MCPServerConfig]) -> None:
 
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    payload = [asdict(server) for server in servers]
+    payload = {
+        "mcpServers": {
+            server.name: {
+                key: value
+                for key, value in asdict(server).items()
+                if key != "name"
+            }
+            for server in servers
+        }
+    }
     tmp = target.with_suffix(".json.tmp")
     tmp.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),

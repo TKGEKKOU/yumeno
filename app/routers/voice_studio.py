@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import base64
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
-from starlette.background import BackgroundTask
 
 from app.routers.settings import require_local
 from voice.studio import VoiceStudioError
@@ -234,45 +232,6 @@ async def upload_reference(
         return manager(request).upload_reference(session_id, target)
     except VoiceStudioError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-class PreviewRequest(BaseModel):
-    text: str
-
-
-@router.post("/sessions/{session_id}/reference/preview")
-def preview_reference(
-    session_id: str,
-    payload: PreviewRequest,
-    request: Request,
-    x_yumeno_request: str = Header(default=""),
-):
-    protected(request, x_yumeno_request)
-    if not request.app.state.tts_resources.status()["ready"]:
-        raise HTTPException(status_code=409, detail="Local TTS is not ready; install the model in Settings first")
-    reference = manager(request).reference_path(session_id)
-    if reference is None:
-        raise HTTPException(status_code=422, detail="请先生成参考音色")
-    text = payload.text.strip()
-    if not text:
-        raise HTTPException(status_code=422, detail="TTS text is empty")
-    previews = request.app.state.voice_studio.project_root / "data" / "tts" / "previews"
-    previews.mkdir(parents=True, exist_ok=True)
-    output = previews / f"voice-studio-{uuid4().hex}.wav"
-    try:
-        request.app.state.tts_factory().synthesize(text, output, reference)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    similarity = None
-    try:
-        similarity = request.app.state.voice_similarity.similarity(reference, output)
-    except Exception:
-        similarity = None
-    audio = base64.b64encode(output.read_bytes()).decode("ascii")
-    return JSONResponse(
-        {"audio": audio, "similarity": round(similarity, 4) if similarity is not None else None},
-        background=BackgroundTask(output.unlink, missing_ok=True),
-    )
 
 
 class CompleteRequest(BaseModel):

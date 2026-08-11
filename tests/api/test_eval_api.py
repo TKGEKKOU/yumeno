@@ -43,6 +43,32 @@ def test_eval_run_rejects_second_concurrent_task(client):
     assert response.status_code == 409
 
 
+def test_eval_run_rejects_pending_or_generating_task(client):
+    for state in ("pending", "generating"):
+        client.app.state.eval_job = {"state": state}
+        response = client.post("/api/eval/run", json={"persona_id": "p1"})
+        assert response.status_code == 409
+
+
+def test_eval_export_requires_done_and_returns_utf8_json(client):
+    client.app.state.eval_job = {"state": "running"}
+    assert client.get("/api/eval/export").status_code == 409
+
+    client.app.state.eval_job = {
+        "state": "done",
+        "config": {"persona_id": "p1", "metric_k": 3},
+        "metrics": {"recall_at_3": 0.75},
+        "cases": [{"question": "角色是谁"}],
+    }
+    response = client.get("/api/eval/export")
+
+    assert response.status_code == 200
+    assert "attachment" in response.headers["content-disposition"]
+    assert response.json()["schema_version"] == 1
+    assert response.json()["config"]["metric_k"] == 3
+    assert response.json()["cases"][0]["question"] == "角色是谁"
+
+
 def test_eval_run_accepts_tier_payload(client, monkeypatch):
     persona = _create_persona(client)
     captured = {}

@@ -1,12 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('static', 'static'), ('resources', 'resources'), ('runtime/tts', 'runtime/tts'), ('audios', 'audios'), ('data/live2d', 'data/live2d'), ('docker-compose.yml', '.'), ('.env.example', '.')]
+datas = [('static', 'static'), ('resources', 'resources'), ('docker-compose.yml', '.'), ('.env.example', '.')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('webview')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('silero_vad')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
@@ -19,7 +17,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['speech_recognition', 'tensorboard', 'pytest', 'matplotlib', 'azure-ai-contentunderstanding', 'azure-ai-documentintelligence', 'azure-identity', 'youtube-transcript-api'],
     noarchive=False,
     optimize=0,
 )
@@ -31,7 +29,6 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='YUMENO',
-    icon='resources/app.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

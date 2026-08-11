@@ -1,0 +1,48 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { BarChart3, Download, Play, ScanSearch } from "lucide-vue-next";
+import { apiRequest, errorMessage } from "../shared/api";
+import { formatMetricValue, progressPercent } from "./model";
+
+const personas = ref<any[]>([]); const personaId = ref(""); const tier = ref("fast");
+const status = ref<any>({ state: "idle", progress: 0, total: 0 }); const results = ref<any>(null); const analysis = ref("");
+const error = ref(""); const running = ref(false); const analyzing = ref(false); const expanded = ref(false);
+let pollGeneration = 0;
+const stateLabel = computed(() => ({ idle: "未运行", running: status.value.phase === "generating" ? "生成问题" : "评测中", done: "已完成", error: "失败" }[status.value.state as string] || status.value.state || "未运行"));
+const progress = computed(() => progressPercent(Number(status.value.progress || 0), Number(status.value.total || 0)));
+const cases = computed(() => results.value?.cases || []); const visibleCases = computed(() => expanded.value ? cases.value : cases.value.slice(0, 3));
+const summary = computed(() => { const m = results.value?.metrics || {}; return [
+  { label: "Top 3 召回率", value: formatMetricValue("recall_at_3_answerable", m.recall_at_3_answerable), tone: metricTone("recall_at_3_answerable", m.recall_at_3_answerable) },
+  { label: "回答接地率", value: formatMetricValue("grounded_rate", m.grounded_rate), tone: metricTone("grounded_rate", m.grounded_rate) },
+  { label: "质量通过率", value: formatMetricValue("accepted_rate", m.accepted_rate), tone: metricTone("accepted_rate", m.accepted_rate) },
+  { label: "P95 总延迟", value: m.p95_total_latency_ms == null ? "—" : `${Math.round(Number(m.p95_total_latency_ms))} ms`, tone: "" },
+]; });
+const metricGroups = [
+  { title: "检索质量", keys: ["recall_at_3_answerable", "precision_at_3_answerable", "mrr_at_3_answerable", "hit_at_3_answerable", "cases_answerable", "mean_latency_ms", "p95_latency_ms"] },
+  { title: "回答质量", keys: ["grounded_rate", "useful_rate", "accepted_rate", "answer_rate", "refusal_rate", "cases_checked", "mean_confidence", "scope_isolation_ok"] },
+  { title: "行为与性能", keys: ["rewrite_rate", "correction_rate", "mean_rewrite_count", "mean_correction_count", "complex_rewrite_rate", "complex_correction_rate", "probe_refusal_rate", "cases_total", "cases_complex", "mean_total_latency_ms", "p95_total_latency_ms"] },
+];
+const labels: Record<string,string> = { recall_at_3_answerable:"可答问题召回率 Recall@3",precision_at_3_answerable:"可答问题精确率 Precision@3",mrr_at_3_answerable:"可答问题 MRR@3",hit_at_3_answerable:"可答问题命中 Hit@3",cases_answerable:"可答用例数",mean_latency_ms:"平均检索延迟 (ms)",p95_latency_ms:"P95 检索延迟 (ms)",grounded_rate:"事实接地率",useful_rate:"问题解决率",accepted_rate:"质量通过率",answer_rate:"正常作答率",refusal_rate:"拒答率",cases_checked:"生成已检用例",mean_confidence:"平均置信度",scope_isolation_ok:"跨角色隔离校验",rewrite_rate:"查询改写触发率",correction_rate:"生成纠错触发率",mean_rewrite_count:"平均改写次数",mean_correction_count:"平均纠错次数",complex_rewrite_rate:"复杂题改写率",complex_correction_rate:"复杂题纠错率",probe_refusal_rate:"无关问题拒答率",cases_total:"用例总数",cases_complex:"复杂题数",mean_total_latency_ms:"平均整链路延迟 (ms)",p95_total_latency_ms:"P95 整链路延迟 (ms)" };
+
+function metricTone(key: string, value: unknown) { if (key === "scope_isolation_ok") return value ? "good" : "bad"; const n = Number(value); if (!["recall_at_3_answerable","precision_at_3_answerable","mrr_at_3_answerable","hit_at_3_answerable","grounded_rate","useful_rate","accepted_rate","answer_rate","mean_confidence"].includes(key) || !Number.isFinite(n)) return ""; return n >= .8 ? "good" : n <= .2 ? "bad" : ""; }
+function statusText() { if (status.value.phase === "generating") return status.value.status_text || "正在从角色资料生成问题"; if (status.value.total > 0) return [`已完成 ${status.value.progress}/${status.value.total} 条`, status.value.current_question_text, status.value.current_step].filter(Boolean).join(" · "); return error.value || "等待开始"; }
+async function loadPersonas() { try { personas.value = await apiRequest<any[]>("/api/personas"); if (!personaId.value && personas.value.length) personaId.value = personas.value[0].id; } catch (reason) { error.value = errorMessage(reason); } }
+async function loadResults() { results.value = await apiRequest("/api/eval/results"); }
+function stopPolling() { pollGeneration += 1; running.value = false; }
+async function poll() { const generation = ++pollGeneration; running.value = true; for (let i = 0; i < 1200 && generation === pollGeneration; i += 1) { try { status.value = await apiRequest("/api/eval/status"); if (status.value.state === "done") { await loadResults(); running.value = false; return; } if (status.value.state === "error") { error.value = status.value.error || "评测失败"; running.value = false; return; } } catch (reason) { error.value = errorMessage(reason); running.value = false; return; } await new Promise(resolve => setTimeout(resolve, 500)); } }
+async function runEvaluation() { if (!personaId.value) { error.value = "请先选择评测角色"; return; } error.value = ""; results.value = null; analysis.value = ""; expanded.value = false; try { await apiRequest("/api/eval/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ persona_id: personaId.value, tier: tier.value }) }); await poll(); } catch (reason) { error.value = errorMessage(reason); running.value = false; } }
+async function analyze() { analyzing.value = true; try { const response: any = await apiRequest("/api/eval/analyze", { method: "POST" }); analysis.value = response.analysis || "分析结果为空"; } catch (reason) { error.value = errorMessage(reason); } finally { analyzing.value = false; } }
+async function resumeIfRunning() { await loadPersonas(); try { status.value = await apiRequest("/api/eval/status"); if (status.value.state === "running") poll(); else if (status.value.state === "done") await loadResults(); } catch { /* 初次进入允许没有历史结果 */ } }
+onMounted(() => { const root = document.querySelector("#evaluation-app-root"); root?.addEventListener("yumeno:evaluation-show", resumeIfRunning); root?.addEventListener("yumeno:evaluation-hide", stopPolling); resumeIfRunning(); });
+onBeforeUnmount(stopPolling);
+</script>
+
+<template>
+  <main class="yv-page evaluation-page">
+    <header class="evaluation-hero"><div><span class="yv-kicker">Retrieval quality lab</span><h1>RAG 评测</h1><p>用可复现指标检查召回、回答接地与整链路延迟。</p></div><span :class="['yv-status', status.state === 'done' ? 'ok' : status.state === 'error' ? 'error' : running ? 'warn' : '']">{{ stateLabel }}</span></header>
+    <section class="evaluation-control"><div class="control-fields"><label class="yv-field"><span>评测角色</span><select v-model="personaId"><option value="">请选择角色</option><option v-for="persona in personas" :key="persona.id" :value="persona.id">{{ persona.name }}</option></select></label><label class="yv-field"><span>问题规模</span><select v-model="tier"><option value="fast">轻量 · 5 个问题</option><option value="standard">标准 · 10 个问题</option><option value="thorough">全面 · 15 个问题</option></select></label></div><div class="control-actions"><button class="yv-button primary" :disabled="running" @click="runEvaluation"><Play />{{ running ? '评测进行中' : '生成并评测' }}</button><button class="yv-button" :disabled="!results || analyzing" @click="analyze"><ScanSearch />{{ analyzing ? '分析中' : 'AI 分析' }}</button><a class="yv-button" :class="{ disabled: !results }" :href="results ? '/api/eval/export' : undefined"><Download />导出 JSON</a></div></section>
+    <section class="run-status"><div><strong>{{ stateLabel }}</strong><p :class="{ error }">{{ error || statusText() }}</p></div><div class="progress-track" :class="{ indeterminate: running && status.phase === 'generating' }"><span :style="{ width: `${progress}%` }"></span></div></section>
+    <section v-if="results" class="results-stage"><div class="metric-lead"><article v-for="item in summary" :key="item.label" :class="item.tone"><span>{{ item.label }}</span><strong>{{ item.value }}</strong></article></div><div class="metric-groups"><section v-for="group in metricGroups" :key="group.title"><h2>{{ group.title }}</h2><div><article v-for="key in group.keys.filter(k => results.metrics?.[k] !== undefined && results.metrics?.[k] !== null)" :key="key"><span>{{ labels[key] || key }}</span><strong :class="metricTone(key, results.metrics[key])">{{ formatMetricValue(key, results.metrics[key]) }}</strong></article></div></section></div><section v-if="analysis" class="analysis-block"><span class="yv-kicker">AI review</span><h2>结果解读</h2><p>{{ analysis }}</p></section><section class="case-section"><header><div><span class="yv-kicker">Case evidence</span><h2>逐条详情</h2></div><button v-if="cases.length > 3" class="yv-button" @click="expanded = !expanded">{{ expanded ? '收起' : `展开全部 ${cases.length} 条` }}</button></header><article v-for="(item, index) in visibleCases" :key="index" class="case-row"><div class="case-index">{{ String(index + 1).padStart(2, '0') }}</div><div><strong>{{ item.question }}</strong><p>{{ (item.answer || '').slice(0, 240) }}</p><small>{{ [item.grounded == null ? 'grounded=—' : `grounded=${item.grounded}`, item.useful == null ? 'useful=—' : `useful=${item.useful}`, `confidence=${item.confidence ?? '—'}`, item.rewrite_used ? '查询改写' : '', item.corrected ? '生成纠错' : '', item.is_probe ? '无关探针' : ''].filter(Boolean).join(' · ') }}</small></div><span :class="['yv-status', item.accepted || (item.is_probe && item.refused) ? 'ok' : 'error']">{{ item.accepted || (item.is_probe && item.refused) ? '符合预期' : '未通过' }}</span></article></section></section>
+    <section v-else class="evaluation-empty"><BarChart3 /><h2>等待一轮可比较的结果</h2><p>选择角色和问题规模后开始。评测会覆盖知识召回、复杂问题与无关问题拒答。</p></section>
+  </main>
+</template>

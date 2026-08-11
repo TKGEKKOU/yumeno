@@ -1,10 +1,13 @@
 """Agent Skills 动态技能包：注册表、状态写入、中间件注入与端到端链路。"""
 
 import pytest
+import json
+from types import SimpleNamespace
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 
+from agents.capabilities import CapabilityPolicy
 from agents.context import PersonaAgentContext
 from persona.service import create_persona
 
@@ -72,6 +75,32 @@ def test_load_skill_tool_appends_to_state():
 
     assert result["loaded_skills"] == ["document_management"]
     assert result["messages"][-1].content == "资料管理技能已加载。"
+
+
+def test_custom_skill_requires_explicit_persona_assignment(monkeypatch):
+    from agents.skills import SkillSpec, load_skill
+
+    skill = SkillSpec(
+        name="custom-skill",
+        description="custom",
+        instructions="do custom work",
+        tool_names=(),
+        builtin=False,
+        enabled=True,
+        trusted=True,
+    )
+    monkeypatch.setattr("agents.skills.get_skill", lambda name: skill)
+    runtime = SimpleNamespace(
+        context=_context(capability_policies=()),
+        state={"loaded_skills": []},
+        tool_call_id="load-custom",
+    )
+
+    result = load_skill.func("custom-skill", runtime)
+    payload = json.loads(result.update["messages"][0].content)
+
+    assert payload["status"] == "not_assigned_to_persona"
+    assert "loaded_skills" not in result.update
 
 
 def test_capability_summary_includes_available_skills():
@@ -440,8 +469,8 @@ def test_web_research_skill_appears_when_mcp_tools_registered():
             skills_mod.get_skill("web-research")
 
 
-def test_web_research_tools_auto_loaded_without_load_skill(tmp_path, monkeypatch):
-    """free-search 启用且角色已授权时，search/research 无需 load_skill 即对 Supervisor 可见。"""
+def test_web_research_tools_visible_only_for_authorized_turn(tmp_path, monkeypatch):
+    """free-search 只在当前请求明确授权联网时对 Supervisor 可见。"""
 
     from langchain_core.tools import tool as make_tool
 
@@ -493,9 +522,19 @@ def test_web_research_tools_auto_loaded_without_load_skill(tmp_path, monkeypatch
     model = RecordingFake(responses=[AIMessage(content="好的。")])
     try:
         build_persona_workflow(model, MemorySaver()).invoke(
-            {"messages": [("user", "潍坊今天气温多少")], "active_worker": None},
+                {
+                    "messages": [("user", "潍坊今天气温多少")],
+                    "active_worker": None,
+                    "loaded_skills": ["web-research"],
+                    "web_search_authorized": True,
+                },
             {"configurable": {"thread_id": "persona-a:thread-a"}},
-            context=_context(),
+            context=_context(
+                capability_policies=(
+                    CapabilityPolicy("persona-a", "mcp/free-search/search", True),
+                    CapabilityPolicy("persona-a", "mcp/free-search/research", True),
+                )
+            ),
         )
         assert seen
         assert "search" in seen[0]
@@ -599,7 +638,7 @@ def test_loaded_scripted_skill_exposes_run_skill_script(tmp_path):
     import shutil
     from pathlib import Path
 
-    from agents.skills import RUNTIME_SKILL_DIR, refresh_skills
+    from agents.skills import RUNTIME_SKILL_DIR, refresh_skills, set_skill_state
 
     name = "scripted-demo"
     try:
@@ -611,6 +650,12 @@ def test_loaded_scripted_skill_exposes_run_skill_script(tmp_path):
             encoding="utf-8",
         )
         refresh_skills()
+        set_skill_state(
+            name,
+            enabled=True,
+            trusted=True,
+            scripts_enabled=True,
+        )
 
         from langgraph.checkpoint.memory import MemorySaver
 
@@ -646,7 +691,11 @@ def test_loaded_scripted_skill_exposes_run_skill_script(tmp_path):
         result = build_persona_workflow(model, MemorySaver()).invoke(
             {"messages": [("user", "运行 demo")], "active_worker": None},
             {"configurable": {"thread_id": "persona-a:thread-a"}},
-            context=_context(),
+            context=_context(
+                capability_policies=(
+                    CapabilityPolicy("persona-a", f"skill/{name}", True),
+                )
+            ),
         )
         interrupts = result.get("__interrupt__") or ()
         assert interrupts and interrupts[0].value.get("tool") == "run_skill_script"

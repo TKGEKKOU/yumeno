@@ -80,9 +80,9 @@ def test_silero_vad_detects_real_speech():
     from pathlib import Path
     import wave
 
-    path = Path(__file__).resolve().parents[2] / "audios" / "lunar-template.wav"
+    path = Path(__file__).resolve().parents[2] / "audios" / "vad-template.wav"
     if not path.is_file():
-        pytest.skip("lunar-template.wav is not present")
+        pytest.skip("vad-template.wav is not present")
     with wave.open(str(path), "rb") as source:
         rate = source.getframerate()
         channels = source.getnchannels()

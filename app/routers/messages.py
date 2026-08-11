@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import os
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -11,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_session
 from app.conversation_summary import schedule_summary_after_turn
-from app.models import ConversationMessage, ConversationSummary
+from app.models import ConversationMessage
+from app.conversation_cleanup import clear_conversation_data
 from app.routers.agents import context_for, response_for
 from app.routers.personas import local_persona_or_404
 from app.routers.settings import require_local
@@ -129,29 +129,13 @@ def clear_conversation(
     if x_yumeno_request != "web":
         raise HTTPException(status_code=403, detail="Missing same-origin request header")
     local_persona_or_404(session, persona_id)
-    statement = select(ConversationMessage).where(
-        ConversationMessage.workspace_id == LOCAL_WORKSPACE_ID,
-        ConversationMessage.persona_id == persona_id,
-        ConversationMessage.conversation_id == conversation_id,
+    clear_conversation_data(
+        session,
+        request.app.state.agent_service.checkpointer,
+        persona_id,
+        conversation_id,
+        AUDIO_ROOT,
     )
-    messages = list(session.scalars(statement))
-    thread_id = f"{persona_id}:{conversation_id}"
-    request.app.state.agent_service.checkpointer.delete_thread(thread_id)
-    summary = session.scalars(
-        select(ConversationSummary).where(
-            ConversationSummary.workspace_id == LOCAL_WORKSPACE_ID,
-            ConversationSummary.persona_id == persona_id,
-            ConversationSummary.conversation_id == conversation_id,
-        )
-    ).first()
-    if summary is not None:
-        session.delete(summary)
-    directory = AUDIO_ROOT / hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()[:32]
-    if directory.exists():
-        shutil.rmtree(directory)
-    for message in messages:
-        session.delete(message)
-    session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -230,7 +214,11 @@ async def transcribe_message(
     message.content = transcript
     message.status = "completed"
     context = context_for(request, session, message.persona_id, message.conversation_id)
-    result = await asyncio.to_thread(request.app.state.agent_service.query, transcript, context)
+    key = f"{message.persona_id}:{message.conversation_id}"
+    result = await request.app.state.realtime_executions.run(
+        key,
+        lambda: request.app.state.agent_service.query(transcript, context),
+    )
     assistant = ConversationMessage(
         workspace_id=message.workspace_id,
         persona_id=message.persona_id,

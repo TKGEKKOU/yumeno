@@ -13,8 +13,8 @@ function ensureExitDialog() {
     '<h2 id="exit-confirm-title">退出 YUMENO？</h2>',
     '<p class="exit-confirm-subtitle">选择退出后如何处理服务</p>',
     '<div class="exit-confirm-detail">',
-    '<label class="exit-option"><input type="radio" name="exit-policy" value="pause" checked><i data-lucide="power"></i><span><b>停止服务</b><em>暂停 Docker，下次启动自动恢复</em></span><em class="exit-recommend">推荐</em></label>',
-    '<label class="exit-option"><input type="radio" name="exit-policy" value="keep"><i data-lucide="server"></i><span><b>保持服务</b><em>Docker 保持运行，下次启动最快</em></span></label>',
+    '<label class="exit-option"><input type="radio" name="exit-policy" value="pause" checked><i data-lucide="power"></i><span><b>停止服务</b><em>停止 FastAPI、GPT-SoVITS，并暂停 Docker</em></span><em class="exit-recommend">推荐</em></label>',
+    '<label class="exit-option"><input type="radio" name="exit-policy" value="keep"><i data-lucide="server"></i><span><b>保持服务</b><em>仅关闭窗口，FastAPI、GPT-SoVITS 与 Docker 继续运行</em></span></label>',
     '<label class="exit-option"><input type="radio" name="exit-policy" value="remove"><i data-lucide="trash-2"></i><span><b>删除服务</b><em>删除 Docker 容器，数据保留</em></span></label>',
     '</div>',
     '<div class="settings-confirm-actions">',
@@ -43,6 +43,10 @@ function ensureExitDialog() {
     if (window.pywebview?.api?.do_exit) {
       window.pywebview.api.do_exit();
     } else {
+      if (selected === "keep") {
+        dialog.close();
+        return;
+      }
       if (selected === "remove") {
         try { await fetch("/api/system/docker/remove", { method: "POST" }); } catch (e) {}
       }
@@ -180,7 +184,7 @@ async function loadStatus() {
 function refreshSystemStatus() {
   const button = $("refresh-status");
   if (button) button.disabled = true;
-  Promise.all([loadStatus(), loadEmbeddingStatus(), loadAsrStatus(), loadTtsStatus()]).finally(() => { if (button) button.disabled = false; });
+  Promise.all([loadStatus(), loadEmbeddingStatus(), loadAsrStatus(), loadGptSoVitsStatus()]).finally(() => { if (button) button.disabled = false; });
 }
 function toggleStatusCards() {
   const collapsed = document.body.classList.toggle("status-cards-collapsed");
@@ -239,7 +243,10 @@ function renderSystemStatusDetail(status) {
 
   const tts = resources.tts || {};
   setDetail("tts", tts.ready
-    ? [`${base(tts.model_dir || tts.runtime)}`, `GPU ${tts.use_gpu ? "加速" : "关闭"} · 首次合成时运行`]
+    ? [
+        `${base(tts.install_dir)}${tts.api_version ? ` · API ${tts.api_version}` : ""}`,
+        tts.service_running ? `服务运行中 · 端口 ${tts.api_port}` : "已安装 · 首次合成时自动启动",
+      ]
     : [tts.installing ? "安装中" : (tts.error || "未安装")]);
   setDetail("sqlite", status.sqlite === "ok"
     ? ["本地 SQLite 数据库已连接"]

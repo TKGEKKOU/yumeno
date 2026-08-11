@@ -30,7 +30,6 @@ def test_web_workbench_exposes_shell_and_module_views(client):
     # 退出确认弹窗由 common.js 动态创建，不再内联在 index.html
     common_js = client.get("/static/js/common.js").text
     assert 'dialog.id = "exit-confirm-dialog"' in common_js
-
     views = {
         "create": (
             "create-view",
@@ -43,21 +42,11 @@ def test_web_workbench_exposes_shell_and_module_views(client):
         ),
         "manage": (
             "manage-view",
-            "manage-persona-list",
-            "edit-persona-workspace",
-            "edit-files-confirm",
-            "edit-live2d-confirm",
-            "edit-tts-confirm",
-            "save-all-persona",
-            "delete-persona",
-            "edit-document-list",
+            "role-workbench-root",
         ),
         "test": (
             "test-view",
-            "eval-panel",
-            "eval-persona",
-            "eval-auto-run",
-            "eval-state-pill",
+            "evaluation-app-root",
         ),
         "chat": (
             "chat-view",
@@ -75,6 +64,8 @@ def test_web_workbench_exposes_shell_and_module_views(client):
             "reset-settings",
             "llm-provider",
             "openai-api-key",
+            "test-llm-connection",
+            "llm-test-status",
             "embedding-device",
             "embedding-state",
             "embedding-progress",
@@ -92,19 +83,21 @@ def test_web_workbench_exposes_shell_and_module_views(client):
             "install-gptsovits",
             "gptsovits-preset",
         ),
-        "integrations": (
-            "integrations-view",
-            "onebot-enabled",
-            "onebot-ws-path",
-            "onebot-access-token",
-            "onebot-group-trigger",
-            "onebot-default-persona",
-            "save-onebot",
-        ),
+            "integrations": (
+                "integrations-view",
+                "bili-room-id",
+                "bili-persona",
+                "bili-danmaku",
+                "bili-enter",
+                "bili-connect",
+                "bili-pause",
+                "bili-disconnect",
+                "bili-event-feed",
+                "bili-live2d-host",
+            ),
         "plugins": (
             "plugins-view",
-            "skill-list",
-            "mcp-server-list",
+            "extensions-app-root",
         ),
     }
     for name, ids in views.items():
@@ -137,9 +130,9 @@ def test_web_workbench_exposes_shell_and_module_views(client):
             'method: "DELETE"',
             '确认重置配置',
         ),
-        "/static/js/plugins.js": (
-            'encodeURIComponent(name)}/grants',
-            'category',
+        "/static/js/vue-pages-bridge.js": (
+            'module.mountExtensionsApp("#extensions-app-root")',
+            'module.mountEvaluationApp("#evaluation-app-root")',
         ),
     }
     for path, contracts in scripts.items():
@@ -148,9 +141,29 @@ def test_web_workbench_exposes_shell_and_module_views(client):
         for contract in contracts:
             assert contract in script.text
 
+    assert client.get("/static/vue/manage.js").status_code == 200
+    assert client.get("/static/vue/style.css").status_code == 200
+    manage_bridge = client.get("/static/js/manage-bridge.js").text
+    assert 'import("/static/vue/manage.js")' in manage_bridge
+    assert 'module.mountManageApp("#role-workbench-root")' in manage_bridge
+    vue_pages_bridge = client.get("/static/js/vue-pages-bridge.js").text
+    assert "hideExtensionsApp" in vue_pages_bridge
+    assert "hideEvaluationApp" in vue_pages_bridge
+
     assert "...(state.draft.profile || {})" in client.get("/static/js/personas.js").text
     assert "https://api.deepseek.com" in client.get("/static/js/common.js").text
     assert "https://dashscope.aliyuncs.com/compatible-mode/v1" in client.get("/static/js/common.js").text
+    shell = client.get("/static/index.html").text
+    assert 'class="nav-index"' not in shell
+    assert shell.count('class="nav-label"') == 9
+    assert 'id="nav-live2d"' not in shell
+    assert '/static/js/live2d-manager.js' not in shell
+    assert client.get("/static/views/live2d.html").status_code == 404
+    assert client.get("/static/js/live2d-manager.js").status_code == 404
+    app_js = client.get("/static/js/app.js").text
+    assert 'live2d: { view: "live2d"' not in app_js
+    live2d_panel = client.get("/static/live2d/live2d-panel.js").text
+    assert 'new CustomEvent("yumeno:manage-select-node"' in live2d_panel
     assert "text-embedding-v4" not in client.get("/static/js/common.js").text
     assert "Qwen3-Embedding-0.6B" in client.get("/static/js/settings.js").text
     assert "请输入 API Key" in client.get("/static/js/settings.js").text
@@ -158,3 +171,9 @@ def test_web_workbench_exposes_shell_and_module_views(client):
     assert "已配置，留空保持" not in client.get("/static/js/settings.js").text
     assert "保存前确认" in client.get("/static/index.html").text
     assert "永久删除，无法恢复" in client.get("/static/index.html").text
+
+
+def test_exit_dialog_keep_option_does_not_shutdown_browser_service(client):
+    common_js = client.get("/static/js/common.js").text
+    assert "FastAPI、GPT-SoVITS 与 Docker 继续运行" in common_js
+    assert "if (selected === \"keep\")" in common_js

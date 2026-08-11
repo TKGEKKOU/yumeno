@@ -17,7 +17,7 @@ from app.database import database_url
 from ingestion.local_embedding.resources import LocalEmbeddingResourceManager
 from settings import Settings
 from voice.asr.install import ASRResourceManager
-from voice.tts.install import TTSResourceManager
+from voice.gpt_sovits import GPTSoVITSAdapter, GPTSoVITSConfig
 
 _STARTED_AT = time.monotonic()
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -249,7 +249,10 @@ def get_system_status() -> dict:
                     lambda: ASRResourceManager(settings.project_root).status()
                 ),
                 "tts": _resource_status(
-                    lambda: TTSResourceManager(settings.project_root).status()
+                    lambda: GPTSoVITSAdapter(
+                        GPTSoVITSConfig(settings.project_root),
+                        settings.project_root,
+                    ).status()
                 ),
             },
         }

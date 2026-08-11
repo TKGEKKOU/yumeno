@@ -27,6 +27,7 @@ from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
 from agents.context import PersonaAgentContext
+from agents.capabilities import skill_is_assigned, skill_policy_value
 from agents.mcp_grants import is_mcp_tool_visible
 from agents.registry import tool_specs
 from agents.skill_parser import parse_skill_dir
@@ -54,7 +55,7 @@ def _skillmd_text(
     frontmatter: dict = {
         "name": name,
         "description": description,
-        "tool-names": list(tool_names),
+        "allowed-tools": " ".join(tool_names),
     }
     if metadata:
         frontmatter["metadata"] = metadata
@@ -80,34 +81,49 @@ class SkillSpec:
     assets: tuple[str, ...] = ()
     references: tuple[str, ...] = ()
     source_dir: str = ""
+    trusted: bool = False
+    scripts_enabled: bool = False
 
 
-def _load_skill_states() -> dict[str, bool]:
+def _skill_state_path() -> Path:
+    return USER_SKILL_DIR / "skills_state.json"
+
+
+def _load_skill_states() -> dict[str, dict[str, bool]]:
     """读取技能启停状态；缺省视为启用。"""
 
-    if not SKILL_STATE_PATH.is_file():
+    path = _skill_state_path()
+    if not path.is_file():
         return {}
     try:
-        raw = json.loads(SKILL_STATE_PATH.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    states: dict[str, bool] = {}
+    states: dict[str, dict[str, bool]] = {}
     if isinstance(raw, dict):
         for name, value in raw.items():
             if isinstance(value, bool):
-                states[name] = value
-            elif isinstance(value, dict) and isinstance(value.get("enabled"), bool):
-                states[name] = value["enabled"]
+                states[name] = {"enabled": value}
+            elif isinstance(value, dict):
+                states[name] = {
+                    str(key): bool(item)
+                    for key, item in value.items()
+                    if key in {"enabled", "trusted", "scripts_enabled"}
+                    and isinstance(item, bool)
+                }
     return states
 
 
-def _save_skill_state(name: str, enabled: bool) -> None:
+def _save_skill_state(name: str, **updates: bool) -> None:
     states = _load_skill_states()
-    states[name] = enabled
-    SKILL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = SKILL_STATE_PATH.with_suffix(".json.tmp")
+    current = dict(states.get(name) or {})
+    current.update({key: bool(value) for key, value in updates.items()})
+    states[name] = current
+    path = _skill_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(states, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, SKILL_STATE_PATH)
+    os.replace(tmp, path)
 
 
 def _scan_dir(directory: Path, known: set[str], builtin: bool) -> dict[str, SkillSpec]:
@@ -169,9 +185,18 @@ def _load_skills() -> dict[str, SkillSpec]:
         if name not in loaded:
             loaded[name] = spec
     for name, spec in loaded.items():
-        enabled = states.get(name, True)
-        if not enabled:
-            loaded[name] = replace(spec, enabled=False)
+        state = states.get(name) or {}
+        enabled = state.get("enabled", True)
+        trusted = state.get("trusted", bool(spec.builtin))
+        scripts_enabled = state.get(
+            "scripts_enabled", bool(spec.builtin or (not spec.builtin and not spec.scripts))
+        )
+        loaded[name] = replace(
+            spec,
+            enabled=enabled,
+            trusted=trusted,
+            scripts_enabled=scripts_enabled,
+        )
     return loaded
 
 
@@ -259,7 +284,7 @@ def tools_for_skill(skill: SkillSpec) -> list[BaseTool]:
     """按技能配置解析出实际 BaseTool 列表（引用 registry 单一事实来源）。"""
 
     by_name = {spec.name: spec.tool for spec in tool_specs()}
-    return [by_name[name] for name in skill.tool_names]
+    return [by_name[name] for name in skill.tool_names if name in by_name]
 
 
 def create_skill(
@@ -306,6 +331,7 @@ def create_skill(
     )
     os.replace(tmp, target)
     refresh_skills()
+    set_skill_state(name, enabled=True, trusted=True, scripts_enabled=False)
     return get_skill(name)
 
 
@@ -327,10 +353,11 @@ def delete_skill(name: str) -> bool:
     states = _load_skill_states()
     if name in states:
         states.pop(name)
-        SKILL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = SKILL_STATE_PATH.with_suffix(".json.tmp")
+        path = _skill_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(states, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, SKILL_STATE_PATH)
+        os.replace(tmp, path)
     refresh_skills()
     return True
 
@@ -339,7 +366,32 @@ def set_skill_enabled(name: str, enabled: bool) -> SkillSpec:
     """切换技能启用状态（内置与自定义均可停用）。"""
 
     get_skill(name)
-    _save_skill_state(name, bool(enabled))
+    _save_skill_state(name, enabled=bool(enabled))
+    refresh_skills()
+    return get_skill(name)
+
+
+def set_skill_state(
+    name: str,
+    *,
+    enabled: bool | None = None,
+    trusted: bool | None = None,
+    scripts_enabled: bool | None = None,
+) -> SkillSpec:
+    """Persist lifecycle and script trust state for a user Skill."""
+
+    get_skill(name)
+    updates = {
+        key: value
+        for key, value in {
+            "enabled": enabled,
+            "trusted": trusted,
+            "scripts_enabled": scripts_enabled,
+        }.items()
+        if value is not None
+    }
+    if updates:
+        _save_skill_state(name, **updates)
     refresh_skills()
     return get_skill(name)
 
@@ -399,7 +451,44 @@ def load_skill(skill_name: str, runtime: ToolRuntime[PersonaAgentContext]) -> Co
                 ]
             }
         )
+    if not skill.trusted:
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(
+                        content=json.dumps(
+                            {"status": "untrusted", "skill": skill_name, "instructions": ""},
+                            ensure_ascii=False,
+                        ),
+                        tool_call_id=runtime.tool_call_id,
+                    )
+                ]
+            }
+        )
     persona_id = runtime.context.persona_id
+    policies = list(runtime.context.capability_policies)
+    if not skill_is_assigned(skill, persona_id, policies):
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(
+                        content=json.dumps(
+                            {
+                                "status": (
+                                    "disabled_by_persona_policy"
+                                    if skill_policy_value(skill.name, persona_id, policies) is False
+                                    else "not_assigned_to_persona"
+                                ),
+                                "skill": skill_name,
+                                "instructions": "",
+                            },
+                            ensure_ascii=False,
+                        ),
+                        tool_call_id=runtime.tool_call_id,
+                    )
+                ]
+            }
+        )
     visible_tools = [
         name for name in skill.tool_names if is_mcp_tool_visible(persona_id, name)
     ]
@@ -413,10 +502,10 @@ def load_skill(skill_name: str, runtime: ToolRuntime[PersonaAgentContext]) -> Co
     # 工具直接改 runtime.state 不会保留到下一次模型调用；必须通过
     # Command(update=...) 走 LangGraph 状态更新协议，且回填对应 tool_call_id
     # 的 ToolMessage，保证工具调用协议闭合。
-    update = [skill.name] if skill.name not in loaded else []
+    updated_loaded = list(dict.fromkeys([*loaded, skill.name]))
     return Command(
         update={
-            "loaded_skills": update,
+            "loaded_skills": updated_loaded,
             "messages": [
                 ToolMessage(
                     content=json.dumps(

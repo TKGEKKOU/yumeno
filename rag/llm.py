@@ -3,6 +3,7 @@ import time
 from functools import lru_cache
 
 import httpx
+from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
 
@@ -31,20 +32,47 @@ def _sleep(seconds: float) -> None:
 
 
 # 这里使用 OpenAI-compatible 接口。只要服务兼容 OpenAI Chat Completions，就可以替换 base_url 和 model。
-@lru_cache(maxsize=8)
-def _build_llm(api_key: str, base_url: str, model: str) -> ChatOpenAI:
+def _create_llm(
+    api_key: str,
+    base_url: str,
+    model: str,
+    timeout: float = 60,
+    max_retries: int = 2,
+) -> ChatOpenAI:
     return ChatOpenAI(
         api_key=api_key,
         base_url=base_url,
         model=model,
         temperature=0,
-        http_client=httpx.Client(trust_env=False, timeout=60),
+        max_retries=max_retries,
+        http_client=httpx.Client(trust_env=False, timeout=timeout),
     )
+
+
+@lru_cache(maxsize=8)
+def _build_llm(api_key: str, base_url: str, model: str) -> ChatOpenAI:
+    return _create_llm(api_key, base_url, model)
 
 
 def get_llm(settings: Settings | None = None) -> ChatOpenAI:
     active = settings or Settings.load()
     return _build_llm(active.openai_api_key, active.openai_base_url, active.openai_model)
+
+
+def probe_llm(api_key: str, base_url: str, model: str) -> str:
+    """用一次最小文本请求验证 OpenAI-compatible Chat Completions 连接。"""
+    client = _create_llm(api_key, base_url, model, timeout=20, max_retries=0)
+    response = client.invoke([HumanMessage(content="Reply with exactly: YUMENO_OK")])
+    content = response.content
+    if isinstance(content, list):
+        content = "".join(
+            part.get("text", "") if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    text = str(content or "").strip()
+    if not text:
+        raise RuntimeError("模型返回了空文本")
+    return text
 
 
 def invoke_llm(prompt, values: dict) -> str:

@@ -160,23 +160,57 @@
     for (const model of window.PLLive2D.models) {
       const option = document.createElement("option");
       option.value = model.id;
-      option.textContent = model.name;
+      option.textContent = model.compatible === false
+        ? `${model.name}（MOC3 v${model.moc_version} 不兼容）`
+        : model.name;
+      option.disabled = model.compatible === false;
       select.append(option);
     }
     if (window.PLLive2D.currentId) select.value = window.PLLive2D.currentId;
-    select.hidden = select.options.length < 2;
+    select.hidden = select.options.length === 0;
   }
 
   function syncControls() {
     const flip = $("live2d-flip");
-    const mode = $("live2d-mode");
     if (flip && window.PLLive2D) flip.classList.toggle("is-active", window.PLLive2D.flip);
-    if (mode && window.PLLive2D) {
-      const vts = window.PLLive2D.mode === "vts";
-      mode.classList.toggle("is-active", vts);
-      mode.title = vts ? "渲染方式：VTube Studio" : "渲染方式：内嵌";
-      mode.setAttribute("aria-label", mode.title);
-      if (vts) setStatus("connecting", "正在连接 VTube Studio…");
+  }
+
+  function renderVtsStatus(detail) {
+    const card = $("vts-connection-card");
+    if (!card) return;
+    const dot = $("vts-connection-dot");
+    const title = $("vts-connection-detail");
+    const menuState = $("vts-menu-state");
+    const message = $("vts-connection-message");
+    const connect = $("vts-connect");
+    const state = detail?.level || window.PLVTS?.status || "offline";
+    const labels = { connecting: "连接中", auth: "等待授权", ok: "已连接", error: "连接失败", offline: "未连接" };
+    card.dataset.state = state;
+    if (dot) dot.title = labels[state] || state;
+    if (title) title.textContent = labels[state] || state;
+    if (menuState) menuState.textContent = labels[state] || state;
+    if (message && detail?.message) message.textContent = detail.message;
+    if (connect) {
+      const active = state === "connecting" || state === "auth";
+      connect.disabled = active;
+      connect.querySelector("span").textContent = state === "ok" ? "断开" : active ? "连接中" : "连接";
+    }
+    if (state === "ok") setStatus("idle", "VTube Studio 已连接");
+    else if (state === "error") setStatus("error", detail.message);
+    if ((state === "offline" || state === "error") && window.PLLive2D?.mode === "vts") {
+      window.PLLive2D.setMode("embedded");
+    }
+  }
+
+  async function loadVtsConfig() {
+    try {
+      const response = await fetch("/api/live2d/vts");
+      const config = await response.json();
+      const endpoint = $("vts-endpoint-input");
+      if (endpoint) endpoint.value = window.PLVTS?.url || config.url || endpoint.value;
+      renderVtsStatus({ level: "offline", message: "当前为内嵌模式；连接仅在本次会话有效。" });
+    } catch (e) {
+      renderVtsStatus({ level: "error", message: "无法读取连接配置，请确认 YUMENO 后端正在运行" });
     }
   }
 
@@ -352,23 +386,22 @@
   function bindEvents() {
     // 事件委托：聊天视图是异步挂载的，直接绑定时按钮还不存在；
     // 委托到 document 后无论视图何时渲染都能响应。
-    document.addEventListener("click", (event) => {
+    document.addEventListener("click", async (event) => {
       const outsideMenu = !event.target.closest("#live2d-more") && !event.target.closest("#live2d-more-menu");
       const more = event.target.closest("#live2d-more");
       if (more) {
         const menu = $("live2d-more-menu");
         const open = menu.classList.toggle("is-hidden") === false;
         more.setAttribute("aria-expanded", String(open));
+        if (!open) closeMoreMenu();
         return;
       }
       const focusHint = event.target.closest("#live2d-focus-hint");
       if (focusHint) { exitFocusMode(true); return; }
       if (outsideMenu) {
         const menu = $("live2d-more-menu");
-        const moreBtn = $("live2d-more");
         if (menu && !menu.classList.contains("is-hidden")) {
-          menu.classList.add("is-hidden");
-          if (moreBtn) moreBtn.setAttribute("aria-expanded", "false");
+          closeMoreMenu();
         }
       }
       const toggle = event.target.closest("#live2d-toggle");
@@ -381,11 +414,66 @@
         syncControls();
         return;
       }
-      const mode = event.target.closest("#live2d-mode");
-      if (mode) {
-        if (window.PLLive2D) window.PLLive2D.setMode(window.PLLive2D.mode === "vts" ? "embedded" : "vts");
-        syncControls();
+      const modelToggle = event.target.closest("#live2d-model-toggle");
+      if (modelToggle) {
+        toggleMoreSubpanel("live2d-model-toggle", "live2d-model-panel", "vts-details-toggle", "vts-connection-card");
         return;
+      }
+      const vtsToggle = event.target.closest("#vts-details-toggle");
+      if (vtsToggle) {
+        toggleMoreSubpanel("vts-details-toggle", "vts-connection-card", "live2d-model-toggle", "live2d-model-panel");
+        return;
+      }
+      const manage = event.target.closest("#live2d-manage");
+      if (manage) {
+        closeMoreMenu();
+        sessionStorage.setItem("yumeno.manage.node", "module:live2d");
+        const nav = $("nav-manage");
+        if (nav) nav.click();
+        document.dispatchEvent(new CustomEvent("yumeno:manage-select-node", { detail: { nodeId: "module:live2d" } }));
+        return;
+      }
+      const openFolder = event.target.closest("#live2d-open-folder");
+      if (openFolder) {
+        setStatus("loading", "正在打开模型文件夹...");
+        try {
+          const response = await fetch("/api/live2d/model-directory", { method: "POST", headers: { "X-YUMENO-Request": "web" } });
+          if (!response.ok) throw new Error("无法打开模型文件夹");
+          setStatus("idle", "已打开模型文件夹；复制模型后点击刷新");
+        } catch (error) { setStatus("error", error.message); }
+        return;
+      }
+      const refreshModels = event.target.closest("#live2d-refresh-models");
+      if (refreshModels && window.PLLive2D) {
+        setStatus("loading", "正在扫描模型...");
+        try {
+          const models = await window.PLLive2D.refreshModels();
+          renderModelSelect();
+          setStatus("idle", `已发现 ${models.length} 个模型`);
+        } catch (error) { setStatus("error", "刷新模型失败：" + error.message); }
+        return;
+      }
+      const connect = event.target.closest("#vts-connect");
+      if (connect && window.PLVTS) {
+        const input = $("vts-endpoint-input");
+        try { if (input) window.PLVTS.setUrl(input.value); }
+        catch (error) { renderVtsStatus({ level: "error", message: error.message }); return; }
+        if (window.PLVTS.connected) {
+          window.PLVTS.disconnect();
+          if (window.PLLive2D) window.PLLive2D.setMode("embedded");
+        } else {
+          if (window.PLLive2D) window.PLLive2D.setMode("vts");
+          else window.PLVTS.connect();
+        }
+        return;
+      }
+      const clearToken = event.target.closest("#vts-clear-token");
+      if (clearToken && window.PLVTS) {
+        const input = $("vts-endpoint-input");
+        try { if (input) window.PLVTS.setUrl(input.value); }
+        catch (error) { renderVtsStatus({ level: "error", message: error.message }); return; }
+        if (window.PLLive2D) window.PLLive2D.setMode("vts");
+        window.PLVTS.clearToken(); window.PLVTS.connect(); return;
       }
     });
     document.addEventListener("change", (event) => {
@@ -395,6 +483,8 @@
     });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
+        const menu = $("live2d-more-menu");
+        if (menu && !menu.classList.contains("is-hidden")) { closeMoreMenu(); return; }
         const node = $("live2d-dock");
         if (node && !node.hidden) closeDock();
       }
@@ -411,8 +501,32 @@
         syncToggleButton();
       }
       if (detail.type === "vts") setStatus(detail.level === "ok" ? "idle" : detail.level, detail.message);
+      if (detail.type === "vts") renderVtsStatus(detail);
       if (detail.type === "status") setStatus(detail.level === "ok" ? "idle" : detail.level, detail.message);
     });
+  }
+
+  function setSubpanel(buttonId, panelId, open) {
+    const button = $(buttonId);
+    const panel = $(panelId);
+    if (button) button.setAttribute("aria-expanded", String(open));
+    if (panel) panel.classList.toggle("is-hidden", !open);
+  }
+
+  function toggleMoreSubpanel(buttonId, panelId, otherButtonId, otherPanelId) {
+    const panel = $(panelId);
+    const open = Boolean(panel && panel.classList.contains("is-hidden"));
+    setSubpanel(otherButtonId, otherPanelId, false);
+    setSubpanel(buttonId, panelId, open);
+  }
+
+  function closeMoreMenu() {
+    const menu = $("live2d-more-menu");
+    const more = $("live2d-more");
+    if (menu) menu.classList.add("is-hidden");
+    if (more) more.setAttribute("aria-expanded", "false");
+    setSubpanel("live2d-model-toggle", "live2d-model-panel", false);
+    setSubpanel("vts-details-toggle", "vts-connection-card", false);
   }
 
   function autoOpenWhenReady() {
@@ -435,11 +549,18 @@
     setAgentState: (state) => { if (window.PLLive2D) window.PLLive2D.setAgentState(state); },
     setVoiceState: (state) => { if (window.PLLive2D) window.PLLive2D.setVoiceState(state); },
     setPersonaModel: (id) => { if (window.PLLive2D) window.PLLive2D.setPreferredModel(id); },
+    open: () => openDock(),
+    refreshLayout: () => requestAnimationFrame(() => {
+      if (!controllerReady || !window.PLLive2D) return;
+      window.PLLive2D.show();
+      window.PLLive2D.resize();
+    }),
   };
 
   document.addEventListener("DOMContentLoaded", () => {
     bindEvents();
     bindStageResize();
+    loadVtsConfig();
     autoOpenWhenReady();
   });
 })();

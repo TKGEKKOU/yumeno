@@ -67,6 +67,7 @@ function bindSettingsEvents() {
   bindIf("collapse-status", "click", toggleStatusCards);
   bindIf("settings-form", "submit", requestSettingsSave);
   bindIf("reset-settings", "click", requestSettingsReset);
+  bindIf("test-llm-connection", "click", testLlmConnection);
   bindIf("llm-provider", "change", applyLlmPreset);
   ["openai-api-key", "web-search-api-key"].forEach((id) => {
     bindIf(`toggle-${id}`, "click", () => toggleApiKeyVisibility(id));
@@ -85,12 +86,6 @@ function bindSettingsEvents() {
   bindIf("cancel-embedding", "click", cancelEmbedding);
   bindIf("remove-embedding", "click", removeEmbedding);
   bindIf("open-embedding-directory", "click", openEmbeddingDirectory);
-  bindIf("tts-enabled", "change", saveTtsConfig);
-  bindIf("tts-use-gpu", "change", saveTtsConfig);
-  bindIf("install-tts", "click", installTts);
-  bindIf("cancel-tts", "click", cancelTts);
-  bindIf("remove-tts", "click", removeTts);
-  bindIf("open-tts-directory", "click", openTtsDirectory);
   bindIf("install-separator", "click", installSeparator);
   bindIf("cancel-separator", "click", cancelSeparator);
   bindIf("remove-separator", "click", removeSeparator);
@@ -105,7 +100,6 @@ function bindSettingsEvents() {
   bindIf("stop-gptsovits-service", "click", stopGptSoVitsService);
   bindIf("open-gptsovits-directory", "click", openGptSoVitsDirectory);
   bindIf("remove-gptsovits", "click", removeGptSoVitsInstall);
-  bindIf("preview-tts", "click", previewTts);
   document.querySelectorAll("[data-collapsible]").forEach((section) => section.addEventListener("toggle", () => {
     const label = section.querySelector(".section-toggle-label");
     if (label) label.textContent = section.open ? "收起" : "展开";
@@ -206,12 +200,6 @@ function prepareSettingsSections() {
     asrSection.querySelector(".settings-grid")?.after(guide);
   }
 
-  const ttsGuide = $("tts-guide");
-  if (ttsGuide) {
-    ttsGuide.open = false;
-    ttsGuide.querySelector("summary").textContent = "参数说明与获取途径";
-    ttsGuide.querySelector("p").textContent = "Lunar 引擎：下载约 2.2 GB 的 Qwen3-TTS GGUF 模型即可使用，适合快速参考音色克隆；GPT-SoVITS 引擎：需要训练式音色时在下方下载整合包，并在声音页“训练”环节训练专属模型。选择引擎后，另一引擎会自动停用。";
-  }
 }
 async function loadSettings() {
   try {
@@ -231,6 +219,36 @@ async function loadSettings() {
     $("web-search-provider").value = config.web_search_provider === "off" ? "bocha" : config.web_search_provider;
     renderEmbeddingInstallAction(); renderChunkWarning(); renderWebSearchSettings();
   } catch (reason) { setText("settings-status", reason, true); }
+}
+
+async function testLlmConnection() {
+  const button = $("test-llm-connection");
+  const baseUrl = $("openai-base-url").value.trim();
+  const model = $("openai-model").value.trim();
+  setText("llm-test-status");
+  if (!isHttpUrl(baseUrl) || !model) {
+    return setText("llm-test-status", "请先填写有效的 Base URL 和模型名。", true);
+  }
+  button.disabled = true;
+  button.classList.add("is-loading");
+  setText("llm-test-status", "正在验证文本对话接口…");
+  try {
+    const result = await api(fetch("/api/settings/llm/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
+      body: JSON.stringify({
+        api_key: $("openai-api-key").value.trim(),
+        base_url: baseUrl,
+        model,
+      }),
+    }));
+    setText("llm-test-status", `${result.message} · ${result.model}`);
+  } catch (reason) {
+    setText("llm-test-status", reason, true);
+  } finally {
+    button.disabled = false;
+    button.classList.remove("is-loading");
+  }
 }
 async function loadEmbeddingStatus() {
   try {
@@ -373,108 +391,6 @@ async function openAsrDirectory() {
   } catch (reason) { setText("asr-status", `打开失败：${friendlyError(reason)}`, true); }
   finally { button.disabled = false; }
 }
-async function loadTtsStatus() {
-  try {
-    const config = await api(fetch("/api/tts/status"));
-    state.ttsConfigured = config.ready;
-    updateComposerControls();
-    if (!$("tts-enabled")) return;
-    $("tts-enabled").checked = config.enabled;
-    $("tts-use-gpu").checked = config.use_gpu;
-    setDisabled("tts-use-gpu", config.installing);
-    document.querySelectorAll('input[name="tts-engine"]').forEach((input) => {
-      input.checked = input.value === config.engine;
-      input.disabled = config.installing;
-    });
-    const gptEngine = config.engine === "gpt_sovits";
-    setDisabled("tts-enabled", gptEngine || config.installing);
-    const lunarState = $("tts-engine-lunar-state");
-    if (lunarState) {
-      lunarState.textContent = gptEngine ? "已停用" : config.installed ? "已就绪" : "未安装";
-      lunarState.classList.toggle("is-error", gptEngine);
-    }
-    setDisabled("install-tts", gptEngine || config.installing || config.variant_installed || !config.runtime_bundled);
-    setDisabled("remove-tts", gptEngine || config.installing || !(config.variants || []).some((v) => v.installed));
-    setDisabled("open-tts-directory", gptEngine || config.installing);
-    setDisabled("preview-tts", gptEngine || !config.ready);
-    if (gptEngine && $("install-tts")) $("install-tts").textContent = "已停用（当前使用 GPT-SoVITS）";
-    else if (config.installing) $("install-tts").textContent = "安装中";
-    else if (config.variant_installed) $("install-tts").textContent = "已安装";
-    else $("install-tts").textContent = "自动下载安装";
-    setText("tts-engine-hint", gptEngine
-      ? "已启用 GPT-SoVITS 训练引擎，Lunar 引擎已停用；未安装时请在下方下载整合包"
-      : "Lunar 引擎用于快速参考音色克隆；GPT-SoVITS 用于训练式专属音色");
-    if (gptEngine && config.ready) {
-      setText("tts-status", "当前使用 GPT-SoVITS 引擎（Lunar 已停用）");
-    }
-    const ttsState = config.installing ? "installing" : config.ready ? "ready" : config.enabled ? "not_installed" : "disabled";
-    renderServiceStatus("tts", "TTS", ttsState, ttsState);
-    const size = (bytes) => bytes ? `${(bytes / 1024 / 1024).toFixed(bytes > 1024 * 1024 * 100 ? 0 : 1)} MB` : "";
-    const duration = (seconds) => seconds == null ? "正在估算剩余时间" : seconds < 60 ? `预计剩余 ${seconds} 秒` : `预计剩余 ${Math.ceil(seconds / 60)} 分钟`;
-    const phaseNames = { preparing: "准备下载", model: "下载模型", cancelling: "正在取消", complete: "安装完成", error: "安装失败" };
-    const ttsStateNode = $("tts-state");
-    if (ttsStateNode) ttsStateNode.textContent = config.installing ? (phaseNames[config.phase] || "正在安装") : config.ready ? "已就绪" : config.enabled ? "尚未安装" : "已关闭";
-    setText("tts-status", config.error || (!config.runtime_bundled ? "当前开发目录缺少内置 Lunar TTS 运行库；完整 Windows 发布包将自带该文件" : config.ready ? `Qwen3-TTS-0.6B · ${config.model_dir}` : config.download_size));
-    const progress = $("tts-progress");
-    if (progress) { progress.classList.toggle("is-hidden", !config.installing); if (config.progress_percent == null) progress.removeAttribute("value"); else progress.value = config.progress_percent; }
-    const speed = config.download_speed_bytes ? `${size(config.download_speed_bytes)}/s` : "";
-    const percent = config.progress_percent != null ? `${config.progress_percent}%` : "";
-    const elapsed = config.elapsed_seconds ? `已用时 ${config.elapsed_seconds} 秒` : "";
-    setText("tts-progress-detail", config.installing ? [percent, config.source ? `源：${config.source}` : "", config.current_file, size(config.downloaded_bytes), config.total_bytes ? `/ ${size(config.total_bytes)}` : "", speed, duration(config.eta_seconds), elapsed].filter(Boolean).join(" · ") : "");
-    setHidden("cancel-tts", !config.installing);
-    setDisabled("cancel-tts", !config.installing || config.cancelling);
-    state.ttsStatus = config;
-    if (state.editPersona) {
-      const reference = await api(fetch(`/api/tts/personas/${state.editPersona.id}/reference`, { headers: { "X-YUMENO-Request": "web" } }));
-      syncEditTtsPreview(reference.configured);
-    }
-    if (config.installing) setTimeout(loadTtsStatus, 1500);
-  } catch (reason) {
-    state.ttsConfigured = false;
-    updateComposerControls();
-    if (!$("tts-enabled")) return;
-    renderServiceStatus("tts", "TTS", "unavailable");
-    setText("tts-status", `语音服务不可用：${friendlyError(reason)}`, true);
-  }
-}
-async function saveTtsConfig() {
-  try {
-    const engineInput = document.querySelector('input[name="tts-engine"]:checked');
-    await api(fetch("/api/tts/config", { method: "PATCH", headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" }, body: JSON.stringify({ enabled: $("tts-enabled").checked, use_gpu: $("tts-use-gpu").checked, engine: engineInput ? engineInput.value : undefined }) }));
-    await loadTtsStatus();
-  } catch (reason) { setText("tts-status", `保存失败：${friendlyError(reason)}`, true); }
-}
-async function installTts() {
-  if (!confirm("将下载约 2.2 GB 的 Qwen3-TTS GGUF 模型（F16 标准版），Lunar TTS 运行库已随应用内置。是否继续？")) return;
-  setDisabled("install-tts", true);
-  try {
-    await api(fetch("/api/tts/install", { method: "POST", headers: { "X-YUMENO-Request": "web" } }));
-    await loadTtsStatus();
-  } catch (reason) { setText("tts-status", `安装失败：${friendlyError(reason)}`, true); setDisabled("install-tts", false); }
-}
-async function removeTts() {
-  if (!confirm("删除已下载的 TTS 模型？内置运行库和角色参考声音不会删除。")) return;
-  setDisabled("remove-tts", true);
-  try {
-    await api(fetch("/api/tts/install", { method: "DELETE", headers: { "X-YUMENO-Request": "web" } }));
-    await loadTtsStatus();
-  } catch (reason) { setText("tts-status", `删除失败：${friendlyError(reason)}`, true); setDisabled("remove-tts", false); }
-}
-async function cancelTts() {
-  setDisabled("cancel-tts", true);
-  try {
-    await api(fetch("/api/tts/install/cancel", { method: "DELETE", headers: { "X-YUMENO-Request": "web" } }));
-    await loadTtsStatus();
-  } catch (reason) { setText("tts-status", `取消失败：${friendlyError(reason)}`, true); setDisabled("cancel-tts", false); }
-}
-async function openTtsDirectory() {
-  setDisabled("open-tts-directory", true);
-  try {
-    const result = await api(fetch("/api/tts/model-directory", { method: "POST", headers: { "X-YUMENO-Request": "web" } }));
-    setText("tts-status", `已打开：${result.opened_directory}`);
-  } catch (reason) { setText("tts-status", `打开失败：${friendlyError(reason)}`, true); }
-  finally { setDisabled("open-tts-directory", false); }
-}
 async function loadSeparatorStatus() {
   try {
     const config = await api(fetch("/api/tts/separator/status", { headers: { "X-YUMENO-Request": "web" } }));
@@ -533,8 +449,16 @@ async function removeSeparator() {
   async function loadGptSoVitsStatus() {
     try {
       const status = await api(fetch("/api/gpt-sovits/status"));
+      state.ttsConfigured = Boolean(status.installed);
+      updateComposerControls();
       if (!$("gptsovits-state")) return;
       const install = status.install || {};
+      const ttsState = install.installing
+        ? "installing"
+        : status.ready ? "ready"
+        : status.installed ? "ready"
+        : "not_installed";
+      renderServiceStatus("tts", "TTS", ttsState, ttsState);
       const size = formatBytes;
       const phaseNames = {
         preparing: "准备下载",
@@ -616,6 +540,9 @@ async function removeSeparator() {
         : status.installed ? "GPT-SoVITS 服务未运行（合成时自动启动）" : "");
       if (install.installing) setTimeout(loadGptSoVitsStatus, 1500);
     } catch (reason) {
+      state.ttsConfigured = false;
+      updateComposerControls();
+      renderServiceStatus("tts", "TTS", "unavailable");
       setText("gptsovits-status", `不可用：${friendlyError(reason)}`, true);
     }
   }
@@ -800,28 +727,6 @@ async function removeSeparator() {
       setText("gptsovits-status", `删除失败：${friendlyError(reason)}`, true);
     }
   }
-  async function previewTts() {
-  const text = $("tts-preview-text").value.trim();
-  if (!text) return setText("tts-preview-status", "请输入试听文本");
-  const button = $("preview-tts");
-  if (!button) return;
-  button.disabled = true;
-  setText("tts-preview-status", "正在生成试听");
-  try {
-    const response = await fetch("/api/tts/preview", { method: "POST", headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" }, body: JSON.stringify({ text }) });
-    if (!response.ok) {
-      const data = await response.json().catch(() => null);
-      throw new Error(data?.detail || `请求失败 (${response.status})`);
-    }
-    const audio = $("tts-preview-audio");
-    if (audio.src) URL.revokeObjectURL(audio.src);
-    audio.src = URL.createObjectURL(await response.blob());
-    audio.classList.remove("is-hidden");
-    setText("tts-preview-status", "试听已生成");
-    audio.play().catch(() => {});
-  } catch (reason) { setText("tts-preview-status", `生成失败：${friendlyError(reason)}`, true); }
-  finally { button.disabled = !state.ttsConfigured; }
-}
 function normalizedUrl(value) { return value.trim().replace(/\/+$/, "").toLowerCase(); }
 function inferProvider(presets, baseUrl) {
   const current = normalizedUrl(baseUrl || "");

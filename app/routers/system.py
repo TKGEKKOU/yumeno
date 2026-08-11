@@ -84,9 +84,9 @@ async def web_search_keyless_set(request: Request, payload: dict) -> dict:
             command="uvx",
             args=[
                 "--from",
-                "free-search-mcp==0.4.2",
+                "free-search-mcp==0.9.2",
                 "--with",
-                "mcp==1.29.0",
+                "mcp==2.0.0",
                 "free-search-mcp",
             ],
             env={
@@ -107,7 +107,7 @@ async def web_search_keyless_set(request: Request, payload: dict) -> dict:
     else:
         remaining = [s for s in servers if s.name != KEYLESS_SERVER_NAME]
         manager.save_configs(remaining)
-        manager.disable_server(KEYLESS_SERVER_NAME)
+        await manager.disable_server_async(KEYLESS_SERVER_NAME)
     from agents.mcp_grants import refresh_grants
     from agents.skills import refresh_skills
 

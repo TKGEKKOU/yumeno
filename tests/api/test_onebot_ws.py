@@ -27,7 +27,7 @@ def _prepare(client, tmp_path, monkeypatch):
     bindings_path = tmp_path / "bindings.json"
     config_path.write_text(
         '{"onebot11": {"enabled": true, "access_token": "", '
-        '"group_trigger": "at", "prefix": "", "default_persona_id": ""}}',
+        '"group_trigger": "at", "prefix": "", "default_persona_id": "", "auto_reply_enabled": true}}',
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -46,7 +46,7 @@ def _prepare(client, tmp_path, monkeypatch):
     config_path.write_text(
         '{"onebot11": {"enabled": true, "access_token": "", '
         '"group_trigger": "at", "prefix": "", "default_persona_id": "'
-        + persona_id + '"}}',
+        + persona_id + '", "auto_reply_enabled": true}}',
         encoding="utf-8",
     )
 
@@ -143,3 +143,26 @@ def test_disabled_integration_rejects_connection(client, tmp_path, monkeypatch):
         assert data.get("code") == 1008
     except WebSocketDisconnect:
         pass
+
+
+def test_authorized_group_can_receive_spontaneous_reply(client, tmp_path, monkeypatch):
+    _prepare(client, tmp_path, monkeypatch)
+    config_path = client.app.state.im_router.integrations_path
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            '"auto_reply_enabled": true',
+            '"auto_reply_enabled": true, "authorized_group_ids": ["30001"], "spontaneous_reply_probability": 1.0',
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("integrations.onebot11.router.random.random", lambda: 0.0)
+    monkeypatch.setattr("integrations.onebot11.router._classify_spontaneous_reply", lambda text: True)
+    with client.websocket_connect("/api/onebot/ws") as ws:
+        ws.send_json({
+            "post_type": "message", "message_type": "group", "self_id": 10001,
+            "user_id": 20001, "group_id": 30001,
+            "message": [{"type": "text", "data": {"text": "这个话题很适合角色回应"}}],
+            "raw_message": "这个话题很适合角色回应",
+        })
+        action = ws.receive_json()
+        assert action["action"] == "send_group_msg"

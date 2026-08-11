@@ -3,7 +3,7 @@ from datetime import datetime
 from itertools import count
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -65,6 +65,32 @@ class Persona(Base):
     )
 
 
+class PersonaCapabilityPolicy(Base):
+    """Explicit capability overrides for a persona.
+
+    Connection configuration and role authorization are deliberately stored in
+    different places. ``persona_id='*'`` is the global default policy scope.
+    """
+
+    __tablename__ = "persona_capability_policies"
+    __table_args__ = (
+        UniqueConstraint(
+            "persona_id", "capability_id", name="uq_persona_capability_policy"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    persona_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    capability_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class PersonaDraft(Base):
     __tablename__ = "persona_drafts"
 
@@ -113,6 +139,20 @@ class PersonaMemory(Base):
     )
 
 
+class WorkspaceMemory(Base):
+    __tablename__ = "workspace_memories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_message_id)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=datetime.utcnow, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
 
@@ -147,6 +187,7 @@ class VoiceAsset(Base):
     gpt_weights_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     sovits_weights_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     refer_audio_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    reference_language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     dataset_dir: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     preview_audio_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

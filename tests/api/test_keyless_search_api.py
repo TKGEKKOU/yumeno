@@ -26,7 +26,7 @@ class FakeManager:
         self.status_map[name] = {"status": "connected", "tool_count": 2, "error": ""}
         return self.status_map[name]
 
-    def disable_server(self, name):
+    async def disable_server_async(self, name):
         self.disabled.append(name)
         self.status_map[name] = {"status": "disabled", "tool_count": 0, "error": ""}
 
@@ -63,9 +63,9 @@ def test_keyless_enable_writes_config_and_reloads(client, keyless):
     assert config.command == "uvx"
     assert config.args == [
         "--from",
-        "free-search-mcp==0.4.2",
+        "free-search-mcp==0.9.2",
         "--with",
-        "mcp==1.29.0",
+        "mcp==2.0.0",
         "free-search-mcp",
     ]
     assert config.env["UV_DEFAULT_INDEX"] == "https://mirrors.aliyun.com/pypi/simple/"

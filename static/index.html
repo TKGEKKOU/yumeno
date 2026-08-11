@@ -14,7 +14,10 @@
   <script src="/static/js/voice-studio.js" defer></script>
   <script src="/static/js/settings.js" defer></script>
   <script src="/static/js/integrations.js" defer></script>
-  <script src="/static/js/plugins.js" defer></script>
+  <script src="/static/js/napcat.js" defer></script>
+  <script src="/static/js/manage-bridge.js" defer></script>
+  <script src="/static/js/vue-pages-bridge.js" defer></script>
+  <script src="/static/live2d/angle-z-motion.js" defer></script>
   <script src="/static/live2d/vts.js" defer></script>
   <script src="/static/live2d/live2d-panel.js" defer></script>
   <script src="/static/js/common.js" defer></script>
@@ -25,14 +28,15 @@
   <aside class="site-sidebar">
     <div class="sidebar-inner">
       <nav class="primary-nav" aria-label="主导航">
-        <button id="nav-chat" class="nav-item" type="button" data-view="chat" title="对话"><i data-lucide="message-circle"></i><span>对话</span></button>
-        <button id="nav-create" class="nav-item" type="button" data-view="create" title="新建角色"><i data-lucide="user-plus"></i><span>新建</span></button>
-        <button id="nav-manage" class="nav-item" type="button" data-view="manage" title="角色管理"><i data-lucide="library"></i><span>管理</span></button>
-        <button id="nav-voice" class="nav-item" type="button" data-view="voice" title="声音工坊"><i data-lucide="mic-vocal"></i><span>声音</span></button>
-        <button id="nav-integrations" class="nav-item" type="button" data-view="integrations" title="接入"><i data-lucide="plug"></i><span>接入</span></button>
-        <button id="nav-plugins" class="nav-item" type="button" data-view="plugins" title="扩展"><i data-lucide="puzzle"></i><span>扩展</span></button>
-        <button id="nav-test" class="nav-item" type="button" data-view="test" title="RAG 测试"><i data-lucide="flask-conical"></i><span>测试</span></button>
-        <button id="nav-settings" class="nav-item" type="button" data-view="settings" title="设置"><i data-lucide="settings-2"></i><span>设置</span></button>
+        <button id="nav-chat" class="nav-item" type="button" data-view="chat" title="对话"><i data-lucide="message-circle"></i><span class="nav-label">对话</span></button>
+        <button id="nav-create" class="nav-item" type="button" data-view="create" title="创建角色"><i data-lucide="user-plus"></i><span class="nav-label">创建角色</span></button>
+        <button id="nav-manage" class="nav-item" type="button" data-view="manage" title="管理角色、资料与能力"><i data-lucide="library"></i><span class="nav-label">管理</span></button>
+        <button id="nav-voice" class="nav-item" type="button" data-view="voice" title="声音"><i data-lucide="mic-vocal"></i><span class="nav-label">声音</span></button>
+        <button id="nav-integrations" class="nav-item" type="button" data-view="integrations" title="B站直播"><i data-lucide="radio-tower"></i><span class="nav-label">B站直播</span></button>
+        <button id="nav-napcat" class="nav-item" type="button" data-view="napcat" title="QQ 接入"><i data-lucide="message-square-more"></i><span class="nav-label">QQ 接入</span></button>
+        <button id="nav-plugins" class="nav-item" type="button" data-view="plugins" title="Skill、MCP 与 Tool 能力扩展"><i data-lucide="puzzle"></i><span class="nav-label">能力扩展</span></button>
+        <button id="nav-test" class="nav-item" type="button" data-view="test" title="RAG 评测"><i data-lucide="flask-conical"></i><span class="nav-label">RAG 评测</span></button>
+        <button id="nav-settings" class="nav-item" type="button" data-view="settings" title="系统设置"><i data-lucide="settings-2"></i><span class="nav-label">系统设置</span></button>
       </nav>
       <div class="sidebar-footer">
         <button id="theme-toggle" class="sidebar-toggle" type="button" aria-pressed="false" title="切换主题" aria-label="切换主题"><i class="theme-icon-sun" data-lucide="sun"></i><i class="theme-icon-moon" data-lucide="moon"></i></button>

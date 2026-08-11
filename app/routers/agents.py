@@ -7,12 +7,11 @@ from starlette.requests import HTTPConnection
 
 from app.chat_store import try_persist_text_message
 from agents.context import PersonaAgentContext
-from app.conversation_summary import get_conversation_summary
+from agents.context_factory import persona_agent_context_from_session
 from app.conversation_summary import schedule_summary_after_turn
 from app.database import get_session
-from app.models import Persona
 from app.schemas import AgentQueryPayload, AgentResumePayload, AgentTurnResponse
-from persona.service import PersonaNotFound, resolve_knowledge_scope
+from persona.service import PersonaNotFound
 
 
 router = APIRouter(prefix="/api/personas", tags=["agents"])
@@ -24,26 +23,15 @@ def context_for(
     persona_id: str,
     conversation_id: str,
 ) -> PersonaAgentContext:
-    # 服务端权威解析角色作用域：knowledge_space_ids 来自角色关联的知识空间，
-    # 请求方不能传入 workspace/knowledge_space，从根本上杜绝跨角色越权检索。
     try:
-        scope = resolve_knowledge_scope(session, persona_id)
+        return persona_agent_context_from_session(
+            session,
+            connection.app.state.session_factory,
+            persona_id,
+            conversation_id,
+        )
     except PersonaNotFound as exc:
         raise HTTPException(status_code=404, detail="Persona not found") from exc
-    persona = session.get(Persona, persona_id)
-    return PersonaAgentContext(
-        persona_id=persona.id,
-        workspace_id=scope.workspace_id,
-        knowledge_space_ids=scope.knowledge_space_ids,
-        conversation_id=conversation_id,
-        persona_name=persona.name,
-        persona_type=persona.persona_type,
-        persona_profile=persona.profile_json,
-        session_factory=connection.app.state.session_factory,
-        conversation_summary=get_conversation_summary(
-            session, scope.workspace_id, persona.id, conversation_id
-        ),
-    )
 
 
 def response_for(result) -> AgentTurnResponse:
@@ -59,6 +47,8 @@ def response_for(result) -> AgentTurnResponse:
         trace=list(result.trace),
         duration_seconds=result.duration_seconds,
         loaded_skills=list(result.loaded_skills),
+        events=list(result.events),
+        metrics=dict(result.metrics),
     )
 
 
@@ -153,7 +143,7 @@ async def stream_agent_resume(
 
 
 @router.post("/{persona_id}/agent/query", response_model=AgentTurnResponse)
-def query_agent(
+async def query_agent(
     persona_id: str,
     payload: AgentQueryPayload,
     request: Request,
@@ -168,7 +158,11 @@ def query_agent(
         role="user",
         content=payload.question,
     )
-    result = request.app.state.agent_service.query(payload.question, context)
+    key = f"{persona_id}:{payload.conversation_id}"
+    result = await request.app.state.realtime_executions.run(
+        key,
+        lambda: request.app.state.agent_service.query(payload.question, context),
+    )
     if result.status == "completed" and result.answer:
         try_persist_text_message(
             request.app.state.session_factory,
@@ -188,17 +182,21 @@ def query_agent(
 
 
 @router.post("/{persona_id}/agent/resume", response_model=AgentTurnResponse)
-def resume_agent(
+async def resume_agent(
     persona_id: str,
     payload: AgentResumePayload,
     request: Request,
     session: Session = Depends(get_session),
 ) -> AgentTurnResponse:
     context = context_for(request, session, persona_id, payload.conversation_id)
-    result = request.app.state.agent_service.resume(
-        context,
-        payload.specialist,
-        payload.approved,
+    key = f"{persona_id}:{payload.conversation_id}"
+    result = await request.app.state.realtime_executions.run(
+        key,
+        lambda: request.app.state.agent_service.resume(
+            context,
+            payload.specialist,
+            payload.approved,
+        ),
     )
     if result.status == "completed" and result.answer:
         try_persist_text_message(

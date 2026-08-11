@@ -49,9 +49,11 @@ def _make_job(markdown_path):
         status = "indexing"
         indexed_at = None
         error_message = None
+        original_filename = "guide.md"
 
     job = Job()
     job.markdown_path = str(markdown_path)
+    job.source_path = str(markdown_path)
     return job
 
 
@@ -129,3 +131,97 @@ def test_index_job_cleans_orphan_vectors_when_row_deleted_during_indexing(tmp_pa
 
     assert session.rolled_back is True
     assert store.deleted == [(DocumentScope("local-default", "space-a", "doc-a"), "doc-a")]
+
+
+def test_index_job_routes_csv_to_sqlite_and_indexes_only_schema_card(tmp_path, monkeypatch):
+    from agents.context import PersonaAgentContext
+    from agents.tools.structured_query import list_structured_tables_for_context
+    from ingestion.document_jobs import index_document_job
+
+    source = tmp_path / "sales.csv"
+    source.write_text("region,amount\nNorth,10\nSouth,20\n", encoding="utf-8")
+    markdown = tmp_path / "preview.md"
+    markdown.write_text("raw converted rows", encoding="utf-8")
+    job = _make_job(markdown)
+    job.original_filename = "sales.csv"
+    job.source_path = str(source)
+    captured = {}
+
+    def fake_ingest(path, scope):
+        captured["text"] = path.read_text(encoding="utf-8")
+        captured["scope"] = scope
+        return 1
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, model, job_id):
+            return job
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr("ingestion.document_jobs.ingest_markdown_file", fake_ingest)
+    index_document_job("job-1", Session, structured_root=tmp_path)
+
+    context = PersonaAgentContext(
+        persona_id="persona-a",
+        workspace_id="local-default",
+        knowledge_space_ids=("space-a",),
+        conversation_id="thread-a",
+        persona_name="Alpha",
+        persona_type="character",
+    )
+    tables = list_structured_tables_for_context(context, root=tmp_path)
+    assert tables[0]["row_count"] == 2
+    assert "Structured data schema" in captured["text"]
+    assert "North" not in captured["text"]
+    assert job.markdown_preview == captured["text"]
+
+
+def test_index_job_removes_structured_import_when_vector_indexing_fails(tmp_path, monkeypatch):
+    from agents.context import PersonaAgentContext
+    from agents.tools.structured_query import list_structured_tables_for_context
+    from ingestion.document_jobs import index_document_job
+
+    source = tmp_path / "sales.csv"
+    source.write_text("region,amount\nNorth,10\n", encoding="utf-8")
+    markdown = tmp_path / "preview.md"
+    markdown.write_text("raw", encoding="utf-8")
+    job = _make_job(markdown)
+    job.original_filename = "sales.csv"
+    job.source_path = str(source)
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, model, job_id):
+            return job
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr(
+        "ingestion.document_jobs.ingest_markdown_file",
+        lambda path, scope: (_ for _ in ()).throw(RuntimeError("milvus unavailable")),
+    )
+    index_document_job("job-1", Session, structured_root=tmp_path)
+
+    context = PersonaAgentContext(
+        persona_id="persona-a",
+        workspace_id="local-default",
+        knowledge_space_ids=("space-a",),
+        conversation_id="thread-a",
+        persona_name="Alpha",
+        persona_type="character",
+    )
+    assert list_structured_tables_for_context(context, root=tmp_path) == []
+    assert job.status == "index_failed"

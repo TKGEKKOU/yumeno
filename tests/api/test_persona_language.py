@@ -53,9 +53,10 @@ def test_persona_patch_saves_reply_language(client):
 
 def test_persona_edit_page_has_language_selector():
     html = (Path(__file__).resolve().parents[2] / "static" / "views" / "manage.html").read_text(encoding="utf-8")
-    script = (Path(__file__).resolve().parents[2] / "static" / "js" / "personas.js").read_text(encoding="utf-8")
-    assert 'id="edit-persona-language"' in html
-    assert 'value="zh"' in html
-    assert 'value="en"' in html
-    assert 'value="ja"' in html
-    assert "reply_language" in script
+    component = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "manage" / "components" / "NodeInspector.vue").read_text(encoding="utf-8")
+    assert 'id="role-workbench-root"' in html
+    assert "回复语言" in component
+    assert 'value="zh"' in component
+    assert 'value="en"' in component
+    assert 'value="ja"' in component
+    assert "reply_language" in component

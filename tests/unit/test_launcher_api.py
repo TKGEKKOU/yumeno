@@ -1,5 +1,7 @@
 from pathlib import Path
+import sys
 import time
+from types import SimpleNamespace
 
 from desktop.launcher_api import LauncherApi
 
@@ -40,6 +42,8 @@ class FakeServer:
         self.url = "http://127.0.0.1:17000"
         self.app = None
         self.started = False
+        self.stop_calls = 0
+        self.wait_calls = 0
 
     def is_running(self):
         return self.running
@@ -50,7 +54,11 @@ class FakeServer:
         self.app.state = type("St", (), {})()
 
     def stop(self):
+        self.stop_calls += 1
         self.started = False
+
+    def wait(self):
+        self.wait_calls += 1
 
 
 def test_status_reports_components(tmp_path: Path):
@@ -60,6 +68,70 @@ def test_status_reports_components(tmp_path: Path):
     assert status["containers_up"] is True
     assert status["service_running"] is False
     assert status["port"] == 17000
+
+
+def test_existing_service_still_runs_dependency_validation(tmp_path: Path, monkeypatch):
+    api = LauncherApi(tmp_path, FakeDocker(False), FakeServer(True))
+    starts: list[bool] = []
+    monkeypatch.setattr(
+        api,
+        "start",
+        lambda: (starts.append(True) or {"ok": True, "starting": True}),
+    )
+
+    api.auto_start_if_needed()
+
+    assert starts == [True]
+    assert api.progress()["done"] is False
+
+
+def test_desktop_window_always_opens_onboarding_first(tmp_path: Path, monkeypatch):
+    from desktop import launcher
+
+    opened_urls: list[str] = []
+
+    class Event:
+        def __iadd__(self, callback):
+            return self
+
+    class Window:
+        events = SimpleNamespace(closing=Event(), closed=Event())
+
+    class Api:
+        keep_services_after_close = False
+
+        def __init__(self, root, docker, server):
+            self.server = server
+
+        def onboarding_url(self):
+            return str(tmp_path / "onboarding.html")
+
+        def bind_window(self, window):
+            pass
+
+        def auto_start_if_needed(self):
+            pass
+
+        def on_closing(self):
+            return False
+
+        def on_closed(self):
+            pass
+
+    fake_webview = SimpleNamespace(
+        create_window=lambda title, url, **kwargs: (opened_urls.append(url) or Window()),
+        start=lambda **kwargs: None,
+    )
+    running_server = FakeServer(True)
+    monkeypatch.setitem(sys.modules, "webview", fake_webview)
+    monkeypatch.setattr(launcher, "DockerManager", lambda root: FakeDocker(True))
+    monkeypatch.setattr(launcher, "ServerManager", lambda factory: running_server)
+    monkeypatch.setattr(launcher, "LauncherApi", Api)
+    monkeypatch.setattr(launcher, "ensure_local_env", lambda root: None)
+    monkeypatch.setattr(launcher, "shutdown_asr_workers", lambda: None)
+
+    assert launcher.run(tmp_path) == 0
+    assert opened_urls == [str(tmp_path / "onboarding.html")]
 
 
 def test_running_detail_refresh_does_not_reset_elapsed(tmp_path: Path):
@@ -139,6 +211,38 @@ def test_do_exit_pause_policy_stops_containers(tmp_path: Path):
     assert api._exiting is True
 
 
+def test_do_exit_stops_server_before_docker_policy(tmp_path: Path, monkeypatch):
+    """FastAPI lifespan must finish before Milvus containers are stopped."""
+    docker = FakeDocker(True)
+    server = FakeServer(True)
+    api = LauncherApi(tmp_path, docker, server)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "docker_settings.json").write_text('{"on_exit": "pause"}', encoding="utf-8")
+    order: list[str] = []
+
+    monkeypatch.setattr(api, "_stop_tts_worker", lambda: order.append("tts"))
+    monkeypatch.setattr(api, "_stop_gpt_sovits", lambda: order.append("gpt"))
+    monkeypatch.setattr("voice.asr.local_worker.shutdown_asr_workers", lambda: order.append("asr"))
+    monkeypatch.setattr("ingestion.local_embedding.client.shutdown_embedding_workers", lambda: order.append("embedding"))
+
+    original_stop = server.stop
+    def stop_server():
+        order.append("server")
+        original_stop()
+    server.stop = stop_server
+    original_compose_stop = docker.compose_stop
+    def stop_docker():
+        order.append("docker")
+        original_compose_stop()
+    docker.compose_stop = stop_docker
+    api._window = type("W", (), {"destroy": lambda self: None})()
+
+    api.do_exit()
+
+    assert order.index("server") < order.index("docker")
+
+
 def test_do_exit_remove_policy_runs_down(tmp_path: Path):
     docker = FakeDocker(True)
     server = FakeServer(True)
@@ -149,6 +253,112 @@ def test_do_exit_remove_policy_runs_down(tmp_path: Path):
     api._window = type("W", (), {"destroy": lambda self: None})()
     api.do_exit()
     assert docker.actions == ["down"]
+
+
+def test_do_exit_keep_policy_only_closes_window_and_preserves_services(
+    tmp_path: Path, monkeypatch
+):
+    docker = FakeDocker(True)
+    server = FakeServer(True)
+    api = LauncherApi(tmp_path, docker, server)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "docker_settings.json").write_text(
+        '{"on_exit": "keep"}', encoding="utf-8"
+    )
+    stopped: list[str] = []
+    destroyed: list[bool] = []
+    api._window = type(
+        "W", (), {"destroy": lambda self: destroyed.append(True)}
+    )()
+    monkeypatch.setattr(api, "_stop_tts_worker", lambda: stopped.append("tts"))
+    monkeypatch.setattr(api, "_stop_gpt_sovits", lambda: stopped.append("gpt_sovits"))
+    monkeypatch.setattr(
+        "voice.asr.local_worker.shutdown_asr_workers",
+        lambda: stopped.append("asr"),
+    )
+    monkeypatch.setattr(
+        "ingestion.local_embedding.client.shutdown_embedding_workers",
+        lambda: stopped.append("embedding"),
+    )
+
+    api.do_exit()
+    api.on_closed()
+
+    assert api.keep_services_after_close is True
+    assert server.stop_calls == 0
+    assert docker.actions == []
+    assert stopped == []
+    assert destroyed == [True]
+
+
+def test_desktop_host_waits_for_owned_services_after_keep_exit(
+    tmp_path: Path, monkeypatch
+):
+    from desktop import launcher
+
+    class Event:
+        def __iadd__(self, callback):
+            return self
+
+    class Window:
+        events = SimpleNamespace(closing=Event(), closed=Event())
+
+    class Api:
+        keep_services_after_close = True
+
+        def __init__(self, root, docker, server):
+            self.server = server
+
+        def onboarding_url(self):
+            return str(tmp_path / "onboarding.html")
+
+        def bind_window(self, window):
+            pass
+
+        def auto_start_if_needed(self):
+            pass
+
+        def on_closing(self):
+            return False
+
+        def on_closed(self):
+            pass
+
+    fake_webview = SimpleNamespace(
+        create_window=lambda title, url, **kwargs: Window(),
+        start=lambda **kwargs: None,
+    )
+    running_server = FakeServer(True)
+    monkeypatch.setitem(sys.modules, "webview", fake_webview)
+    monkeypatch.setattr(launcher, "DockerManager", lambda root: FakeDocker(True))
+    monkeypatch.setattr(launcher, "ServerManager", lambda factory: running_server)
+    monkeypatch.setattr(launcher, "LauncherApi", Api)
+    monkeypatch.setattr(launcher, "ensure_local_env", lambda root: None)
+    monkeypatch.setattr(launcher, "shutdown_asr_workers", lambda: None)
+
+    assert launcher.run(tmp_path) == 0
+    assert running_server.wait_calls == 1
+
+
+def test_keep_exit_does_not_navigate_destroyed_window(tmp_path: Path):
+    api = LauncherApi(tmp_path, FakeDocker(True), FakeServer(True))
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "docker_settings.json").write_text(
+        '{"on_exit": "keep"}', encoding="utf-8"
+    )
+
+    class Window:
+        def destroy(self):
+            pass
+
+        def load_url(self, url):
+            raise AssertionError("destroyed window must not be reused")
+
+    api._window = Window()
+    api.do_exit()
+    api.show_launcher()
 
 
 def test_on_closing_blocks_until_exit_confirmed(tmp_path: Path):

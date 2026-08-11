@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from fastapi import File, UploadFile
+from fastapi import File, Form, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -25,8 +25,10 @@ from voice.gpt_sovits import GPTSoVITSAdapter, GPTSoVITSConfig, GPTSoVITSNotInst
 from voice.gpt_sovits.config import detect_install_dir
 from voice.gpt_sovits.training import (
     ASSET_STATUS_READY,
+    TrainingDataInvalid,
     TrainingService,
 )
+from voice.gpt_sovits.language import normalize_language
 
 
 router = APIRouter(prefix="/api", tags=["voice-assets"])
@@ -35,6 +37,7 @@ router = APIRouter(prefix="/api", tags=["voice-assets"])
 class VoiceAssetCreate(BaseModel):
     name: str
     engine: str = "gpt_sovits"
+    reference_language: str | None = None
 
 
 class VoiceAssetUpdate(BaseModel):
@@ -42,15 +45,17 @@ class VoiceAssetUpdate(BaseModel):
     gpt_weights_path: str | None = None
     sovits_weights_path: str | None = None
     refer_audio_path: str | None = None
+    reference_language: str | None = None
 
 
 class VoiceAssetImport(BaseModel):
     directory: str
+    reference_language: str | None = None
 
 
 class VoiceAssetSynthesize(BaseModel):
     text: str
-    text_lang: str = "zh"
+    text_lang: str = "auto"
 
 
 class VoiceAssetTrainFromStudio(BaseModel):
@@ -86,6 +91,7 @@ def asset_response(asset: VoiceAsset) -> dict:
         "gpt_weights_path": asset.gpt_weights_path,
         "sovits_weights_path": asset.sovits_weights_path,
         "refer_audio_path": asset.refer_audio_path,
+        "reference_language": asset.reference_language,
         "dataset_dir": asset.dataset_dir,
         "preview_audio_path": asset.preview_audio_path,
         "error_message": asset.error_message,
@@ -160,7 +166,14 @@ def create_asset(
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="名称不能为空")
-    asset = VoiceAsset(name=name, engine=payload.engine, workspace_id=LOCAL_WORKSPACE_ID)
+    asset = VoiceAsset(
+        name=name,
+        engine=payload.engine,
+        workspace_id=LOCAL_WORKSPACE_ID,
+        reference_language=(
+            normalize_language(payload.reference_language) if payload.reference_language else None
+        ),
+    )
     session.add(asset)
     session.commit()
     session.refresh(asset)
@@ -193,6 +206,8 @@ def update_asset(
     if asset is None:
         raise HTTPException(status_code=404, detail="音色不存在")
     values = payload.model_dump(exclude_unset=True)
+    if values.get("reference_language"):
+        values["reference_language"] = normalize_language(values["reference_language"])
     for key, value in values.items():
         setattr(asset, key, value)
     session.commit()
@@ -216,7 +231,12 @@ def delete_asset(
     return {"ok": True}
 
 
-def _import_asset_from_directory(project_root: Path, directory: Path, session: Session) -> list[VoiceAsset]:
+def _import_asset_from_directory(
+    project_root: Path,
+    directory: Path,
+    session: Session,
+    reference_language: str | None = None,
+) -> list[VoiceAsset]:
     """Scan a directory tree for GPT-SoVITS model pairs (ckpt + pth) and
     register each pair as a VoiceAsset, copying the model files into the
     project's voice asset directory."""
@@ -247,8 +267,10 @@ def _import_asset_from_directory(project_root: Path, directory: Path, session: S
             name=name,
             engine="gpt_sovits",
             workspace_id=LOCAL_WORKSPACE_ID,
-            status=ASSET_STATUS_READY,
+            status=ASSET_STATUS_READY if reference_language else "needs_retraining",
             training_stage="已导入",
+            reference_language=reference_language,
+            error_message=None if reference_language else "导入音色缺少参考语言，请确认标注并重新训练",
         )
         session.add(asset)
         session.flush()
@@ -283,8 +305,14 @@ def import_assets(
     x_yumeno_request: str = Header(default=""),
 ):
     protected(request, x_yumeno_request)
-    project_root = Path(request.app.state.tts_resources.project_root)
-    imported = _import_asset_from_directory(project_root, Path(payload.directory), session)
+    project_root = Path(request.app.state.gpt_sovits_config.project_root)
+    language = normalize_language(payload.reference_language) if payload.reference_language else None
+    imported = _import_asset_from_directory(
+        project_root,
+        Path(payload.directory),
+        session,
+        reference_language=language,
+    )
     return {"imported": [asset_response(a) for a in imported]}
 
 
@@ -304,17 +332,12 @@ def synthesize_asset(
         raise HTTPException(status_code=409, detail="音色模型尚未就绪")
     if not payload.text.strip():
         raise HTTPException(status_code=422, detail="文本不能为空")
-    adapter: GPTSoVITSAdapter = request.app.state.gpt_sovits
-    refer_audio, prompt_text = asset_reference_prompt(asset)
     try:
-        audio = adapter.synthesize(
+        default_language = None if payload.text_lang == "auto" else normalize_language(payload.text_lang)
+        audio = request.app.state.tts_synthesis.synthesize(
+            asset,
             payload.text.strip(),
-            text_lang=payload.text_lang,
-            gpt_weights=asset.gpt_weights_path,
-            sovits_weights=asset.sovits_weights_path,
-            refer_audio=refer_audio,
-            prompt_text=prompt_text,
-            prompt_lang=payload.text_lang,
+            default_language=default_language,
         )
     except GPTSoVITSNotInstalled as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -329,12 +352,14 @@ async def start_training(
     request: Request,
     session: Session = Depends(get_session),
     files: list[UploadFile] = File(default=[]),
+    language: str = Form(default="zh"),
     x_yumeno_request: str = Header(default=""),
 ):
     protected(request, x_yumeno_request)
     asset = session.get(VoiceAsset, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="音色不存在")
+    normalized_language = normalize_language(language)
     training: TrainingService = request.app.state.gpt_sovits_training
     audio_paths: list[str] = []
     if files:
@@ -345,10 +370,27 @@ async def start_training(
             target = raw_dir / f"{index:03d}{suffix}"
             target.write_bytes(await upload.read())
             audio_paths.append(str(target))
-        training.prepare_dataset(asset.id, audio_paths)
-        training.label_with_asr(asset.id)
-    if not training.start_training(asset.id):
+        training.prepare_dataset(
+            asset.id,
+            audio_paths,
+            language=normalized_language.upper(),
+        )
+        training.label_with_asr(asset.id, language=normalized_language)
+    try:
+        started = training.start_training(
+            asset.id,
+            expected_language=normalized_language,
+        )
+    except TrainingDataInvalid as exc:
+        asset.status = "needs_retraining"
+        asset.error_message = str(exc)
+        session.commit()
+        raise HTTPException(status_code=422, detail=f"训练数据无效：{exc}") from exc
+    if not started:
         raise HTTPException(status_code=409, detail="已有训练任务在进行")
+    asset.reference_language = normalized_language
+    asset.error_message = None
+    session.commit()
     return {"ok": True, "status": "processing", "samples": len(audio_paths)}
 
 
@@ -387,17 +429,22 @@ def train_from_studio(
         name=name,
         engine="gpt_sovits",
         workspace_id=LOCAL_WORKSPACE_ID,
+        reference_language=normalize_language(payload.language),
     )
     session.add(asset)
     session.commit()
     session.refresh(asset)
     try:
-        training.prepare_dataset(asset.id, paths)
+        training.prepare_dataset(asset.id, paths, language=payload.language.upper())
         training.label_with_asr(asset.id, language=payload.language)
+        errors = training.validate_dataset(asset.id, payload.language)
+        if errors:
+            raise TrainingDataInvalid("；".join(errors[:5]))
     except Exception as exc:
-        session.delete(asset)
+        asset.status = "needs_retraining"
+        asset.error_message = str(exc)
         session.commit()
-        raise HTTPException(status_code=500, detail=f"数据准备失败：{exc}") from exc
+        raise HTTPException(status_code=422, detail=f"训练数据无效：{exc}") from exc
     if not training.start_training(asset.id):
         raise HTTPException(status_code=409, detail="已有训练任务在进行")
     return {"ok": True, "asset": asset_response(asset)}

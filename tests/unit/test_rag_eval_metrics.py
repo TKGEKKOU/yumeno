@@ -3,6 +3,7 @@ import pytest
 from rag.eval.metrics import (
     hit_at_k,
     mrr,
+    p50,
     p95,
     precision_at_k,
     recall_at_k,
@@ -19,6 +20,20 @@ def test_recall_precision_mrr_and_hit():
     assert mrr(retrieved, expected) == 0.5  # first hit at rank 2
     assert hit_at_k(retrieved, expected, k=1) == 0.0
     assert hit_at_k(retrieved, expected, k=2) == 1.0
+
+
+def test_top3_metrics_deduplicate_ranked_ids_and_ignore_rank_four():
+    retrieved = ["a", "a", "b", "c"]
+    expected = {"a", "c"}
+
+    assert recall_at_k(retrieved, expected, k=3) == 0.5
+    assert precision_at_k(retrieved, expected, k=3) == 1 / 3
+    assert hit_at_k(retrieved, expected, k=3) == 1.0
+    assert mrr(retrieved, expected, k=3) == 1.0
+
+    rank_four_only = ["x", "y", "z", "c"]
+    assert recall_at_k(rank_four_only, {"c"}, k=3) == 0.0
+    assert mrr(rank_four_only, {"c"}, k=3) == 0.0
 
 
 def test_metrics_ignore_cases_without_expected_ids():
@@ -68,8 +83,8 @@ def test_summarize_retrieval_reports_answerable_split():
         ]
     )
     assert summary["cases_answerable"] == 1
-    assert summary["recall_at_k_answerable"] == 1.0
-    assert summary["precision_at_k_answerable"] == 0.5
+    assert summary["recall_at_3_answerable"] == 0.5
+    assert summary["precision_at_3_answerable"] == 1 / 3
     assert summary["mrr_answerable"] == 1.0
     assert summary["hit_at_1_answerable"] == 1.0
 
@@ -166,5 +181,6 @@ def test_summarize_generation_tracks_complex_and_counts():
 
 
 def test_p95_and_empty_values():
-    assert p95([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) == 20
+    assert p50([1, 2, 3, 4]) == 2
+    assert p95([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) == 19
     assert p95([]) == 0.0

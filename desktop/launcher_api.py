@@ -26,7 +26,9 @@ class LauncherApi:
         self.server = server
         self.settings = server.settings
         self._window = None
+        self._window_closed = False
         self._exiting = False
+        self._keep_services_after_close = False
         self._start_thread: threading.Thread | None = None
         self._start_done = False
         self._start_result: dict | None = None
@@ -48,17 +50,16 @@ class LauncherApi:
 
     def bind_window(self, window) -> None:
         self._window = window
+        self._window_closed = False
 
     def auto_start_if_needed(self) -> None:
-        """桌面启动时的后端兜底：服务未运行时自动开始启动流程。
+        """桌面启动时的后端兜底：自动校验并启动完整依赖链。
 
         不依赖前端页面与 pywebview API 的连接——即使页面因缓存/时序问题
         没能触发 start()，这里也会把依赖服务与应用拉起来；前端轮询到进度
         后照常展示并跳转主界面。
         """
         try:
-            if self.server.is_running():
-                return
             if self._start_thread is not None and self._start_thread.is_alive():
                 return
             self.start()
@@ -384,11 +385,11 @@ class LauncherApi:
             self._set_step("gpt_sovits", "ok", f"GPT-SoVITS 启动失败：{exc}（可稍后手动启动）")
 
     def show_main(self) -> None:
-        if self._window is not None:
+        if self._window is not None and not self._window_closed:
             self._window.load_url(f"{self.server.url}/static/index.html")
 
     def show_launcher(self) -> None:
-        if self._window is not None:
+        if self._window is not None and not self._window_closed:
             self._window.load_url(self.onboarding_url())
 
     def show_docker_settings(self) -> None:
@@ -410,39 +411,67 @@ class LauncherApi:
         threading.Thread(target=self._delayed_exit_confirm, daemon=True).start()
         return False
 
-    def _delayed_exit_confirm(self) -> None:
-        time.sleep(0.1)
-        self.request_exit_confirm()
+    @property
+    def keep_services_after_close(self) -> bool:
+        return self._keep_services_after_close
 
-    def do_exit(self) -> None:
-        self._exiting = True
-        try:
-            self._apply_exit_policy()
-        except Exception:
-            pass
-        try:
-            if getattr(self, "_progress_server", None) is not None:
-                self._progress_server.stop()
-        except Exception:
-            pass
+    def on_closed(self) -> None:
+        """Clean up after a window-only exit unless services were retained."""
+
+        self._window_closed = True
+        if self._keep_services_after_close:
+            return
         try:
             self.server.stop()
         except Exception:
             pass
-        self._stop_tts_worker()
-        self._stop_gpt_sovits()
         try:
             from voice.asr.local_worker import shutdown_asr_workers
 
             shutdown_asr_workers()
         except Exception:
             pass
-        try:
-            from ingestion.local_embedding.client import shutdown_embedding_workers
 
-            shutdown_embedding_workers()
+    def _delayed_exit_confirm(self) -> None:
+        time.sleep(0.1)
+        self.request_exit_confirm()
+
+    def do_exit(self) -> None:
+        self._exiting = True
+        self._window_closed = True
+        policy = self._read_exit_policy()
+        self._keep_services_after_close = policy == "keep"
+        try:
+            if getattr(self, "_progress_server", None) is not None:
+                self._progress_server.stop()
         except Exception:
             pass
+        if not self._keep_services_after_close:
+            # 先结束 FastAPI lifespan，再停止 Milvus 等 Docker 依赖。
+            # 否则 shutdown 阶段的 RAG 状态探测可能在容器已停止后触发
+            # pymilvus 自动重连并打印长 traceback。
+            try:
+                self.server.stop()
+            except Exception:
+                pass
+            self._stop_tts_worker()
+            self._stop_gpt_sovits()
+            try:
+                from voice.asr.local_worker import shutdown_asr_workers
+
+                shutdown_asr_workers()
+            except Exception:
+                pass
+            try:
+                from ingestion.local_embedding.client import shutdown_embedding_workers
+
+                shutdown_embedding_workers()
+            except Exception:
+                pass
+            try:
+                self._apply_exit_policy(policy)
+            except Exception:
+                pass
         if self._window is not None:
             try:
                 self._window.destroy()
@@ -473,16 +502,20 @@ class LauncherApi:
             pass
 
     def get_exit_policy(self) -> dict:
+        return {"on_exit": self._read_exit_policy(default="pause")}
+
+    def _read_exit_policy(self, default: str = "pause") -> str:
         try:
             from extensions.storage import read_json
 
             values = read_json(self.project_root / "data" / "docker_settings.json")
-            return {"on_exit": values.get("on_exit", "pause")}
+            policy = values.get("on_exit", default)
+            return policy if policy in {"keep", "pause", "remove"} else default
         except Exception:
-            return {"on_exit": "pause"}
+            return default
 
     def set_exit_policy(self, policy: str) -> dict:
-        """保存退出时的 Docker 处理方式：keep（保持运行）/ pause（停止）/ remove（完全清除）。"""
+        """保存退出时的服务处理方式：keep（仅关窗口）/ pause（停止）/ remove（停止并清理容器）。"""
         if policy not in {"keep", "pause", "remove"}:
             return {"ok": False, "error": "无效的处理方式"}
         try:
@@ -496,15 +529,8 @@ class LauncherApi:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    def _apply_exit_policy(self) -> None:
-        policy = "keep"
-        try:
-            from extensions.storage import read_json
-
-            values = read_json(self.project_root / "data" / "docker_settings.json")
-            policy = values.get("on_exit", "keep")
-        except Exception:
-            pass
+    def _apply_exit_policy(self, policy: str | None = None) -> None:
+        policy = policy or self._read_exit_policy()
         if policy == "pause":
             try:
                 self.docker.compose_stop()

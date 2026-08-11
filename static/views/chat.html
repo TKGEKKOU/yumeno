@@ -13,9 +13,20 @@
               <div class="live2d-controls">
                 <button id="live2d-more" class="icon-button live2d-icon-btn" type="button" title="更多选项" aria-label="更多选项" aria-haspopup="menu" aria-expanded="false"><i data-lucide="more-horizontal"></i></button>
                 <div id="live2d-more-menu" class="live2d-more-menu is-hidden" role="menu">
-                  <select id="live2d-model" class="live2d-select" title="选择模型" aria-label="选择模型" hidden></select>
+                  <button id="live2d-model-toggle" class="live2d-menu-item live2d-menu-expand" type="button" role="menuitem" aria-expanded="false" aria-controls="live2d-model-panel"><i data-lucide="gallery-vertical-end"></i><span>更换模型</span><i class="live2d-menu-chevron" data-lucide="chevron-down"></i></button>
+                  <div id="live2d-model-panel" class="live2d-subpanel is-hidden">
+                    <label for="live2d-model">当前模型</label>
+                    <select id="live2d-model" class="live2d-select" title="更换模型" aria-label="更换模型"></select>
+                  </div>
+                  <button id="vts-details-toggle" class="live2d-menu-item live2d-menu-expand" type="button" role="menuitem" aria-expanded="false" aria-controls="vts-connection-card"><i data-lucide="radio-tower"></i><span>连接 VTube Studio</span><small id="vts-menu-state">未连接</small><i class="live2d-menu-chevron" data-lucide="chevron-down"></i></button>
+                  <div class="vts-connection-card is-hidden" id="vts-connection-card">
+                    <div class="vts-connection-head"><div><strong>VTube Studio</strong><small id="vts-connection-detail">未连接</small></div><span id="vts-connection-dot" class="vts-connection-dot"></span></div>
+                    <p id="vts-connection-message" class="vts-connection-message">连接后由 YUMENO 驱动口型、眨眼与角色摇晃。</p>
+                    <label class="vts-endpoint-field"><span>WebSocket 地址</span><input id="vts-endpoint-input" type="url" spellcheck="false" autocomplete="off" value="ws://127.0.0.1:8001"></label>
+                    <div class="vts-connection-actions"><button id="vts-connect" class="button button-primary" type="button"><i data-lucide="plug-zap"></i><span>连接</span></button><button id="vts-clear-token" class="button button-secondary" type="button"><i data-lucide="key-round"></i><span>重新授权</span></button></div>
+                  </div>
                   <button id="live2d-flip" class="live2d-menu-item" type="button" role="menuitem"><i data-lucide="flip-horizontal-2"></i><span>镜像</span></button>
-                  <button id="live2d-mode" class="live2d-menu-item" type="button" role="menuitem"><i data-lucide="monitor"></i><span>渲染方式</span></button>
+                  <button id="live2d-manage" class="live2d-menu-item" type="button" role="menuitem"><i data-lucide="folder-cog"></i><span>管理</span></button>
                 </div>
               </div>
             </footer>

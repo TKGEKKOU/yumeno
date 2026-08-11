@@ -1,4 +1,4 @@
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 import asyncio
 from pathlib import Path
 import sys
@@ -12,10 +12,17 @@ from langgraph.checkpoint.memory import MemorySaver
 from agents.checkpoint import create_sqlite_checkpointer
 from agents.context_factory import build_agent_runner
 from agents.service import PersonaAgentService
-from app.database import Base, build_engine, build_session_factory, upgrade_persona_schema
+from app.database import (
+    Base,
+    build_engine,
+    build_session_factory,
+    upgrade_persona_schema,
+    upgrade_voice_asset_schema,
+)
 from app.routers.agents import router as agents_router
 from app.routers.asr import router as asr_router
 from app.routers.documents import router as documents_router
+from app.routers.extensions import router as extensions_router
 from app.routers.embedding import router as embedding_router
 from app.routers.eval import router as eval_router
 from app.routers.integrations import router as integrations_router
@@ -40,7 +47,8 @@ from extensions.events import EVENT_MESSAGE, EventBus
 from ingestion.status import get_system_status
 from ingestion.local_embedding.resources import LocalEmbeddingResourceManager
 from ingestion.embeddings import warm_managed_embedding
-from integrations.config import onebot_runtime_config
+from integrations.config import bilibili_runtime_config, onebot_runtime_config
+from integrations.bilibili import BilibiliLiveManager
 from integrations.mcp.client import MCPManager
 from integrations.onebot11.router import ImMessageRouter
 from integrations.onebot11.ws_server import OneBotConnectionManager, router as onebot_ws_router
@@ -55,14 +63,13 @@ from voice.clone_tasks import CloneTaskManager
 from voice.separator.install import SeparatorResourceManager
 from voice.separator.onnx import HtdemucsSeparator
 from voice.studio import VoiceStudioManager
-from voice.tts.install import TTSResourceManager
-from voice.tts.local_worker import LocalTTS
 from voice.gpt_sovits import GPTSoVITSAdapter, GPTSoVITSConfig
 from voice.gpt_sovits.install import GPTSoVITSInstallManager
+from voice.gpt_sovits.migration import migrate_voice_assets
+from voice.gpt_sovits.synthesis import GPTSoVITSSynthesisService
 from voice.gpt_sovits.training import TrainingService
 from voice.vad import build_vad
 from voice.vad.energy import EnergyVAD
-from voice.voice_similarity import VoiceEmbeddingEngine
 
 STATIC_DIR = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]) / "static"
 
@@ -95,18 +102,6 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         except Exception:
             pass
 
-    async def warm_tts_worker() -> None:
-        """Preload the local TTS service in the background so the first reply
-        voice is not delayed by model loading. TTS must already be installed
-        and enabled; failures are ignored (synthesis retries on demand)."""
-
-        try:
-            if not app.state.tts_resources.status().get("ready"):
-                return
-            await asyncio.to_thread(app.state.tts_worker.warm_up)
-        except Exception:
-            pass
-
     async def warm_gpt_sovits() -> None:
         """Start the GPT-SoVITS API service at app startup when the engine is
         installed. Runs in the background so a slow cold start never blocks
@@ -121,6 +116,9 @@ def create_app(initialize_database: bool = True) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        from ingestion.local_embedding.client import resume_embedding_workers
+
+        resume_embedding_workers()
         # MCP 服务器启动时连接并注册工具：连接失败仅记录错误，不阻塞启动；
         # 工具注册发生在 workflow 懒构建之前，因此新技能即可引用 MCP 工具。
         app.state.mcp_manager = MCPManager(
@@ -130,34 +128,48 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         from agents.tools.mcp_admin import set_mcp_manager
 
         set_mcp_manager(app.state.mcp_manager)
-        await app.state.mcp_manager.connect_all(register=True)
-        app.state.embedding_warmup_task = asyncio.create_task(
-            asyncio.to_thread(warm_managed_embedding, settings)
+        # MCP connections own external subprocesses/sockets. Start them in
+        # the background so an unavailable optional server never delays FastAPI
+        # or the desktop UI; per-server status is published as it works.
+        app.state.mcp_connect_task = asyncio.create_task(
+            app.state.mcp_manager.connect_all(register=True)
         )
         await app.state.qq_official.start()
         if initialize_database:
+            app.state.embedding_warmup_task = asyncio.create_task(
+                asyncio.to_thread(warm_managed_embedding, settings)
+            )
             app.state.asr_warmup_task = asyncio.create_task(warm_asr_worker())
-            app.state.tts_warmup_task = asyncio.create_task(warm_tts_worker())
             app.state.gpt_sovits_warmup_task = asyncio.create_task(warm_gpt_sovits())
         yield
         await app.state.qq_official.stop()
-        app.state.embedding_warmup_task.cancel()
+        await app.state.bilibili.disconnect()
+        mcp_manager = getattr(app.state, "mcp_manager", None)
+        if mcp_manager is not None:
+            connect_task = getattr(app.state, "mcp_connect_task", None)
+            if connect_task is not None:
+                connect_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await connect_task
+            close = getattr(mcp_manager, "close", None)
+            if close is not None:
+                await asyncio.to_thread(close)
+        embedding_warmup = getattr(app.state, "embedding_warmup_task", None)
         try:
-            from ingestion.local_embedding.client import shutdown_embedding_workers
+            from ingestion.local_embedding.client import begin_embedding_shutdown
 
-            shutdown_embedding_workers()
+            begin_embedding_shutdown()
         except Exception:
             pass
+        if embedding_warmup is not None:
+            with suppress(asyncio.CancelledError, Exception):
+                await embedding_warmup
         warmup = getattr(app.state, "asr_warmup_task", None)
         if warmup is not None:
             warmup.cancel()
         gpt_warmup = getattr(app.state, "gpt_sovits_warmup_task", None)
         if gpt_warmup is not None:
             gpt_warmup.cancel()
-        tts_warmup = getattr(app.state, "tts_warmup_task", None)
-        if tts_warmup is not None:
-            tts_warmup.cancel()
-        app.state.tts_worker.stop_service()
         gpt_sovits = getattr(app.state, "gpt_sovits", None)
         if gpt_sovits is not None:
             gpt_sovits.stop_service()
@@ -168,19 +180,23 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         except Exception:
             pass
         try:
-            from ingestion.local_embedding.client import shutdown_embedding_workers
+            # The warmup thread may have been inside Popen while teardown
+            # started. Drain once more without reopening the creation gate.
+            from ingestion.local_embedding.client import begin_embedding_shutdown
 
-            shutdown_embedding_workers()
+            begin_embedding_shutdown()
         except Exception:
             pass
-        voice_similarity = getattr(app.state, "voice_similarity", None)
-        if voice_similarity is not None:
-            voice_similarity.close()
         resource = getattr(app.state, "checkpoint_resource", None)
         if resource is not None:
             resource.close()
 
     app = FastAPI(title="YUMENO", lifespan=lifespan)
+    app.state.settings = settings
+    from extensions.catalog import CatalogClient
+
+    app.state.extension_catalog_client = CatalogClient(settings.project_root)
+    app.state.extension_installer = None
     # 允许 file:// 启动页等本地来源通过 HTTP 轮询（服务仅绑定 127.0.0.1）
     app.add_middleware(
         CORSMiddleware,
@@ -198,18 +214,12 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     app.state.vad_factory = build_vad
     app.state.asr_stream_client_factory = WorkerStreamClient
     app.state.embedding_resources = LocalEmbeddingResourceManager(settings.project_root)
-    app.state.tts_resources = TTSResourceManager(settings.project_root)
-    app.state.tts_worker = LocalTTS(
-        app.state.tts_resources.runtime_path,
-        app.state.tts_resources.model_dir,
-        use_gpu=app.state.tts_resources.config()["use_gpu"],
-    )
-    app.state.tts_factory = lambda: app.state.tts_worker
     app.state.gpt_sovits_config = GPTSoVITSConfig(settings.project_root)
     app.state.gpt_sovits = GPTSoVITSAdapter(
         app.state.gpt_sovits_config,
         settings.project_root,
     )
+    app.state.tts_synthesis = GPTSoVITSSynthesisService(app.state.gpt_sovits)
     app.state.gpt_sovits_install = GPTSoVITSInstallManager(
         settings.project_root,
         app.state.gpt_sovits_config,
@@ -236,13 +246,12 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         vad_factory=lambda: EnergyVAD(),
         voices_root=settings.project_root / "data" / "tts" / "voices",
     )
-    app.state.voice_similarity = VoiceEmbeddingEngine(
-        settings.project_root / "runtime" / "tts" / "qwen3tts.dll",
-        settings.project_root / "models" / "Qwen3-TTS",
-    )
     if initialize_database:
         Base.metadata.create_all(engine)
         upgrade_persona_schema(engine)
+        upgrade_voice_asset_schema(engine)
+        with app.state.session_factory() as migration_session:
+            migrate_voice_assets(migration_session)
         # 会话状态（对话历史、中断点、Worker 结果）持久化到本地 SQLite；
         # 服务重启后可按 thread_id 恢复；langgraph-checkpoint-sqlite 实现了
         # BaseCheckpointSaver 接口，对上层 PersonaAgentService 透明。
@@ -255,6 +264,47 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     # PersonaAgentService 是人设多 Agent（supervisor + 四类 Worker）的应用层入口：
     # 对外只暴露 query / resume，内部由 LangGraph 图执行，thread_id = persona_id:conversation_id。
     app.state.event_bus = EventBus()
+
+    async def process_bilibili_event(event, conversation_id):
+        from types import SimpleNamespace
+        from app.routers.agents import context_for, response_for
+        from app.chat_store import try_persist_text_message
+
+        config = bilibili_runtime_config(settings.project_root)
+        persona_id = config.get("default_persona_id")
+        if not persona_id:
+            raise RuntimeError("请先选择直播回复角色")
+        question = event.content if event.kind == "enter" else f"{event.username}：{event.content}"
+        with app.state.session_factory() as session:
+            context = context_for(SimpleNamespace(app=app), session, persona_id, conversation_id)
+        try_persist_text_message(app.state.session_factory, workspace_id=context.workspace_id,
+                                 persona_id=persona_id, conversation_id=conversation_id,
+                                 role="user", content=question)
+        key = f"{persona_id}:{conversation_id}"
+        result = await app.state.realtime_executions.run(
+            key,
+            lambda: app.state.agent_service.query(question, context),
+        )
+        return response_for(result).model_dump()
+
+    async def clear_bilibili_conversation(persona_id, conversation_id):
+        from app.conversation_cleanup import clear_conversation_data
+        from app.routers.messages import AUDIO_ROOT
+
+        with app.state.session_factory() as session:
+            clear_conversation_data(
+                session,
+                app.state.agent_service.checkpointer,
+                persona_id,
+                conversation_id,
+                AUDIO_ROOT,
+            )
+
+    app.state.bilibili = BilibiliLiveManager(
+        lambda: bilibili_runtime_config(settings.project_root),
+        process_bilibili_event,
+        clear_bilibili_conversation,
+    )
     app.state.onebot = OneBotConnectionManager(
         lambda: onebot_runtime_config(settings.project_root)
     )
@@ -269,6 +319,7 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         app.state.session_factory,
         settings.project_root / "data" / "im_bindings.json",
         settings.project_root / "data" / "integrations.json",
+        tts_synthesis=app.state.tts_synthesis,
     )
     app.state.event_bus.subscribe(EVENT_MESSAGE, app.state.im_router.handle)
     # QQ 官方机器人（WebSocket）与 OneBot 转发端共用同一套 IM 消息路由，
@@ -290,6 +341,7 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     app.include_router(mcp_router)
     app.include_router(personas_router)
     app.include_router(documents_router)
+    app.include_router(extensions_router)
     app.include_router(embedding_router)
     app.include_router(eval_router)
     app.include_router(persona_drafts_router)

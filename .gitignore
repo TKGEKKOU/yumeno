@@ -31,4 +31,5 @@ audios/*.bak-*
 models/
 build/
 dist/
+frontend/node_modules/
 PersonaLive.spec

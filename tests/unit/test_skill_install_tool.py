@@ -45,7 +45,11 @@ def test_install_skill_core_validates_and_installs(tmp_path, monkeypatch):
     assert (target / "demo-skill" / "SKILL.md").is_file()
     assert seen["action"]["arguments"]["repo"] == "demo/repo"
     skills_module.refresh_skills()
-    assert skills_module.get_skill("demo-skill").format == "skillmd"
+    installed = skills_module.get_skill("demo-skill")
+    assert installed.format == "skillmd"
+    assert installed.enabled is False
+    assert installed.trusted is False
+    assert installed.scripts_enabled is False
 
 
 def test_install_skill_core_rejects_conflict_and_unknown_tools(tmp_path, monkeypatch):

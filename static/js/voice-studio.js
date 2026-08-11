@@ -646,7 +646,7 @@ function renderVoiceSegments(state) {
   list.replaceChildren();
   const segments = state.segments || [];
   setText("voice-segments-state", segments.length ? `${segments.length} 条` : "");
-  setText("voice-segments-status", segments.length ? "" : "还没有可用片段，请先完成 01~02 步或上传干净音频");
+  setText("voice-segments-status", segments.length ? "" : "还没有可用片段，请先完成前面的步骤或上传干净音频");
   if (segments.length) {
     voiceSelected = new Set((state.selected || []).map((index) => String(index)));
   }

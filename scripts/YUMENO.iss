@@ -2,7 +2,7 @@
 ; 用法：ISCC.exe scripts\YUMENO.iss（先运行 build_windows.ps1 生成 dist\YUMENO）
 
 #define MyAppName "YUMENO"
-#define MyAppVersion "0.1.1"
+#define MyAppVersion "0.2.0"
 #define MyAppExeName "YUMENO.exe"
 #define MyAppId "6B4BDE24-1C3E-4E0A-9A3D-0F0C8C7E5A21"
 
@@ -35,10 +35,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务："
 
 [Files]
-; 程序主体（不含 data，live2d 素材单独处理）
+; 程序主体（不复制开发机的 data 目录）
 Source: "..\dist\YUMENO\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "data"
-; live2d 素材：安装时写入，卸载时保留（与运行时数据同目录）
-Source: "..\dist\YUMENO\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs uninsneveruninstall
+
+[Dirs]
+; 运行时数据目录为空创建，卸载时保留用户数据。
+Name: "{app}\data"; Flags: uninsneveruninstall
+Name: "{app}\data\live2d"; Flags: uninsneveruninstall
 
 [Icons]
 Name: "{group}\YUMENO"; Filename: "{app}\{#MyAppExeName}"

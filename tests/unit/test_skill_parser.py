@@ -23,6 +23,28 @@ def test_parses_valid_skill(tmp_path):
     assert parsed["tool_names"] == ("search_persona_knowledge",)
 
 
+def test_parses_standard_allowed_tools_and_marks_legacy_name(tmp_path):
+    from agents.skill_parser import parse_skill_dir
+
+    directory = _write(
+        tmp_path,
+        "web-research",
+        "---\nname: web-research\ndescription: Search public sources.\n"
+        "allowed-tools: search research\n---\nbody\n",
+    )
+    parsed = parse_skill_dir(directory)
+    assert parsed["tool_names"] == ("search", "research")
+    assert parsed["allowed_tools"] == ("search", "research")
+    assert parsed["standard_name"] is True
+
+
+def test_parser_rejects_skill_names_longer_than_standard_limit(tmp_path):
+    from agents.skill_parser import parse_skill_dir
+
+    name = "a" * 65
+    assert parse_skill_dir(_write(tmp_path, name, f"---\nname: {name}\ndescription: x\n---\nbody")) is None
+
+
 def test_rejects_bad_name_or_description(tmp_path):
     from agents.skill_parser import parse_skill_dir
 

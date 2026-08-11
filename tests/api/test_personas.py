@@ -70,6 +70,42 @@ def test_get_and_update_persona_profile(client):
     assert client.get(f"/api/personas/{persona['id']}").json()["name"] == "Beta"
 
 
+def test_persona_capability_overrides_round_trip(client):
+    persona = client.post("/api/personas", json={"name": "Capability"}).json()
+    url = f"/api/personas/{persona['id']}/capabilities"
+
+    catalog = client.get(url)
+    assert catalog.status_code == 200
+    assert any(
+        item["id"] == "builtin/search_persona_knowledge"
+        for item in catalog.json()["capabilities"]
+    )
+    assert any(
+        item["id"].startswith("skill/")
+        for item in catalog.json()["skills"]
+    )
+    rag_package = next(
+        item for item in catalog.json()["packages"]
+        if item["id"] == "builtin/search_persona_knowledge"
+    )
+    assert rag_package["level"] == 0
+    assert rag_package["status"] == "available"
+
+    saved = client.put(
+        url,
+        json={"overrides": {"builtin/search_persona_knowledge": False, "skill/document_management": False}},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["overrides"] == {
+        "builtin/search_persona_knowledge": False,
+        "skill/document_management": False,
+    }
+    assert client.get(url).json()["overrides"] == saved.json()["overrides"]
+
+    invalid = client.put(url, json={"overrides": {"unknown/tool": True}})
+    assert invalid.status_code == 422
+
+
 def test_list_persona_documents_is_scoped(client, db_session):
     persona = client.post("/api/personas", json={"name": "Alpha"}).json()
     db_session.add(
@@ -90,7 +126,7 @@ def test_list_persona_documents_is_scoped(client, db_session):
     assert [item["original_filename"] for item in response.json()] == ["profile.md"]
 
 
-def test_delete_persona_removes_only_its_owned_data(db_session, tmp_path):
+def test_delete_persona_removes_only_its_owned_data(db_session, tmp_path, monkeypatch):
     from persona.delete_service import PersonaDeletionService
 
     first_space = KnowledgeSpace(workspace_id="local-default")
@@ -139,6 +175,13 @@ def test_delete_persona_removes_only_its_owned_data(db_session, tmp_path):
 
     deleted_scopes = []
     deleted_checkpoints = []
+    deleted_structured = []
+    monkeypatch.setattr(
+        "persona.delete_service.delete_structured_knowledge_space",
+        lambda root, workspace_id, knowledge_space_id: deleted_structured.append(
+            (workspace_id, knowledge_space_id)
+        ),
+    )
 
     class FakeVectorStore:
         def delete_knowledge_space(self, scope):
@@ -158,6 +201,7 @@ def test_delete_persona_removes_only_its_owned_data(db_session, tmp_path):
     assert db_session.query(ConversationMessage).filter_by(persona_id=first.id).count() == 0
     assert deleted_scopes[0].knowledge_space_id == first_space.id
     assert deleted_checkpoints == [first.id]
+    assert deleted_structured == [("local-default", first_space.id)]
     assert not job_dir.exists()
 
 

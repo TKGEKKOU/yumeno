@@ -6,7 +6,15 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 
-from app.schemas import ApiKeyRevealRequest, ApiKeyRevealResponse, LocalSettingsResponse, LocalSettingsUpdate
+from app.schemas import (
+    ApiKeyRevealRequest,
+    ApiKeyRevealResponse,
+    LLMConnectionTestPayload,
+    LLMConnectionTestResponse,
+    LocalSettingsResponse,
+    LocalSettingsUpdate,
+)
+from rag.llm import probe_llm
 from settings import (
     DEFAULT_LOCAL_EMBEDDING_MODEL,
     SUPPORTED_EMBEDDING_DEVICES,
@@ -126,6 +134,42 @@ def delete_local_settings(path: Path) -> None:
 def get_settings(request: Request) -> LocalSettingsResponse:
     require_local(request)
     return settings_response(SETTINGS_PATH)
+
+
+@router.post("/llm/test", response_model=LLMConnectionTestResponse)
+def test_llm_connection(
+    payload: LLMConnectionTestPayload,
+    request: Request,
+    x_yumeno_request: str = Header(default=""),
+) -> LLMConnectionTestResponse:
+    require_local(request)
+    if x_yumeno_request != "web":
+        raise HTTPException(status_code=403, detail="缺少同源请求标识")
+    values = read_settings(SETTINGS_PATH)
+    api_key = payload.api_key or str(values.get("openai_api_key") or "")
+    if not api_key:
+        raise HTTPException(status_code=422, detail="请先填写 API Key，或保存一个已有 Key")
+    if not payload.base_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=422, detail="Base URL 必须是 HTTP(S) 地址")
+    try:
+        probe_llm(api_key, payload.base_url, payload.model)
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", None)
+        if status_code in {401, 403}:
+            detail = "API Key 无效或没有访问该模型的权限"
+        elif status_code == 404:
+            detail = "接口地址或模型不存在，请检查 Base URL 和模型名"
+        elif status_code == 429:
+            detail = "服务返回限流，请稍后重试"
+        else:
+            detail = f"连接失败：{str(exc)[:300]}"
+        raise HTTPException(status_code=502, detail=detail) from exc
+    return LLMConnectionTestResponse(
+        ok=True,
+        model=payload.model,
+        base_url=payload.base_url,
+        message="连接成功，模型已返回文本。",
+    )
 
 
 @router.post("/reveal-key", response_model=ApiKeyRevealResponse)

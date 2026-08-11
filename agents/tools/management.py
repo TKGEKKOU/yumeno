@@ -12,6 +12,8 @@ from app.models import DocumentJob, Persona
 from ingestion.document_jobs import DATA_DIR, index_document_job, sanitize_filename
 from ingestion.markdown_parser import DocumentScope
 from ingestion.milvus_store import MilvusRagStore
+from settings import Settings
+from structured_data.service import delete_structured_document
 
 
 Confirmer = Callable[[dict[str, Any]], bool]
@@ -236,6 +238,12 @@ def delete_document_for_context(
                 knowledge_space_id=document.knowledge_space_id,
                 document_id=document.document_id,
             ),
+            document.document_id,
+        )
+        delete_structured_document(
+            Settings.load().project_root,
+            context.workspace_id,
+            document.knowledge_space_id,
             document.document_id,
         )
         document.status = "deleted"

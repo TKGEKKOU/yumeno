@@ -31,6 +31,7 @@ from typing import Any
 
 from rag.contracts import RagQueryContext
 from rag.graders import grade_answer_quality, grade_retrieved_documents
+from rag.eval.metrics import EVAL_K, hit_at_k, mrr, precision_at_k, recall_at_k
 from rag.retriever import build_retriever
 from rag.service import RagRequest, create_rag_service
 
@@ -85,6 +86,10 @@ class EvalCaseResult:
     is_complex: bool = False
     is_probe: bool = False
     trace: list[dict] = field(default_factory=list)
+    recall_at_3: float = 0.0
+    precision_at_3: float = 0.0
+    hit_at_3: float = 0.0
+    mrr_at_3: float = 0.0
 
     def as_dict(self) -> dict:
         return {
@@ -107,6 +112,11 @@ class EvalCaseResult:
             "is_complex": self.is_complex,
             "is_probe": self.is_probe,
             "trace": self.trace,
+            "metric_k": EVAL_K,
+            "recall_at_3": round(self.recall_at_3, 4),
+            "precision_at_3": round(self.precision_at_3, 4),
+            "hit_at_3": round(self.hit_at_3, 4),
+            "mrr_at_3": round(self.mrr_at_3, 4),
         }
 
 
@@ -226,6 +236,7 @@ def run_eval(
         if not expected:
             expected = _judge_pool_relevance(question, pool)
             expected_source = "auto"
+        expected_set = set(expected)
 
         # 阶段 2：完整 adaptive 管线（检索→评分→生成→质量门）
         pipeline_started = time.perf_counter()
@@ -282,6 +293,10 @@ def run_eval(
                 is_complex=bool(row.get("_complex")),
                 is_probe=bool(row.get("_probe")),
                 trace=trace,
+                recall_at_3=recall_at_k(retrieved_ids, expected_set, EVAL_K),
+                precision_at_3=precision_at_k(retrieved_ids, expected_set, EVAL_K),
+                hit_at_3=hit_at_k(retrieved_ids, expected_set, EVAL_K),
+                mrr_at_3=mrr(retrieved_ids, expected_set, EVAL_K),
             )
         )
         if progress is not None:

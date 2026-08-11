@@ -1,7 +1,7 @@
 <section id="settings-view" class="view is-hidden">
   <section class="system-status-panel" aria-labelledby="system-status-title">
     <div class="system-status-heading">
-      <div class="system-status-title-group"><span class="section-code">// SETTINGS</span><h2 id="system-status-title">设置</h2></div>
+      <div class="system-status-title-group"><h2 id="system-status-title">设置</h2></div>
       <div class="system-status-actions">
         <button id="collapse-status" class="icon-button" type="button" title="展开详情" aria-label="展开详情" aria-pressed="true"><i data-lucide="chevrons-up-down"></i></button>
         <button id="refresh-status" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>刷新</button>
@@ -30,19 +30,20 @@
     <div class="settings-content">
 
       <div class="settings-group">
-        <span class="settings-group-label">// CONNECT · 连接与知识</span>
         <details class="panel settings-section" data-collapsible>
-          <summary class="settings-summary"><span class="settings-summary-title"><span class="settings-summary-code">//</span><strong>LLM</strong><span class="settings-summary-meta">对话模型 · 供应商 · API Key</span></span><span class="section-toggle-label">展开</span></summary>
+          <summary class="settings-summary"><span class="settings-summary-title"><strong>OpenAI 兼容模型</strong><span class="settings-summary-meta">文本对话 · Chat Completions · 可替换供应商</span></span><span class="section-toggle-label">展开</span></summary>
           <div class="settings-grid settings-grid-form">
             <label class="field provider-field"><span>供应商</span><select id="llm-provider"><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="qwen">通义千问</option><option value="custom">自定义</option></select></label>
             <label class="field key-field"><span>API Key</span><span class="secret-input"><input id="openai-api-key" type="password" autocomplete="off"><span class="secret-actions"><button id="toggle-openai-api-key" type="button" title="显示或隐藏 API Key" aria-label="显示或隐藏 API Key"><i data-lucide="eye"></i></button><button id="copy-openai-api-key" type="button" title="复制 API Key" aria-label="复制 API Key"><i data-lucide="copy"></i></button></span></span></label>
             <label class="field base-url-field"><span>Base URL</span><input id="openai-base-url"></label>
             <label class="field model-field"><span>模型</span><input id="openai-model"></label>
           </div>
-          <details class="settings-help"><summary>参数说明与示例</summary><p>官方入口：<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a>、<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">DeepSeek</a>、<a href="https://bailian.console.aliyun.com/" target="_blank" rel="noopener">通义千问百炼</a></p><p>Base URL：OpenAI <code>https://api.openai.com/v1</code>；DeepSeek <code>https://api.deepseek.com</code>；通义千问 <code>https://dashscope.aliyuncs.com/compatible-mode/v1</code></p><p>模型示例：<code>gpt-5.6-sol</code>、<code>deepseek-v4-flash</code>、<code>qwen-plus</code></p></details>
+          <div class="llm-probe-row"><div><strong>接口验证</strong><p>使用当前填写值发送一次最小文本请求，不保存配置，也不写入对话。</p></div><button id="test-llm-connection" class="button button-secondary" type="button"><i data-lucide="plug-zap"></i>测试连接</button></div>
+          <p id="llm-test-status" class="inline-status" role="status" aria-live="polite"></p>
+          <details class="settings-help"><summary>参数说明与示例</summary><p>当前调用格式为 OpenAI-compatible Chat Completions，只发送文本消息。可使用 <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a>、<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">DeepSeek</a>、<a href="https://bailian.console.aliyun.com/" target="_blank" rel="noopener">通义千问百炼</a>或其他兼容服务。</p><p>Base URL：OpenAI <code>https://api.openai.com/v1</code>；DeepSeek <code>https://api.deepseek.com</code>；通义千问 <code>https://dashscope.aliyuncs.com/compatible-mode/v1</code></p><p>模型名以供应商控制台为准；切换服务时建议先测试连接，再保存配置。</p></details>
         </details>
         <details class="panel settings-section" data-collapsible>
-          <summary class="settings-summary"><span class="settings-summary-title"><span class="settings-summary-code">//</span><strong>联网搜索（可选）</strong><span class="settings-summary-meta">可选 · 博查 / Tavily / 自定义</span></span><span class="section-toggle-label">展开</span></summary>
+          <summary class="settings-summary"><span class="settings-summary-title"><strong>联网搜索（可选）</strong><span class="settings-summary-meta">可选 · 博查 / Tavily / 自定义</span></span><span class="section-toggle-label">展开</span></summary>
           <label class="toggle-field settings-feature-toggle"><input id="web-search-enabled" type="checkbox"><span>启用联网搜索</span></label>
           <div class="settings-grid one-column">
             <label class="field provider-field"><span>服务</span><select id="web-search-provider"><option value="bocha">博查</option><option value="tavily">Tavily</option><option value="custom">自定义（博查兼容）</option></select></label>
@@ -53,7 +54,7 @@
           <details class="settings-help"><summary>参数说明与示例</summary><div id="web-search-guide"></div><p>博查：从<a href="https://open.bocha.cn/" target="_blank" rel="noopener">博查开放平台</a>获取 API Key，接口地址由应用内置。</p><p>自定义接口必须使用 POST、Bearer 鉴权，并返回 <code>data.webPages.value</code>；每项应包含 <code>name</code>、<code>url</code>、<code>summary</code> 或 <code>snippet</code>。</p></details>
         </details>
         <details class="panel settings-section" data-collapsible>
-          <summary class="settings-summary"><span class="settings-summary-title"><span class="settings-summary-code">//</span><strong>Embedding 与文档切分</strong><span class="settings-summary-meta">向量化 · 文档切分 · 固定本地模型</span></span><span class="section-toggle-label">展开</span></summary>
+          <summary class="settings-summary"><span class="settings-summary-title"><strong>Embedding 与文档切分</strong><span class="settings-summary-meta">向量化 · 文档切分 · 固定本地模型</span></span><span class="section-toggle-label">展开</span></summary>
           <p class="settings-help">使用固定的本地模型 <code>Qwen3-Embedding-0.6B</code>（1024 维），从 ModelScope 下载，自动优先 GPU，不可用时回退 CPU。</p>
           <div class="asr-resource-bar"><div><strong id="embedding-state">检查中</strong><p id="embedding-status" class="inline-status"></p><progress id="embedding-progress" class="is-hidden" max="100"></progress><p id="embedding-progress-detail" class="inline-status"></p></div><div class="asr-actions"><button id="open-embedding-directory" class="button button-secondary" type="button"><i data-lucide="folder-open"></i>打开目录</button><button id="remove-embedding" class="button button-danger" type="button">删除</button><button id="cancel-embedding" class="button button-secondary is-hidden" type="button">取消下载</button><button id="install-embedding" class="button button-primary" type="button">安装</button></div></div>
           <div class="settings-grid settings-chunk-grid"><label class="field"><span>运行设备</span><select id="embedding-device"><option value="auto">自动（GPU 优先）</option><option value="cuda">仅 GPU</option><option value="cpu">仅 CPU</option></select></label><label class="field"><span>切分长度</span><input id="chunk-size" type="number" min="200" max="4000" step="50"></label><label class="field"><span>重叠长度</span><input id="chunk-overlap" type="number" min="0" max="1000" step="10"></label></div>
@@ -63,9 +64,8 @@
       </div>
 
       <div class="settings-group">
-        <span class="settings-group-label">// VOICE · 语音资源</span>
         <details id="tts-settings-anchor" class="panel settings-section" data-collapsible>
-          <summary class="settings-summary"><span class="settings-summary-title"><span class="settings-summary-code">//</span><strong>语音合成（GPT-SoVITS）</strong><span class="settings-summary-meta">训练式专属音色 · 本地引擎</span></span><span class="section-toggle-label">展开</span></summary>
+          <summary class="settings-summary"><span class="settings-summary-title"><strong>语音合成（GPT-SoVITS）</strong><span class="settings-summary-meta">训练式专属音色 · 本地引擎</span></span><span class="section-toggle-label">展开</span></summary>
           <p class="settings-help">训练式专属音色引擎：在声音工坊上传素材训练音色，绑定到角色后对话自动合成。</p>
           <div class="asr-resource-bar"><div class="tts-install-status"><strong id="gptsovits-state">检查中</strong><p id="gptsovits-status" class="inline-status"></p><progress id="gptsovits-progress" class="is-hidden" max="100"></progress><p id="gptsovits-progress-detail" class="inline-status"></p></div><div class="asr-actions"><button id="open-gptsovits-directory" class="button button-secondary" type="button"><i data-lucide="folder-open"></i>打开目录</button><button id="remove-gptsovits" class="button button-danger" type="button">删除</button><button id="cancel-gptsovits" class="button button-secondary is-hidden" type="button">取消下载</button><button id="install-gptsovits" class="button button-primary" type="button">安装</button></div></div>
           <details class="settings-help"><summary>引擎设置（可选）</summary><div class="settings-grid settings-grid-four gptsovits-paths">
@@ -76,13 +76,13 @@
           </div><p id="gptsovits-preset-note" class="inline-status"></p><p id="gptsovits-config-status" class="inline-status"></p><div class="asr-resource-bar"><p id="gptsovits-service-info" class="inline-status"></p><div class="asr-actions"><button id="start-gptsovits-service" class="button button-secondary" type="button">启动服务</button><button id="stop-gptsovits-service" class="button button-secondary" type="button">停止服务</button></div></div></details>
         </details>
         <details class="panel settings-section" data-collapsible>
-          <summary class="settings-summary"><span class="settings-summary-title"><span class="settings-summary-code">//</span><strong>本地语音识别</strong><span class="settings-summary-meta">语音输入 · 本地推理模型</span></span><span class="section-toggle-label">展开</span></summary>
+          <summary class="settings-summary"><span class="settings-summary-title"><strong>本地语音识别</strong><span class="settings-summary-meta">语音输入 · 本地推理模型</span></span><span class="section-toggle-label">展开</span></summary>
           <label class="toggle-field"><input id="asr-enabled" type="checkbox"><span>启用本地语音识别</span></label>
           <div class="asr-resource-bar"><div><strong id="asr-state">检查中</strong><p id="asr-status" class="inline-status"></p><progress id="asr-progress" class="is-hidden" max="100"></progress><p id="asr-progress-detail" class="inline-status"></p></div><div class="asr-actions"><button id="open-asr-directory" class="button button-secondary" type="button"><i data-lucide="folder-open"></i>打开目录</button><button id="remove-asr" class="button button-danger" type="button">删除</button><button id="cancel-asr" class="button button-secondary is-hidden" type="button">取消下载</button><button id="install-asr" class="button button-primary" type="button">安装</button></div></div>
           <details class="settings-help"><summary>高级路径设置（可选）</summary><div class="settings-grid settings-grid-four"><label class="field"><span>Python（可选）</span><input id="asr-python-path" placeholder="自动检测"></label><label class="field"><span>模型目录（可选）</span><input id="asr-model-path" placeholder="自动检测"></label><label class="field"><span>FFmpeg（可选）</span><input id="asr-ffmpeg-path" placeholder="自动检测"></label></div><div class="asr-actions"><button id="save-asr" class="button button-secondary" type="button">保存路径</button></div></details>
         </details>
         <details class="panel settings-section" data-collapsible>
-          <summary class="settings-summary"><span class="settings-summary-title"><span class="settings-summary-code">//</span><strong>人声分离</strong><span class="settings-summary-meta">素材 → 干净人声 · 本地模型</span></span><span class="section-toggle-label">展开</span></summary>
+          <summary class="settings-summary"><span class="settings-summary-title"><strong>人声分离</strong><span class="settings-summary-meta">素材 → 干净人声 · 本地模型</span></span><span class="section-toggle-label">展开</span></summary>
           <p class="settings-help">从视频/音频中提取干净人声，供声音工坊切片与训练音色使用。</p>
           <div class="asr-resource-bar separator-resource-bar"><div class="tts-install-status"><strong id="separator-state">检查中</strong><p id="separator-status" class="inline-status"></p><progress id="separator-progress" class="is-hidden" max="100"></progress><p id="separator-progress-detail" class="inline-status"></p></div><div class="asr-actions"><button id="open-separator-directory" class="button button-secondary" type="button"><i data-lucide="folder-open"></i>打开目录</button><button id="remove-separator" class="button button-danger" type="button">删除</button><button id="cancel-separator" class="button button-secondary is-hidden" type="button">取消下载</button><button id="install-separator" class="button button-primary" type="button">安装</button></div></div>
         </details>

@@ -58,3 +58,9 @@ class ServerManager:
             self.server.should_exit = True
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=10)
+
+    def wait(self) -> None:
+        """Keep the headless desktop host alive while its FastAPI server runs."""
+
+        if self.owns_server and self.thread is not None and self.thread.is_alive():
+            self.thread.join()

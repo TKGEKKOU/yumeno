@@ -16,11 +16,13 @@ import shutil
 import subprocess
 import threading
 from pathlib import Path
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import yaml
 
 from voice.gpt_sovits.config import GPTSoVITSConfig
+from voice.gpt_sovits.language import TrainingRow, normalize_language, validate_training_rows
 
 
 ASSET_STATUS_CREATED = "created"
@@ -30,6 +32,10 @@ ASSET_STATUS_FAILED = "failed"
 
 GPT_SOVITS_SAMPLE_RATE = 32000
 ASR_SERVICE_URL = "http://127.0.0.1:17004/transcribe"
+
+
+class TrainingDataInvalid(ValueError):
+    pass
 
 
 class TrainingService:
@@ -143,7 +149,8 @@ class TrainingService:
         list_path = dataset / f"{asset_id}.list"
         if not list_path.is_file():
             raise FileNotFoundError("请先准备数据集")
-        lang_map = {"zh": "ZH", "ja": "JA", "en": "EN", "yue": "Cantonese"}
+        normalized_language = normalize_language(language)
+        lang_map = {"zh": "ZH", "ja": "JA", "en": "EN", "ko": "KO", "yue": "Cantonese"}
         labeled = []
         for line in list_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
@@ -154,7 +161,7 @@ class TrainingService:
                 continue
             payload = wav_file.read_bytes()
             request = Request(
-                ASR_SERVICE_URL,
+                f"{ASR_SERVICE_URL}?{urlencode({'language': normalized_language})}",
                 data=payload,
                 headers={"Content-Type": "audio/wav", "x-audio-filename": wav_file.name},
                 method="POST",
@@ -167,7 +174,7 @@ class TrainingService:
                 raise RuntimeError(
                     f"ASR 标注失败（请确认设置页本地语音识别已就绪）：{exc}"
                 ) from exc
-            lang = lang_map.get(str(result.get("language", "")).lower(), language.upper())
+            lang = lang_map[normalized_language]
             labeled.append(f"{wav_file.as_posix()}|{speaker}|{lang}|{text}")
         list_path.write_text("\n".join(labeled) + "\n", encoding="utf-8")
         return {"labeled": len(labeled), "list_file": str(list_path)}
@@ -176,7 +183,29 @@ class TrainingService:
     # training orchestration
     # ------------------------------------------------------------------
 
-    def start_training(self, asset_id: str) -> bool:
+    def validate_dataset(self, asset_id: str, expected_language: str) -> list[str]:
+        list_path = self.dataset_dir(asset_id) / f"{asset_id}.list"
+        if not list_path.is_file():
+            return ["训练清单不存在"]
+        aliases = {"cantonese": "yue"}
+        rows: list[TrainingRow] = []
+        for number, line in enumerate(list_path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            parts = line.split("|", 3)
+            if len(parts) != 4:
+                return [f"第 {number} 行格式错误"]
+            path, speaker, language, text = parts
+            rows.append(
+                TrainingRow(path, speaker, aliases.get(language.lower(), language), text)
+            )
+        return validate_training_rows(rows, expected_language)
+
+    def start_training(self, asset_id: str, expected_language: str | None = None) -> bool:
+        if expected_language:
+            errors = self.validate_dataset(asset_id, expected_language)
+            if errors:
+                raise TrainingDataInvalid("；".join(errors[:5]))
         with self._lock:
             if self._active_asset_id is not None:
                 return False

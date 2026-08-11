@@ -225,39 +225,3 @@ def test_voice_studio_rejects_bad_files(client, tmp_path, monkeypatch):
     assert bad.status_code == 415
     missing = client.get("/api/voice-studio/sessions/nope", headers=headers)
     assert missing.status_code == 404
-
-
-def test_reference_preview_uses_named_voice(client, tmp_path, monkeypatch):
-    headers = {"X-YUMENO-Request": "web"}
-    manager = install_manager(client, tmp_path, monkeypatch)
-    session_id = client.post("/api/voice-studio/sessions", headers=headers).json()["session_id"]
-    reference = tmp_path / "reference.wav"
-    reference.write_bytes(wav_bytes())
-    monkeypatch.setattr(manager, "reference_path", lambda _: reference)
-
-    class FakeTTS:
-        def synthesize(self, text, output, reference_audio=None):
-            assert text == "你好，测试音色"
-            output.write_bytes(wav_bytes())
-
-    client.app.state.tts_resources.status = lambda: {"ready": True}
-    client.app.state.tts_factory = lambda: FakeTTS()
-
-    class FakeSimilarity:
-        def similarity(self, audio_a, audio_b):
-            assert str(audio_a) == str(reference)
-            return 0.87
-
-        def close(self):
-            pass
-
-    client.app.state.voice_similarity = FakeSimilarity()
-    response = client.post(
-        f"/api/voice-studio/sessions/{session_id}/reference/preview",
-        json={"text": "你好，测试音色"},
-        headers=headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["similarity"] == 0.87
-    assert data["audio"]

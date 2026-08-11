@@ -4,7 +4,11 @@ from sqlalchemy import func, select
 from agents.context import PersonaAgentContext
 from agents.registry import AUTOMATIC_TOOL_NAMES, MUTATION_TOOL_NAMES, tool_specs
 from agents.tools.memory import save_memory_for_context, update_memory_for_context
-from agents.tools.management import add_knowledge_for_context, rename_persona_for_context
+from agents.tools.management import (
+    add_knowledge_for_context,
+    delete_document_for_context,
+    rename_persona_for_context,
+)
 from app.models import DocumentJob, PersonaMemory
 from persona.service import create_persona
 
@@ -92,6 +96,8 @@ def test_registry_marks_every_mutation_as_confirmed():
         "rename_persona",
         "update_persona_profile",
         "delete_persona_document",
+        "save_workspace_memory",
+        "delete_workspace_memory",
     }
     assert set(MUTATION_TOOL_NAMES) == expected
     mutation_specs = [spec for spec in tool_specs() if spec.name in expected]
@@ -101,3 +107,40 @@ def test_registry_marks_every_mutation_as_confirmed():
         "update_persona_memory",
         "delete_persona_memory",
     }.issubset(AUTOMATIC_TOOL_NAMES)
+
+
+def test_delete_document_tool_cleans_structured_storage(db_session, monkeypatch):
+    persona = create_persona(db_session, "Alpha")
+    document = DocumentJob(
+        workspace_id="local-default",
+        knowledge_space_id=persona.knowledge_space_id,
+        original_filename="sales.csv",
+        markdown_filename="sales.md",
+        source_path="sales.csv",
+        status="indexed",
+    )
+    db_session.add(document)
+    db_session.commit()
+    deleted = []
+
+    class Store:
+        def delete_document(self, scope, document_id):
+            return None
+
+    monkeypatch.setattr(
+        "agents.tools.management.delete_structured_document",
+        lambda root, workspace_id, knowledge_space_id, document_id: deleted.append(
+            (workspace_id, knowledge_space_id, document_id)
+        ),
+    )
+    result = delete_document_for_context(
+        context_for(persona, db_session),
+        document.id,
+        confirmer=lambda action: True,
+        store=Store(),
+    )
+
+    assert result["status"] == "deleted"
+    assert deleted == [
+        ("local-default", persona.knowledge_space_id, document.document_id)
+    ]

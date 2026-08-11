@@ -9,6 +9,7 @@ import yaml
 
 
 NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
+STANDARD_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 def _is_unsafe_path(relative: str) -> bool:
@@ -67,16 +68,29 @@ def parse_skill_dir(skill_dir: Path) -> dict | None:
         return None
     name = str(data.get("name") or "").strip()
     description = str(data.get("description") or "").strip()
-    if not NAME_PATTERN.fullmatch(name) or name != Path(skill_dir).name:
+    if (
+        not NAME_PATTERN.fullmatch(name)
+        or len(name) > 64
+        or name != Path(skill_dir).name
+    ):
         return None
     if not description or len(description) > 1024:
         return None
-    tool_names_raw = data.get("tool-names") or []
-    if not isinstance(tool_names_raw, list):
-        return None
-    tool_names = tuple(
-        str(item).strip() for item in tool_names_raw if str(item).strip()
-    )
+    standard_tools = data.get("allowed-tools")
+    if standard_tools is not None:
+        if isinstance(standard_tools, str):
+            tool_names = tuple(item for item in standard_tools.split() if item.strip())
+        elif isinstance(standard_tools, list):
+            tool_names = tuple(str(item).strip() for item in standard_tools if str(item).strip())
+        else:
+            return None
+    else:
+        tool_names_raw = data.get("tool-names") or []
+        if not isinstance(tool_names_raw, list):
+            return None
+        tool_names = tuple(
+            str(item).strip() for item in tool_names_raw if str(item).strip()
+        )
     metadata: dict[str, str] = {}
     for key in ("license", "compatibility"):
         if data.get(key):
@@ -94,6 +108,8 @@ def parse_skill_dir(skill_dir: Path) -> dict | None:
         "description": description,
         "instructions": body.strip(),
         "tool_names": tool_names,
+        "allowed_tools": tool_names,
+        "standard_name": bool(STANDARD_NAME_PATTERN.fullmatch(name)),
         "metadata": metadata,
         "prompt_hint": prompt_hint,
         "scripts": scripts,

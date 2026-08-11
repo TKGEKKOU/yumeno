@@ -1,0 +1,32 @@
+{
+  "schema_version": 2,
+  "environment": {
+    "python": "3.11.9",
+    "rows": 5000
+  },
+  "structured_data": {
+    "rows_imported": 5000,
+    "import_ms": 15.869,
+    "import_rows_per_second": 315075.744,
+    "query_p50_ms": 1.914,
+    "query_p95_ms": 2.064,
+    "result_rows": 5
+  },
+  "sql_security": {
+    "attack_pattern_count": 4,
+    "repetitions_per_pattern": 20,
+    "attack_attempts": 80,
+    "blocked_attacks": 80,
+    "blocked_rate": 1.0,
+    "cross_scope_attempts": 4,
+    "cross_scope_blocked": 4,
+    "cross_scope_isolation_rate": 1.0
+  },
+  "context_budget": {
+    "turns": 50,
+    "tokens_before": 12057,
+    "tokens_after": 5791,
+    "token_reduction_rate": 0.5197,
+    "dropped_messages": 104
+  }
+}

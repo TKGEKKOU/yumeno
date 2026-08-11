@@ -4,8 +4,9 @@ import json
 import os
 import subprocess
 import threading
-from functools import lru_cache
+from collections import OrderedDict
 from pathlib import Path
+from weakref import WeakSet
 
 from langchain_core.embeddings import Embeddings
 
@@ -13,16 +14,58 @@ from ingestion.local_embedding.resources import LocalEmbeddingResourceManager
 
 
 _EMBEDDING_INSTANCES: list["ManagedLocalEmbeddings"] = []
+_EMBEDDING_RETIRED: WeakSet["ManagedLocalEmbeddings"] = WeakSet()
+_EMBEDDING_CACHE: OrderedDict[
+    tuple[str, str, str], "ManagedLocalEmbeddings"
+] = OrderedDict()
+_EMBEDDING_CACHE_LOCK = threading.Lock()
+_EMBEDDING_CACHE_SIZE = 4
+_EMBEDDING_ACCEPTING_NEW = True
 
 
-def shutdown_embedding_workers() -> None:
-    """终止所有已启动的本地 Embedding 推理子进程（退出清理用）。"""
+def _drain_embedding_workers() -> None:
+    """Close and forget every active or retired embedding adapter."""
 
-    for instance in list(_EMBEDDING_INSTANCES):
+    with _EMBEDDING_CACHE_LOCK:
+        instances = list(
+            dict.fromkeys([*_EMBEDDING_INSTANCES, *_EMBEDDING_RETIRED])
+        )
+        _EMBEDDING_INSTANCES.clear()
+        _EMBEDDING_RETIRED.clear()
+        _EMBEDDING_CACHE.clear()
+    for instance in instances:
         try:
             instance.close()
         except Exception:
             pass
+
+
+def shutdown_embedding_workers() -> None:
+    """终止全部 worker，并恢复普通调用可再次按需创建的状态。"""
+
+    global _EMBEDDING_ACCEPTING_NEW
+    with _EMBEDDING_CACHE_LOCK:
+        _EMBEDDING_ACCEPTING_NEW = False
+    _drain_embedding_workers()
+    with _EMBEDDING_CACHE_LOCK:
+        _EMBEDDING_ACCEPTING_NEW = True
+
+
+def begin_embedding_shutdown() -> None:
+    """Reject late cache creation and stop every worker during app teardown."""
+
+    global _EMBEDDING_ACCEPTING_NEW
+    with _EMBEDDING_CACHE_LOCK:
+        _EMBEDDING_ACCEPTING_NEW = False
+    _drain_embedding_workers()
+
+
+def resume_embedding_workers() -> None:
+    """Open the process pool for a newly started application lifespan."""
+
+    global _EMBEDDING_ACCEPTING_NEW
+    with _EMBEDDING_CACHE_LOCK:
+        _EMBEDDING_ACCEPTING_NEW = True
 
 
 def worker_environment() -> dict[str, str]:
@@ -48,8 +91,13 @@ class ManagedLocalEmbeddings(Embeddings):
         self.device = device
         self._process: subprocess.Popen | None = None
         self._lock = threading.Lock()
+        self._lifecycle_lock = threading.Lock()
+        self._closed = False
 
     def _start(self) -> subprocess.Popen:
+        with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("本地 Embedding 工作进程已关闭")
         directory = self.resources.model_directory(self.model_id)
         if not (directory / "config.json").is_file():
             raise RuntimeError("本地 Embedding 模型尚未下载，请先在设置页完成安装")
@@ -68,22 +116,35 @@ class ManagedLocalEmbeddings(Embeddings):
             encoding="utf-8",
             bufsize=1,
         )
+        # Popen itself can overlap application shutdown. Re-check the lifecycle
+        # state before publishing the process so a late child cannot escape.
+        with self._lifecycle_lock:
+            if self._closed:
+                should_stop = True
+            else:
+                self._process = process
+                should_stop = False
+        if should_stop:
+            self._stop_process(process)
+            raise RuntimeError("本地 Embedding 工作进程已关闭")
         ready_line = process.stdout.readline() if process.stdout else ""
         try:
             ready = json.loads(ready_line)
         except json.JSONDecodeError as exc:
             detail = process.stderr.read() if process.stderr and process.poll() is not None else ready_line
-            process.terminate()
+            self._discard_process(process)
             raise RuntimeError(f"本地 Embedding 工作进程启动失败：{detail[-2000:]}") from exc
         if not ready.get("ok"):
-            process.terminate()
+            self._discard_process(process)
             raise RuntimeError(str(ready.get("error") or "本地 Embedding 工作进程启动失败"))
-        self._process = process
         return process
 
     def _request(self, operation: str, texts: list[str]) -> list[list[float]]:
         with self._lock:
-            process = self._process
+            with self._lifecycle_lock:
+                if self._closed:
+                    raise RuntimeError("本地 Embedding 工作进程已关闭")
+                process = self._process
             if process is None or process.poll() is not None:
                 # 进程未启动或已退出（崩溃）时自动拉起新进程，对调用方透明。
                 process = self._start()
@@ -95,7 +156,7 @@ class ManagedLocalEmbeddings(Embeddings):
             line = process.stdout.readline()
             if not line:
                 # 读取失败说明子进程已经退出，先关掉旧句柄，下次调用会重新拉起。
-                self.close()
+                self._discard_process(process)
                 raise RuntimeError("本地 Embedding 工作进程意外退出")
             result = json.loads(line)
             if not result.get("ok"):
@@ -111,14 +172,58 @@ class ManagedLocalEmbeddings(Embeddings):
         return self._request("embed_query", [text])[0]
 
     def close(self) -> None:
-        process = self._process
-        self._process = None
+        with self._lifecycle_lock:
+            self._closed = True
+            process = self._process
+            self._process = None
+        self._stop_process(process)
+
+    def __del__(self) -> None:
+        # Retired adapters are tracked weakly. Once the last real owner (for
+        # example a cached Milvus store) releases one, reclaim its subprocess.
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def _discard_process(self, process: subprocess.Popen | None = None) -> None:
+        """Release a failed worker without permanently closing the adapter."""
+
+        with self._lifecycle_lock:
+            target = self._process if process is None else process
+            if self._process is target:
+                self._process = None
+        self._stop_process(target)
+
+    @staticmethod
+    def _stop_process(process: subprocess.Popen | None) -> None:
         if process and process.poll() is None:
             process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1)
 
 
-@lru_cache(maxsize=4)
 def get_managed_embeddings(project_root: str, model_id: str, device: str) -> ManagedLocalEmbeddings:
-    instance = ManagedLocalEmbeddings(Path(project_root), model_id, device)
-    _EMBEDDING_INSTANCES.append(instance)
+    key = (project_root, model_id, device)
+    with _EMBEDDING_CACHE_LOCK:
+        if not _EMBEDDING_ACCEPTING_NEW:
+            raise RuntimeError("本地 Embedding 工作进程正在关闭")
+        instance = _EMBEDDING_CACHE.pop(key, None)
+        if instance is not None:
+            _EMBEDDING_CACHE[key] = instance
+            return instance
+        instance = ManagedLocalEmbeddings(Path(project_root), model_id, device)
+        _EMBEDDING_CACHE[key] = instance
+        _EMBEDDING_INSTANCES.append(instance)
+        if len(_EMBEDDING_CACHE) > _EMBEDDING_CACHE_SIZE:
+            _, evicted = _EMBEDDING_CACHE.popitem(last=False)
+            if evicted in _EMBEDDING_INSTANCES:
+                _EMBEDDING_INSTANCES.remove(evicted)
+            # A Milvus store can keep using the returned embedding object after
+            # it leaves this lookup cache. Retire it for shutdown instead of
+            # turning a still-valid external reference into use-after-close.
+            _EMBEDDING_RETIRED.add(evicted)
     return instance

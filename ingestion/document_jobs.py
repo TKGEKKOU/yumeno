@@ -16,6 +16,8 @@ from ingestion.converter import convert_source
 from ingestion.indexer import ingest_markdown_file
 from ingestion.markdown_parser import DocumentScope
 from ingestion.milvus_store import MilvusRagStore
+from structured_data.importer import import_structured_file
+from structured_data.service import delete_structured_document, structured_db_path
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,7 @@ ALLOWED_EXTENSIONS = {
     ".html", ".htm", ".csv", ".json", ".xml", ".txt", ".md",
     ".epub", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff",
 }
+STRUCTURED_EXTENSIONS = {".csv", ".xlsx"}
 
 
 def utc_now() -> datetime:
@@ -123,18 +126,42 @@ def index_document_job(
     job_id: str,
     session_factory,
     store: MilvusRagStore | None = None,
+    structured_root: Path | None = None,
 ) -> None:
     with session_factory() as session:
         job = session.get(DocumentJob, job_id)
         if job is None or job.workspace_id != LOCAL_WORKSPACE_ID or not job.markdown_path:
             return
         scope = DocumentScope(job.workspace_id, job.knowledge_space_id, job.document_id)
+        root = structured_root or settings.project_root
+        structured_imported = False
         try:
+            source_path = Path(job.source_path)
+            if source_path.suffix.lower() in STRUCTURED_EXTENSIONS:
+                imported = import_structured_file(
+                    source_path,
+                    db_path=structured_db_path(
+                        root, job.workspace_id, job.knowledge_space_id
+                    ),
+                    workspace_id=job.workspace_id,
+                    knowledge_space_id=job.knowledge_space_id,
+                    document_id=job.document_id,
+                )
+                structured_imported = True
+                Path(job.markdown_path).write_text(imported.schema_card, encoding="utf-8")
+                job.markdown_preview = imported.schema_card
             ingest_markdown_file(Path(job.markdown_path), scope)
             job.status = "indexed"
             job.indexed_at = utc_now()
             job.error_message = None
         except Exception as exc:
+            if structured_imported:
+                delete_structured_document(
+                    root,
+                    job.workspace_id,
+                    job.knowledge_space_id,
+                    job.document_id,
+                )
             job.status = "index_failed"
             job.error_message = str(exc)[:2000]
         try:
@@ -148,6 +175,16 @@ def index_document_job(
                 cleanup_store.delete_document(scope, job.document_id)
             except Exception as cleanup_exc:  # noqa: BLE001 - 清理失败不应再次抛出
                 logger.warning("文档任务 %s 清理孤儿向量失败：%s", job_id, cleanup_exc)
+            if structured_imported:
+                try:
+                    delete_structured_document(
+                        root,
+                        job.workspace_id,
+                        job.knowledge_space_id,
+                        job.document_id,
+                    )
+                except Exception as cleanup_exc:  # noqa: BLE001
+                    logger.warning("文档任务 %s 清理结构化数据失败：%s", job_id, cleanup_exc)
             logger.warning(
                 "文档任务 %s 的行已被并发删除，已回滚并清理 Milvus 向量（document_id=%s）",
                 job_id,

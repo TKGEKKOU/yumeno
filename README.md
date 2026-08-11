@@ -5,18 +5,20 @@
 
 > 曾用名 PersonaLive；代码、容器名、API 校验头等内部标识仍沿用 `personalive` 前缀，作为工程别名保留。
 
-YUMENO 是一个**本地优先、生产级**的角色化多 Agent RAG 平台。它以 LangGraph 1.2.9 为底层运行时，将
+YUMENO 是一个**本地优先、工程化**的角色化多 Agent RAG 平台。它以 LangGraph 1.2.9 为底层运行时，将
 **人设驱动的多 Agent 编排**与**自适应纠错式 RAG** 深度耦合：每个角色拥有独立的身份设定、知识空间、
 会话状态与记忆，通过 Supervisor 多 Agent 架构统一调度知识检索、联网查询、长期记忆与角色管理四类
 专业 Worker，通过质量门与有界纠错机制抑制幻觉，最终以角色口吻生成接地、可信、可追溯的回复。
 
 平台强调**本地优先与离线可用**：LLM 与 Embedding 通过任意 OpenAI-compatible 接口接入，语音识别
-（Qwen3-ASR）、语音合成（Qwen3-TTS）与向量化（Qwen3-Embedding）均可本地部署、按需安装；
+（Qwen3-ASR）、语音合成（GPT-SoVITS）与向量化（Qwen3-Embedding）均可本地部署、按需安装；
 角色、对话与记忆等应用数据存本地 SQLite，向量知识由 Docker 托管的 Milvus 持久化，无需注册与登录。
 
 ---
 
 ## 核心架构
+
+从桌面启动、进程关系到 Agent/RAG、记忆、Skill/MCP/Tool、语音、Live2D 与消息接入的完整调用链，见 [YUMENO 项目完整技术解读](docs/architecture/YUMENO-project-deep-dive.md)。能力系统的操作参考见 [Agent 能力系统架构与操作说明](docs/agent-capability-system.md)；早期实施过程见 [能力系统长计划成果报告](docs/agent-capability-system-implementation-report.md)。
 
 ### 设计取舍与工程实践
 
@@ -118,8 +120,8 @@ LangGraph `interrupt()` 触发中断，返回待审批的操作详情（工具�
 
 ### 3. 语音与角色表现
 
-- **本地 TTS**：Qwen3-TTS（GGUF + qwen3tts.cpp，Vulkan/CPU），每角色可上传独立参考音色做
-  **声线克隆**；回复按句流式分段合成（`/synthesize/stream`），异常采样自动重试；
+- **本地 TTS**：GPT-SoVITS 训练式音色；每个音色保存参考语言，回复按语种分段合成并合并
+  WAV（`/synthesize/stream`），同一音色可稳定朗读中文、日文、英文等；
 - **口型同步**：文本 → 音素（viseme）序列与实时音频能量混合驱动 Live2D
   `ParamMouthOpenY / ParamMouthForm`，支持中文 / 日文 / 英文音素映射，也可经 WebSocket 驱动
   VTube Studio；
@@ -134,8 +136,9 @@ LangGraph `interrupt()` 触发中断，返回待审批的操作详情（工具�
   system prompt、对应工具才对模型可见，从源头缓解工具过载；支持上传标准
   `SKILL.md` 技能包（zip，≤25MB、可含多个技能，frontmatter 用 `tool-names`
   声明工具），与既有 JSON 技能并存；
-- **MCP 工具接入**：通过 `MultiServerMCPClient`（`langchain-mcp-adapters`）连接外部
-  MCP 服务器（stdio / streamable_http / SSE），工具自动注册进 `ToolSpec` 表并被技能引用。
+- **MCP 工具接入**：通过官方 MCP SDK 2.x 的持久 Session 连接外部
+  MCP 服务器（stdio / streamable_http / SSE），工具转换为 LangChain `StructuredTool`，
+  自动注册进 `ToolSpec` 表并被技能引用。
   插件页支持**运行时启停与热重连**（无需重启应用）、30 秒轮询刷新连接状态；
   stdio 启动命令受**白名单 / 黑名单 / 内联代码与危险参数拦截**保护
   （`MCP_ALLOW_ARBITRARY_STDIO=true` 仅跳过白名单）；按角色在**角色管理页**按服务器
@@ -164,7 +167,7 @@ LangGraph `interrupt()` 触发中断，返回待审批的操作详情（工具�
 | 联网搜索 | Tavily / 博查 / 自定义协议，或内置免 key 搜索（free-search-mcp，本地优先、无需 API key） |
 | 后端 | FastAPI / Uvicorn / SQLAlchemy / SQLite |
 | 基础设施 | Docker Compose（etcd / MinIO / Milvus / Attu）+ 本地 SQLite |
-| 语音 | Qwen3-TTS（本地）/ Qwen3-ASR（本地）/ Silero VAD / Web Audio |
+| 语音 | GPT-SoVITS（本地）/ Qwen3-ASR（本地）/ Silero VAD / Web Audio |
 | 角色渲染 | PIXI.js + Live2D Cubism 2/3/4 + VTube Studio |
 
 ## 环境要求
@@ -176,7 +179,7 @@ LangGraph `interrupt()` 触发中断，返回待审批的操作详情（工具�
 ## 快速开始（桌面端）
 
 1. 从 [GitHub Releases](https://github.com/TKGEKKOU/yumeno/releases) 下载安装程序
-   `YUMENO-Setup-0.1.1.exe` 并安装（或下载便携版 zip，解压后双击 `YUMENO.exe`）；
+   `YUMENO-Setup-0.2.0.exe` 并安装（或下载便携版 zip，解压后双击 `YUMENO.exe`）；
 2. 首次使用前请安装并启动 [Docker Desktop](https://www.docker.com/products/docker-desktop/)；
 3. 双击桌面快捷方式启动 YUMENO——启动页会自动检查 Docker、拉起 Milvus 与本地服务；
 4. 在"设置"页配置 LLM API Key（OpenAI 兼容接口），然后创建角色、上传资料、开始对话。
@@ -315,17 +318,21 @@ docker compose down
 
 ## 许可证与合规
 
-本地语音合成基于 [Lunar Astral Agents](https://gitee.com/TayunStarry/Lunar-Astral-Agents) 的
-Qwen3-TTS 子系统构建，受其 **Non-Commercial License** 约束，仅可用于非商业用途；完整许可证位于
-`third_party/lunar_tts/LICENSE`，Windows 发行包会附带该文件。TTS 模型文件不随项目分发，
-首次启用时从 ModelScope 下载。
+本地语音合成使用 GPT-SoVITS。GPT-SoVITS 安装包由用户自行准备或从设置页配置，训练产物保存在
+`data/gpt_sovits/voices`；训练清单必须使用 UTF-8 且语言标签正确，检测到乱码或标签错误时会阻止训练并要求重训。
 
-Live2D 官方示例模型仅用于本地评估，正式分发前请替换为拥有分发许可的模型。
+正式发行包不包含 Live2D 模型；请在管理页打开模型目录并安装拥有使用许可的模型。
 
 ## 后续计划
 
-- 会话摘要中间件（短期记忆超长压缩）与记忆向量化检索；
+- 使用固定真实知识库完成 Recall@3、MRR@3、检索 P95 和外部 LLM TTFT A/B，形成可审计质量基线；
 - 独立 Reranker 精排（BGE / Qwen3-Reranker）与多模态（图片）向量化；
 - **A2A / DeepAgents 生态评估**：验证跨框架智能体通信协议（A2A）与分层规划框架
   （DeepAgents）的接入可行性，为多智能体协作与任务规划能力预留扩展空间；
-- GPT-SoVITS / 在线 TTS、数字人事件、OBS 与直播平台适配器。
+- 为 MCP、B站和 QQ 突发消息增加长时间压力测试、背压与更细的运行指标；
+- 如需局域网或公网部署，增加身份认证、TLS、CORS/CSRF 收紧、限流与审计。
+# Agent/RAG 架构
+
+YUMENO 的主链路采用“Agent 策略决策 + LangGraph Workflow + 标准 Tool”分层：知识检索和结构化查询走一次策略调用后的确定性执行，权限、预处理、后处理和循环上限由 Workflow 负责。Milvus 保留为向量数据库，CSV/XLSX 进入 workspace 隔离 SQLite，通过只读 Text-to-SQL Tool 访问。
+
+详细设计见 [Agent/RAG 平台架构](docs/architecture/agent-rag-platform.md)，实测结果见 [成果报告](docs/reports/2026-08-11-enterprise-agent-rag-result.md)。

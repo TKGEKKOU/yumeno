@@ -1,6 +1,23 @@
 "use strict";
 window.PL = window.PL || { modules: {} };
-window.PL.modules.chat = { init: initChat };
+window.PL.modules.chat = { init: initChat, onShow: resumeChatView };
+
+const RECENT_PERSONA_STORAGE_KEY = "yumeno:recent-persona";
+function personaStorage(storage) {
+  if (storage) return storage;
+  try { return window.localStorage; } catch { return null; }
+}
+function resolveRecentPersonaId(personas, storage) {
+  const items = Array.isArray(personas) ? personas.filter((item) => item?.id) : [];
+  if (!items.length) return "";
+  const recent = personaStorage(storage)?.getItem(RECENT_PERSONA_STORAGE_KEY) || "";
+  return items.some((item) => item.id === recent) ? recent : items[0].id;
+}
+function rememberPersonaId(personaId, storage) {
+  if (!personaId) return;
+  try { personaStorage(storage)?.setItem(RECENT_PERSONA_STORAGE_KEY, personaId); } catch { /* localStorage may be unavailable */ }
+}
+window.PL.chatPreferences = { resolveRecentPersonaId, rememberPersonaId };
 
 let chatGlobalEventsBound = false;
 
@@ -73,6 +90,14 @@ function initChat() {
     loadConversationMessages();
     connectRealtime();
   }
+}
+
+function resumeChatView() {
+  window.PL.modules.integrations?.releaseLiveStage?.();
+  if (!state.personas.length) loadPersonas();
+  if (state.activePersona && !state.realtimeSocket) connectRealtime();
+  updateComposerControls();
+  requestAnimationFrame(() => window.PLLive2DHub?.refreshLayout?.());
 }
 
 function bindChatEvents() {
@@ -185,6 +210,7 @@ function handleRealtimeEvent(event) {
   if (event.type === "turn.started") {
     if (window.PLLive2DHub) window.PLLive2DHub.setAgentState("thinking");
     clearRealtimeSubmission();
+    state.realtimeExecutionPending = false;
     state.realtimeTurnId = event.turn_id;
     state.realtimeAnswerNode = null;
     state.voiceFeed = null;
@@ -201,8 +227,8 @@ function handleRealtimeEvent(event) {
     if (!state.realtimeAnswerNode) state.realtimeAnswerNode = showReplyLoading();
     state.realtimeAnswerNode.classList.remove("message-loading");
     const body = state.realtimeAnswerNode.querySelector("p");
+    if (body.classList.contains("loading-bubble")) body.textContent = "";
     body.classList.remove("loading-bubble");
-    body.textContent = "";
     setReplyStage(state.realtimeAnswerNode, event.stage);
   } else if (event.type === "text.delta") {
     if (!state.realtimeAnswerNode) state.realtimeAnswerNode = showReplyLoading();
@@ -252,9 +278,17 @@ function handleRealtimeEvent(event) {
     if (window.PLLive2DHub) window.PLLive2DHub.setAgentState("idle");
     if (state.realtimeSubmissionPending) failRealtimeSubmission(event.message || "实时会话未接收消息，请重新发送");
     setText("chat-error", event.message || "实时会话发生错误");
+    if (event.code === "turn_in_progress") {
+      if (state.realtimeTurnId) setRealtimeBusy(true);
+      else {
+        state.realtimeExecutionPending = true;
+        updateComposerControls();
+      }
+      return;
+    }
     state.realtimeTurnId = null;
     state.realtimeAnswerNode = null;
-    if (event.code !== "turn_in_progress") state.realtimeExecutionPending = false;
+    state.realtimeExecutionPending = false;
     setRealtimeBusy(false);
   }
 }
@@ -321,6 +355,7 @@ function stopVoicePlayback() {
   state.voicePlaybackQueue = [];
   state.voicePlaybackEpoch += 1;
 }
+window.PL.stopVoicePlayback = stopVoicePlayback;
 const PACE_INTERVAL_MS = 80;
 let paceTimer = null;
 let paceDone = null;
@@ -555,6 +590,7 @@ async function selectPersona(personaId = "") {
   setText("audio-status");
   closeRealtime();
   state.activePersona = state.personas.find((item) => item.id === personaId) || null;
+  rememberPersonaId(state.activePersona?.id);
   if (state.activePersona) {
     const key = `yumeno:conversation:${state.activePersona.id}`;
     state.conversationId = localStorage.getItem(key) || crypto.randomUUID();
@@ -578,7 +614,7 @@ async function submitQuestion(event) {
     cancelRealtimeTurn();
     return;
   }
-  if (state.realtimeTurnId || state.realtimeExecutionPending || state.voiceActive) return;
+  if (isConversationBusy() || state.voiceActive) return;
   const question = $("question").value.trim(); if (!question) return;
   sendQuestionText(question);
 }
@@ -642,8 +678,8 @@ function handleAgentStreamEvent(event) {
     if (!state.pendingReplyNode) state.pendingReplyNode = showReplyLoading();
     state.pendingReplyNode.classList.remove("message-loading");
     const body = state.pendingReplyNode.querySelector("p");
+    if (body.classList.contains("loading-bubble")) body.textContent = "";
     body.classList.remove("loading-bubble");
-    body.textContent = "";
     setReplyStage(state.pendingReplyNode, event.stage);
   } else if (event.kind === "token") {
     if (!state.pendingReplyNode) state.pendingReplyNode = showReplyLoading();
@@ -1015,7 +1051,9 @@ function playNextVoiceAudio() {
   (audio.loaded || Promise.resolve()).then(() => playAudioRobust(audio)).catch(advanceClean);
 }
 async function synthesizeAnswer(text, node, options = {}) {
-  const voice = state.activePersona?.profile?.tts;
+  const persona = options.persona || state.activePersona;
+  const conversationId = options.conversationId || state.conversationId;
+  const voice = persona?.profile?.tts;
   if (!state.ttsConfigured || !voice?.enabled || !$("assistant-voice-toggle").checked || !text) return;
   if (window.PL && window.PL.unlockAudio) window.PL.unlockAudio();
   const epoch = state.voicePlaybackEpoch;
@@ -1028,7 +1066,7 @@ async function synthesizeAnswer(text, node, options = {}) {
   state.voiceStreamAbort = controller;
   let segments = 0;
   try {
-    const response = await fetch(`/api/tts/personas/${state.activePersona.id}/conversations/${state.conversationId}/synthesize/stream`, {
+    const response = await fetch(`/api/tts/personas/${persona.id}/conversations/${conversationId}/synthesize/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
       body: JSON.stringify({ text }),
@@ -1089,7 +1127,22 @@ async function synthesizeAnswer(text, node, options = {}) {
     if (state.voiceStreamAbort === controller) state.voiceStreamAbort = null;
   }
 }
-function appendResultDetails(node, result) { if (result.evidence?.length) node.append(details("引用", result.evidence)); }
+function appendResultDetails(node, result) {
+  if (!node) return;
+  if (result.evidence?.length) node.append(details("引用", result.evidence));
+  const metrics = result.metrics || {};
+  const parts = [];
+  if (Number.isFinite(Number(metrics.model_calls))) parts.push(`模型 ${metrics.model_calls} 次`);
+  if (Number.isFinite(Number(metrics.tool_calls))) parts.push(`工具 ${metrics.tool_calls} 次`);
+  if (Number.isFinite(Number(metrics.first_token_ms))) parts.push(`首字 ${Math.round(metrics.first_token_ms)} ms`);
+  if (Number.isFinite(Number(metrics.total_ms))) parts.push(`总计 ${Math.round(metrics.total_ms)} ms`);
+  if (Number(metrics.context_dropped_messages) > 0) parts.push(`裁剪 ${metrics.context_dropped_messages} 条`);
+  if (!parts.length) return;
+  const summary = document.createElement("div");
+  summary.className = "agent-turn-metrics";
+  summary.textContent = parts.join(" · ");
+  node.append(summary);
+}
 function renderConfirmation() {
   const panel = $("confirmation-panel");
   if (!panel) return;

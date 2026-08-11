@@ -9,7 +9,7 @@ from __future__ import annotations
 
 
 ALLOWED_STDIO_COMMANDS = frozenset(
-    {"python", "python3", "node", "uv", "uvx", "deno", "bun"}
+    {"python", "python3", "node", "uv", "uvx", "npx", "docker", "deno", "bun"}
 )
 DENIED_STDIO_COMMANDS = frozenset(
     {

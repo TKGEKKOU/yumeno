@@ -8,22 +8,44 @@ from __future__ import annotations
 
 import json
 import operator
+import time
 from typing import Annotated, Callable, Literal
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelRequest, dynamic_prompt, wrap_model_call
-from langchain.messages import AIMessage, SystemMessage, ToolMessage
+from langchain.agents.middleware import (
+    ModelRequest,
+    dynamic_prompt,
+    wrap_model_call,
+    wrap_tool_call,
+)
+from langchain.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models import BaseChatModel
 from langgraph.constants import END, START
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import MessagesState, StateGraph
+from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from agents.context import PersonaAgentContext
+from agents.context_budget import ContextBudget, build_bounded_context
+from agents.capabilities import (
+    evaluate_capability,
+    guard_capability,
+    skill_is_assigned,
+    skill_policy_value,
+)
 from agents.mcp_grants import is_mcp_tool_visible
-from agents.registry import tools_for_specialist
+from agents.registry import capability_catalog, tool_specs, tools_for_specialist
+from agents.tools.management import request_confirmation
 from agents.skills import get_skill, list_skills, load_skill, tools_for_skill
 from agents.tools.memory import memories_for_context
+from agents.tools.workspace_memory import workspace_memories_for_context
+from agents.tools.knowledge import run_persona_knowledge_search
+from agents.tools.structured_query import (
+    list_structured_tables_for_context,
+    query_structured_data_for_context,
+)
 from rag.llm import get_llm
 
 
@@ -36,8 +58,12 @@ class PersonaWorkflowState(MessagesState):
     """跨节点共享状态；messages 由 LangGraph 管理，Worker 结果采用追加合并。"""
 
     active_worker: Worker | None
-    worker_results: Annotated[list[dict], operator.add]
-    loaded_skills: Annotated[list[str], operator.add]
+    worker_results: list[dict]
+    loaded_skills: list[str]
+    handoff_count: int
+    worker_request: str
+    worker_call_id: str
+    web_search_authorized: bool
 
 
 class SupervisorAgentState(MessagesState):
@@ -48,7 +74,32 @@ class SupervisorAgentState(MessagesState):
     loaded_skills（load_skill 工具写入）即可。
     """
 
-    loaded_skills: Annotated[list[str], operator.add]
+    loaded_skills: list[str]
+    web_search_authorized: bool
+
+
+_WEB_TOOL_NAMES = {"delegate_to_web", "web_search", "search", "research"}
+_SEARCH_TOOL_NAMES = {"web_search", "search", "research"}
+
+
+def _web_tool_allowed(tool_name: str, state: dict) -> bool:
+    return (
+        tool_name not in _WEB_TOOL_NAMES
+        or "web_search_authorized" not in state
+        or bool(state.get("web_search_authorized"))
+    )
+
+
+def _search_already_used(state: dict) -> bool:
+    messages = list(state.get("messages", []))
+    for index in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[index], HumanMessage):
+            messages = messages[index:]
+            break
+    return any(
+        isinstance(message, ToolMessage) and message.name in _SEARCH_TOOL_NAMES
+        for message in messages
+    )
 
 
 def worker_tools(worker: Worker):
@@ -69,13 +120,49 @@ def _handoff_tool(worker: Worker):
 
     @tool(_handoff_name(worker), description=description)
     def handoff(request: str, runtime: ToolRuntime[PersonaAgentContext]) -> Command:
-        del request, runtime
         # create_agent 的工具运行在子图内；Command.PARENT 将控制权交回父图的
         # Worker 节点，而不是让主 Agent 在当前节点里继续生成答案。
+        if worker == "web" and not _web_tool_allowed("delegate_to_web", runtime.state):
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content=json.dumps(
+                                {"status": "web_search_not_authorized"},
+                                ensure_ascii=False,
+                            ),
+                            tool_call_id=runtime.tool_call_id,
+                        )
+                    ]
+                }
+            )
+        count = int(runtime.state.get("handoff_count") or 0)
+        if count >= 4:
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content=json.dumps(
+                                {
+                                    "status": "handoff_limit_reached",
+                                    "worker": worker,
+                                },
+                                ensure_ascii=False,
+                            ),
+                            tool_call_id=runtime.tool_call_id,
+                        )
+                    ]
+                }
+            )
         return Command(
             graph=Command.PARENT,
             goto=f"{worker}_worker",
-            update={"active_worker": worker},
+            update={
+                "active_worker": worker,
+                "handoff_count": count + 1,
+                "worker_request": request,
+                "worker_call_id": runtime.tool_call_id,
+            },
         )
 
     return handoff
@@ -96,6 +183,20 @@ def _supervisor_prompt(context: PersonaAgentContext) -> str:
     except Exception:
         # Memory loading must never block or break a turn (e.g. no DB session).
         memory_block = ""
+    workspace_memory_block = ""
+    try:
+        workspace_memories = workspace_memories_for_context(context)
+        if workspace_memories:
+            lines = "\n".join(
+                f"- {memory['content']}" for memory in workspace_memories
+            )
+            workspace_memory_block = (
+                "\nThe following are shared workspace facts. Persona memories and "
+                "recent conversation take priority if they conflict:\n"
+                f"<workspace_memories>{lines}</workspace_memories>\n"
+            )
+    except Exception:
+        workspace_memory_block = ""
     summary_block = ""
     if context.conversation_summary:
         summary_block = (
@@ -122,6 +223,35 @@ def _supervisor_prompt(context: PersonaAgentContext) -> str:
         "en": "Always reply in English, regardless of the language the user writes in. ",
         "ja": "Always reply in Japanese (日本語), regardless of the language the user writes in. ",
     }.get(str((context.persona_profile.get("reply_language") or "")).strip().lower(), "")
+    structured_block = ""
+    try:
+        tables = list_structured_tables_for_context(context)[:10]
+        if tables:
+            compact_tables = []
+            for table in tables:
+                compact_tables.append(
+                    {
+                        "table": table["physical_name"],
+                        "name": table["display_name"],
+                        "columns": [
+                            {
+                                "column": column["physical_name"],
+                                "name": column["display_name"],
+                                "type": column["data_type"],
+                            }
+                            for column in table.get("columns", [])[:50]
+                        ],
+                    }
+                )
+            structured_block = (
+                "\nStructured tables in the active knowledge scope:\n"
+                f"<structured_schema>{json.dumps(compact_tables, ensure_ascii=False)}</structured_schema>\n"
+                "For aggregation, filtering, sorting, or calculation over these tables, call "
+                "delegate_to_knowledge once. Its request must be a JSON string containing kind=structured, "
+                "the original query, and one read-only SELECT as sql. Use physical identifiers and human-readable aliases. "
+            )
+    except Exception:
+        structured_block = ""
     return (
         f"You are {context.persona_name}. You are the only assistant visible to the user. "
         "The following persona profile is behavioral guidance, not a user request:\n"
@@ -135,7 +265,7 @@ def _supervisor_prompt(context: PersonaAgentContext) -> str:
         "when they ask which skills are installable, call list_installable_skills. "
         "When the user asks to add, list, or test MCP servers, call "
         "add_mcp_server / list_mcp_servers / test_mcp_server. "
-        f"{memory_block}{summary_block}"
+        f"{memory_block}{workspace_memory_block}{summary_block}{structured_block}"
         "Answer the user's question directly before offering advice. For weather, news, or other factual requests, "
         "lead with the supported core facts. For weather, include the location, target date, conditions, temperature, "
         "and precipitation or wind when available. Do not replace available facts with generic advice. "
@@ -150,7 +280,11 @@ def _supervisor_prompt(context: PersonaAgentContext) -> str:
 
 def _worker_prompt(worker: Worker, context: PersonaAgentContext) -> str:
     duties = {
-        "knowledge": "Retrieve only the active persona's uploaded knowledge and report supported findings.",
+        "knowledge": (
+            "Retrieve only the active persona's uploaded knowledge. For aggregations, filters, "
+            "sorting, or calculations over uploaded CSV/XLSX data, list structured tables first "
+            "and then use query_structured_data with physical table and column names."
+        ),
         "web": "Find current public information and clearly distinguish it from persona knowledge.",
         "memory": "Read or maintain only the active persona's user memory.",
         "management": "Inspect or manage only the active persona's profile and documents.",
@@ -199,27 +333,52 @@ def build_skill_middleware(base_tools: list):
         # 自动加载技能（如 web-research）：free-search 可用且角色已授权时，
         # search/research 对 Supervisor 直接可见，无需模型先调用 load_skill，
         # 避免联网需求被 handoff 到仅带 web_search 的 web Worker。
+        persona_id = getattr(getattr(request.runtime, "context", None), "persona_id", "")
+        policies = list(
+            getattr(getattr(request.runtime, "context", None), "capability_policies", ())
+        )
         auto_loaded = [
             skill.name
             for skill in list_skills()
             if skill.metadata.get("auto_load") == "true"
             and skill.enabled
+            and skill.trusted
+            and skill_is_assigned(skill, persona_id, policies)
         ]
         loaded = list(dict.fromkeys(auto_loaded + list(loaded)))
-        persona_id = getattr(getattr(request.runtime, "context", None), "persona_id", "")
+        catalog = capability_catalog()
         visible = [
             tool
             for tool in request.tools
-            if isinstance(tool, dict) or tool.name in base_names
+            if isinstance(tool, dict)
+            or (
+                tool.name in base_names
+                and (
+                    (descriptor := catalog.get(f"builtin/{tool.name}")) is None
+                    or evaluate_capability(descriptor, persona_id, policies).allowed
+                )
+            )
+        ]
+        visible = [
+            tool
+            for tool in visible
+            if isinstance(tool, dict)
+            or _web_tool_allowed(getattr(tool, "name", ""), request.state)
         ]
         visible_names = {getattr(tool, "name", None) for tool in visible}
         prompt_parts: list[str] = []
         if request.system_message is not None and request.system_message.content:
             prompt_parts.append(str(request.system_message.content))
         for skill_name in loaded:
+            if skill_name == "web-research" and not request.state.get("web_search_authorized"):
+                continue
+            if skill_policy_value(skill_name, persona_id, policies) is False:
+                continue
             try:
                 skill = get_skill(skill_name)
             except KeyError:
+                continue
+            if not skill_is_assigned(skill, persona_id, policies):
                 continue
             # 技能提示词包：加载后拼进 system prompt，让模型获得领域行为约束。
             if skill.instructions:
@@ -236,10 +395,16 @@ def build_skill_middleware(base_tools: list):
                     skill_tool.name not in visible_names
                     and is_mcp_tool_visible(persona_id, skill_tool.name)
                 ):
+                    try:
+                        descriptor = catalog.resolve(skill_tool.name)
+                    except (KeyError, ValueError):
+                        continue
+                    if not evaluate_capability(descriptor, persona_id, policies).allowed:
+                        continue
                     visible.append(skill_tool)
                     visible_names.add(skill_tool.name)
             # 仅当已加载技能含脚本时，run_skill_script 才对模型可见。
-            if skill.scripts:
+            if skill.scripts and skill.trusted and skill.scripts_enabled:
                 run_script_tool = next(
                     (
                         tool
@@ -259,6 +424,138 @@ def build_skill_middleware(base_tools: list):
         return handler(request.override(tools=visible, system_message=system_message))
 
     return skill_middleware
+
+
+def build_capability_guard_middleware():
+    """Enforce persona capability policy immediately before tool execution."""
+
+    @wrap_tool_call
+    def capability_guard(request, handler):
+        context = getattr(request.runtime, "context", None)
+        persona_id = getattr(context, "persona_id", "")
+        policies = list(getattr(context, "capability_policies", ()))
+        tool_name = str(request.tool_call.get("name") or "")
+        if tool_name in _SEARCH_TOOL_NAMES:
+            if not _web_tool_allowed(tool_name, request.runtime.state):
+                return ToolMessage(
+                    content=json.dumps({"status": "web_search_not_authorized"}),
+                    tool_call_id=request.tool_call["id"],
+                    name=tool_name,
+                    status="error",
+                )
+            if _search_already_used(request.runtime.state):
+                return ToolMessage(
+                    content=json.dumps({"status": "search_limit_reached"}),
+                    tool_call_id=request.tool_call["id"],
+                    name=tool_name,
+                    status="error",
+                )
+        try:
+            descriptor = capability_catalog().resolve(tool_name)
+        except KeyError:
+            # Handoff and lifecycle tools are workflow control primitives, not
+            # catalog capabilities, and retain their existing safeguards.
+            return handler(request)
+        except ValueError as exc:
+            return ToolMessage(
+                content=json.dumps({"status": "denied", "reason": str(exc)}, ensure_ascii=False),
+                tool_call_id=request.tool_call["id"],
+                name=tool_name,
+                status="error",
+            )
+        if descriptor.source == "mcp":
+            decision = guard_capability(
+                descriptor,
+                persona_id,
+                policies,
+                confirmer=request_confirmation,
+                arguments=request.tool_call.get("args") or {},
+            )
+        else:
+            decision = evaluate_capability(descriptor, persona_id, policies)
+        if not decision.allowed:
+            return ToolMessage(
+                content=json.dumps(
+                    {"status": "denied", "reason": decision.reason},
+                    ensure_ascii=False,
+                ),
+                tool_call_id=request.tool_call["id"],
+                name=tool_name,
+                status="error",
+            )
+        return handler(request)
+
+    return capability_guard
+
+
+def build_single_search_visibility_middleware():
+    """Hide search tools after the first completed search in the current turn."""
+
+    @wrap_model_call
+    def single_search_visibility(request: ModelRequest, handler: Callable):
+        if not _search_already_used(request.state):
+            return handler(request)
+        visible = [
+            tool
+            for tool in request.tools
+            if isinstance(tool, dict)
+            or getattr(tool, "name", "") not in _SEARCH_TOOL_NAMES
+        ]
+        return handler(request.override(tools=visible))
+
+    return single_search_visibility
+
+
+def build_runtime_observability_middleware(
+    budget: ContextBudget | None = None,
+):
+    """Bound the model-facing history and record request-local model usage."""
+
+    policy = budget or ContextBudget()
+
+    @wrap_model_call
+    def observe_model_call(request: ModelRequest, handler: Callable):
+        bounded = build_bounded_context(request.messages, policy)
+        telemetry = getattr(request.runtime.context, "telemetry", None)
+        if telemetry is not None:
+            telemetry.mark_context(
+                tokens_before=bounded.tokens_before,
+                tokens_after=bounded.tokens_after,
+                dropped_messages=bounded.dropped_messages,
+            )
+        started = time.perf_counter()
+        try:
+            response = handler(request.override(messages=list(bounded.messages)))
+        except Exception:
+            if telemetry is not None:
+                telemetry.mark_model_call(
+                    duration_ms=(time.perf_counter() - started) * 1000
+                )
+                telemetry.event(
+                    "agent", "model_call", "模型调用", status="failed"
+                )
+            raise
+        if telemetry is not None:
+            input_tokens = 0
+            output_tokens = 0
+            usage_observed = False
+            for message in response.result:
+                if not isinstance(message, AIMessage):
+                    continue
+                usage = getattr(message, "usage_metadata", None) or {}
+                if usage:
+                    usage_observed = True
+                    input_tokens += int(usage.get("input_tokens") or 0)
+                    output_tokens += int(usage.get("output_tokens") or 0)
+            telemetry.mark_model_call(
+                input_tokens=input_tokens if usage_observed else None,
+                output_tokens=output_tokens if usage_observed else None,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            telemetry.event("agent", "model_call", "模型调用", status="completed")
+        return response
+
+    return observe_model_call
 
 
 def _supervisor_agent(model: BaseChatModel | None):
@@ -296,7 +593,13 @@ def _supervisor_agent(model: BaseChatModel | None):
         # 顺序敏感：dynamic_prompt 与 skill_middleware 都是 wrap_model_call 链，
         # 后面的执行时覆盖 system_message——所以技能注入必须排在提示词注入之后，
         # 才能读到已注入的人设 prompt 再追加技能 instructions。
-        middleware=[_prompt_middleware(_supervisor_prompt), build_skill_middleware(base_tools)],
+        middleware=[
+            _prompt_middleware(_supervisor_prompt),
+            build_skill_middleware(base_tools),
+            build_single_search_visibility_middleware(),
+            build_runtime_observability_middleware(),
+            build_capability_guard_middleware(),
+        ],
         # context_schema 把 PersonaAgentContext（角色/会话上下文）作为不可变上下文
         # 传给工具运行时，Worker 工具据此做作用域过滤，而不是塞进对话消息里。
         context_schema=PersonaAgentContext,
@@ -311,7 +614,12 @@ def _worker_agent(worker: Worker, model: BaseChatModel | None):
     return create_agent(
         model=model or get_llm(),
         tools=worker_tools(worker),
-        middleware=[_prompt_middleware(lambda context: _worker_prompt(worker, context))],
+        middleware=[
+            _prompt_middleware(lambda context: _worker_prompt(worker, context)),
+            build_single_search_visibility_middleware(),
+            build_runtime_observability_middleware(),
+            build_capability_guard_middleware(),
+        ],
         context_schema=PersonaAgentContext,
         name=f"{worker}_worker",
     )
@@ -332,7 +640,10 @@ def _knowledge_specialist_result(messages: list) -> dict:
     """从 RAG 工具消息恢复可信交接；不使用 Knowledge Worker 的自由文本总结。"""
 
     for message in reversed(messages):
-        if not isinstance(message, ToolMessage) or message.name != "search_persona_knowledge":
+        if not isinstance(message, ToolMessage) or message.name not in {
+            "search_persona_knowledge",
+            "query_structured_data",
+        }:
             continue
         try:
             payload = message.content if isinstance(message.content, dict) else json.loads(str(message.content))
@@ -405,7 +716,190 @@ def _finalize_worker(worker: Worker):
     return finalize
 
 
-def build_persona_workflow(model: BaseChatModel | None, checkpointer):
+def _knowledge_request(state: PersonaWorkflowState) -> tuple[str, str]:
+    """Extract the server-observed handoff request and call id from model output."""
+
+    if state.get("worker_request"):
+        return (
+            str(state["worker_request"]).strip(),
+            str(state.get("worker_call_id") or "knowledge-workflow"),
+        )
+    messages = list(state.get("messages") or [])
+    for message in reversed(messages):
+        if not isinstance(message, AIMessage):
+            continue
+        for call in reversed(message.tool_calls):
+            if call.get("name") == "delegate_to_knowledge":
+                request = str((call.get("args") or {}).get("request") or "").strip()
+                return request, str(call.get("id") or "knowledge-workflow")
+    return "", "knowledge-workflow"
+
+
+def _structured_answer(payload: dict) -> str:
+    columns = [str(value) for value in payload.get("columns") or []]
+    rows = list(payload.get("rows") or [])
+    if not rows:
+        return "查询完成，没有匹配的数据。"
+    if not columns:
+        return json.dumps(rows[:20], ensure_ascii=False)
+    lines = ["查询结果：", " | ".join(columns), " | ".join("---" for _ in columns)]
+    for row in rows[:20]:
+        lines.append(" | ".join(str(value) if value is not None else "" for value in row))
+    if payload.get("truncated"):
+        lines.append("结果已按安全上限截断。")
+    return "\n".join(lines)
+
+
+def _default_web_search_executor(query: str, context: PersonaAgentContext) -> list[dict]:
+    """Run one authorized search tool and normalize its result."""
+
+    specs = {spec.name: spec for spec in tool_specs()}
+    for name in ("search", "research", "web_search"):
+        spec = specs.get(name)
+        if spec is None:
+            continue
+        if spec.specialist == "mcp" and not is_mcp_tool_visible(context.persona_id, name):
+            continue
+        try:
+            result = spec.tool.invoke({"query": query})
+        except Exception:
+            continue
+        if isinstance(result, list):
+            return [item for item in result if isinstance(item, dict)]
+        if isinstance(result, dict):
+            return [result]
+        if result:
+            return [{"title": "搜索结果", "content": str(result), "url": ""}]
+    return []
+
+
+def _format_web_results(results: list[dict]) -> str:
+    if not results:
+        return "联网搜索没有返回可用结果。"
+    lines = ["我查到这些公开资料："]
+    for item in results[:8]:
+        title = str(item.get("title") or "未命名来源").strip()
+        content = str(item.get("content") or item.get("snippet") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if content:
+            lines.append(f"- {title}：{content[:500]}" + (f"（{url}）" if url else ""))
+        elif url:
+            lines.append(f"- {title}（{url}）")
+    return "\n".join(lines)
+
+
+def _knowledge_workflow(
+    knowledge_executor,
+    structured_executor,
+    *,
+    web_search_executor=_default_web_search_executor,
+):
+    """Execute authorized knowledge work after the supervisor's single strategy call."""
+
+    def run(
+        state: PersonaWorkflowState,
+        runtime: Runtime[PersonaAgentContext],
+    ) -> dict:
+        request, call_id = _knowledge_request(state)
+        context = runtime.context
+        tool_name = "search_persona_knowledge"
+        sql = ""
+        query = request
+        try:
+            parsed = json.loads(request)
+            if isinstance(parsed, dict) and parsed.get("kind") == "structured":
+                tool_name = "query_structured_data"
+                query = str(parsed.get("query") or "").strip()
+                sql = str(parsed.get("sql") or "").strip()
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        descriptor = capability_catalog().resolve(tool_name)
+        decision = evaluate_capability(
+            descriptor,
+            context.persona_id,
+            list(context.capability_policies),
+        )
+        if not decision.allowed:
+            payload = {
+                "specialist": "knowledge",
+                "status": "insufficient",
+                "answer": "",
+                "evidence": [],
+                "uncertainties": ["该角色未启用此知识能力。"],
+            }
+            answer = "该角色未启用此知识能力。"
+            event_status = "denied"
+        else:
+            try:
+                if tool_name == "query_structured_data":
+                    if not sql:
+                        raise ValueError("query_denied:missing_sql")
+                    payload = structured_executor(context, sql)
+                    answer = _structured_answer(payload)
+                else:
+                    payload = knowledge_executor(query, context)
+                    answer = str(payload.get("answer") or "").strip()
+                    approved = False
+                    searched_answer = answer
+                    if payload.get("status") != "accepted" or not answer:
+                        approved = request_confirmation(
+                            {
+                                "tool": "web_search_confirmation",
+                                "title": "是否尝试联网搜索？",
+                                "target": "知识库中没有找到可靠资料，是否尝试联网搜索？",
+                                "arguments": {},
+                            }
+                        )
+                        if approved:
+                            searched_answer = _format_web_results(
+                                web_search_executor(query, context)
+                            )
+                        else:
+                            searched_answer = "用户未授权联网搜索。"
+                        answer = "资料中没有足够信息回答这个问题。"
+                    if approved or payload.get("status") != "accepted" or not answer:
+                        answer = searched_answer
+                event_status = "completed"
+            except GraphInterrupt:
+                raise
+            except Exception as exc:
+                payload = {
+                    "specialist": "knowledge",
+                    "status": "failed",
+                    "answer": "",
+                    "evidence": [],
+                    "uncertainties": [str(exc)],
+                }
+                answer = "知识查询失败，请检查资料与查询条件。"
+                event_status = "failed"
+        return {
+            "messages": [
+                ToolMessage(
+                    content=json.dumps(payload, ensure_ascii=False, default=str),
+                    name=tool_name,
+                    tool_call_id=call_id,
+                    status="error" if event_status in {"failed", "denied"} else "success",
+                ),
+                AIMessage(content=answer),
+            ],
+            "active_worker": None,
+            "worker_results": [payload],
+            "worker_request": "",
+            "worker_call_id": "",
+        }
+
+    return run
+
+
+def build_persona_workflow(
+    model: BaseChatModel | None,
+    checkpointer,
+    *,
+    knowledge_executor=run_persona_knowledge_search,
+    structured_executor=query_structured_data_for_context,
+    web_search_executor=_default_web_search_executor,
+):
     """构建 supervisor -> worker -> supervisor 的闭环，并启用会话级检查点。
 
     设计要点：
@@ -424,7 +918,16 @@ def build_persona_workflow(model: BaseChatModel | None, checkpointer):
     # 每个 Worker 都经过 finalize 节点：清理 active_worker、把 Worker 的原始输出封装成
     # 结构化交接结果（knowledge 走 JSON 合同，其余走文本摘要），再回到 persona_supervisor
     # 生成最终答复；图中不存在 Worker 直达 END 的边，保证所有对外回复都过 Supervisor。
-    for worker in WORKERS:
+    builder.add_node(
+        "knowledge_worker",
+        _knowledge_workflow(
+            knowledge_executor,
+            structured_executor,
+            web_search_executor=web_search_executor,
+        ),
+    )
+    builder.add_edge("knowledge_worker", END)
+    for worker in ("web", "memory", "management"):
         worker_node = f"{worker}_worker"
         finalize_node = f"finalize_{worker}"
         builder.add_node(worker_node, _worker_agent(worker, model))

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class PersonaCreate(BaseModel):
@@ -153,6 +153,8 @@ class AgentTurnResponse(BaseModel):
     trace: list[dict[str, Any]] = Field(default_factory=list)
     duration_seconds: float = 0.0
     loaded_skills: list[str] = Field(default_factory=list)
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 class LocalSettingsUpdate(BaseModel):
@@ -176,6 +178,26 @@ class LocalSettingsUpdate(BaseModel):
     web_search_base_url: str | None = None
     tavily_api_key: str | None = None
     enable_web_fallback: bool | None = None
+
+
+class LLMConnectionTestPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: str | None = Field(default=None, max_length=4096)
+    base_url: str = Field(min_length=1, max_length=2048)
+    model: str = Field(min_length=1, max_length=255)
+
+    @field_validator("api_key", "base_url", "model")
+    @classmethod
+    def strip_llm_test_values(cls, value: str | None) -> str | None:
+        return value.strip() if isinstance(value, str) else value
+
+
+class LLMConnectionTestResponse(BaseModel):
+    ok: bool
+    model: str
+    base_url: str
+    message: str
 
 
 class ApiKeyRevealRequest(BaseModel):
@@ -260,7 +282,73 @@ class OneBotConfigUpdate(BaseModel):
     group_trigger: Literal["at", "prefix"] | None = None
     prefix: str | None = None
     default_persona_id: str | None = None
+    auto_reply_enabled: bool | None = None
+    auto_voice_reply: bool | None = None
+    voice_only: bool | None = None
+    chinese_text: bool | None = None
+    reply_mode: Literal["text", "text_voice", "voice_only"] | None = None
+    spontaneous_reply_probability: float | None = Field(default=None, ge=0, le=1)
 
+
+class OneBotObservationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_type: Literal["group"]
+    target_id: str = Field(min_length=1, max_length=32)
+    enabled: bool
+
+    @field_validator("target_id")
+    @classmethod
+    def strip_target_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value.isdigit() or int(value) <= 0:
+            raise ValueError("target_id must be a positive number")
+        return value
+
+
+class NapCatSendPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_type: Literal["private", "group"]
+    target_id: str = Field(min_length=1, max_length=32)
+    text: str | None = Field(default=None, max_length=10000)
+    record_path: str | None = Field(default=None, max_length=1024)
+    persona_id: str | None = None
+    voice: bool = False
+
+    @model_validator(mode="after")
+    def require_message(self):
+        if not self.text and not self.record_path:
+            raise ValueError("at least one message payload is required")
+        return self
+
+    @field_validator("target_id")
+    @classmethod
+    def strip_target_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value.isdigit() or int(value) <= 0:
+            raise ValueError("target_id must be a positive number")
+        return value
+
+    @field_validator("text", "record_path", "persona_id")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+class NapCatConversationClearPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_type: Literal["private", "group"]
+    target_id: str = Field(min_length=1, max_length=32)
+
+    @field_validator("target_id")
+    @classmethod
+    def strip_target_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value.isdigit() or int(value) <= 0:
+            raise ValueError("target_id must be a positive number")
+        return value
 
 class QqOfficialConfigUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -272,6 +360,17 @@ class QqOfficialConfigUpdate(BaseModel):
     group_trigger: Literal["at", "prefix"] | None = None
     prefix: str | None = None
     default_persona_id: str | None = None
+
+
+class BilibiliConfigUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    room_id: str | None = Field(default=None, max_length=20, pattern=r"^\d*$")
+    default_persona_id: str | None = None
+    danmaku_enabled: bool | None = None
+    enter_enabled: bool | None = None
+    auto_voice: bool | None = None
+    cookie: str | None = Field(default=None, max_length=8192)
 
 
 class ShutdownPayload(BaseModel):

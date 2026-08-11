@@ -13,6 +13,12 @@ from agents.tools.memory import (
     update_persona_memory,
 )
 from agents.tools.web import web_search
+from agents.tools.structured_query import list_structured_tables, query_structured_data
+from agents.tools.workspace_memory import (
+    delete_workspace_memory,
+    read_workspace_memories,
+    save_workspace_memory,
+)
 
 __all__ = [
     "search_persona_knowledge",
@@ -26,4 +32,9 @@ __all__ = [
     "rename_persona",
     "update_persona_profile",
     "delete_persona_document",
+    "read_workspace_memories",
+    "save_workspace_memory",
+    "delete_workspace_memory",
+    "list_structured_tables",
+    "query_structured_data",
 ]

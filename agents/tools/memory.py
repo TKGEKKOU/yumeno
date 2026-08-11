@@ -11,7 +11,7 @@ def _session(context: PersonaAgentContext):
     return context.session_factory()
 
 
-def memories_for_context(context: PersonaAgentContext) -> list[dict]:
+def memories_for_context(context: PersonaAgentContext, limit: int = 20) -> list[dict]:
     session = _session(context)
     try:
         statement = (
@@ -20,7 +20,8 @@ def memories_for_context(context: PersonaAgentContext) -> list[dict]:
                 PersonaMemory.workspace_id == context.workspace_id,
                 PersonaMemory.persona_id == context.persona_id,
             )
-            .order_by(PersonaMemory.created_at, PersonaMemory.id)
+            .order_by(PersonaMemory.updated_at.desc(), PersonaMemory.id.desc())
+            .limit(max(1, min(int(limit), 100)))
         )
         return [
             {

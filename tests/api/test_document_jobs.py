@@ -76,6 +76,7 @@ def test_delete_document_removes_job_and_vectors(client, tmp_path, monkeypatch):
     client.post(f"/api/documents/{job['id']}/confirm")
 
     deleted_vectors = []
+    deleted_structured = []
     class FakeStore:
         def __init__(self):
             pass
@@ -83,11 +84,20 @@ def test_delete_document_removes_job_and_vectors(client, tmp_path, monkeypatch):
             deleted_vectors.append((scope, document_id))
 
     monkeypatch.setattr("app.routers.documents.MilvusRagStore", FakeStore)
+    monkeypatch.setattr(
+        "app.routers.documents.delete_structured_document",
+        lambda root, workspace_id, knowledge_space_id, document_id: deleted_structured.append(
+            (workspace_id, knowledge_space_id, document_id)
+        ),
+    )
     response = client.delete(f"/api/documents/{job['id']}")
     assert response.status_code == 204
     assert client.get(f"/api/documents/{job['id']}").status_code == 404
     assert deleted_vectors == [
         (DocumentScope("local-default", persona["knowledge_space_id"], job["document_id"]), job["document_id"])
+    ]
+    assert deleted_structured == [
+        ("local-default", persona["knowledge_space_id"], job["document_id"])
     ]
 
 
