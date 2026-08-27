@@ -91,10 +91,21 @@ function renderProvidersByCategory(category) {
 async function handleToggleChange(providerId, enabled) {
   const provider = providersData.find(p => p.id === providerId);
   if (!provider) return;
+  
+  // 如果是开启，检查是否已配置
+  if (enabled && !provider.is_configured) {
+    alert('请先配置该提供商');
+    await loadProviders();
+    return;
+  }
+  
   try {
     const payload = {
       provider_type: provider.type,
       provider_id: providerId,
+      api_key: provider.current_api_key || null,
+      base_url: provider.current_base_url || null,
+      model: provider.current_model || null,
       enabled: enabled
     };
     const response = await fetch("/api/providers/configure", {
@@ -102,11 +113,11 @@ async function handleToggleChange(providerId, enabled) {
       headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
       body: JSON.stringify(payload)
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`HTTP {response.status}`);
     await loadProviders();
   } catch (error) {
     console.error("Failed to toggle provider:", error);
-    alert(`切换失败: ${error.message}`);
+    alert(`切换失败: {error.message}`);
     await loadProviders();
   }
 }
@@ -229,8 +240,20 @@ async function saveProviderConfig(provider, formData, modal) {
       body: JSON.stringify(payload)
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    await loadProviders();
-    modal.remove();
+      
+      // 显示成功反馈
+      const resultEl = modal.querySelector(".test-result");
+      if (resultEl) {
+        resultEl.classList.remove("is-hidden", "is-error");
+        resultEl.classList.add("is-success");
+        resultEl.innerHTML = '<i data-lucide="check-circle"></i><span>保存成功</span>';
+        lucide.createIcons();
+      }
+      
+      await loadProviders();
+      
+      // 延迟关闭弹窗
+      setTimeout(() => modal.remove(), 1500);
   } catch (error) {
     const resultEl = modal.querySelector(".test-result");
     if (resultEl) {
