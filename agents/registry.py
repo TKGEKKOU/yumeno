@@ -62,17 +62,17 @@ class ToolSpec:
 # 避免把全部工具塞进单一 Agent 的上下文。
 _TOOL_SPECS = (
     ToolSpec("search_persona_knowledge", "conversation", search_persona_knowledge),
-    ToolSpec("web_search", "web", web_search),
+    ToolSpec("web_search", "conversation", web_search),
     ToolSpec("list_persona_documents", "management", list_persona_documents),
-    ToolSpec("read_persona_memories", "memory", read_persona_memories),
-    ToolSpec("save_persona_memory", "memory", save_persona_memory, False, True),
-    ToolSpec("update_persona_memory", "memory", update_persona_memory, False, True),
-    ToolSpec("delete_persona_memory", "memory", delete_persona_memory, False, True),
-    ToolSpec("read_workspace_memories", "memory", read_workspace_memories),
+    ToolSpec("read_persona_memories", "conversation", read_persona_memories),
+    ToolSpec("save_persona_memory", "conversation", save_persona_memory, False, True),
+    ToolSpec("update_persona_memory", "conversation", update_persona_memory, False, True),
+    ToolSpec("delete_persona_memory", "conversation", delete_persona_memory, False, True),
+    ToolSpec("read_workspace_memories", "conversation", read_workspace_memories),
     ToolSpec("list_structured_tables", "conversation", list_structured_tables),
     ToolSpec("query_structured_data", "conversation", query_structured_data),
-    ToolSpec("save_workspace_memory", "memory", save_workspace_memory, True, True),
-    ToolSpec("delete_workspace_memory", "memory", delete_workspace_memory, True, True),
+    ToolSpec("save_workspace_memory", "conversation", save_workspace_memory, True, True),
+    ToolSpec("delete_workspace_memory", "conversation", delete_workspace_memory, True, True),
     ToolSpec("add_persona_knowledge", "management", add_persona_knowledge, True, True),
     ToolSpec("rename_persona", "management", rename_persona, True, True),
     ToolSpec("update_persona_profile", "management", update_persona_profile, True, True),
@@ -213,6 +213,7 @@ def capability_summary() -> str:
         summary += f"外部 MCP 工具（需先加载对应技能）：{mcp_tools}。"
     summary += "联网搜索使用 web_search；需在设置页配置 API key 后才可用。"
     return summary
+
 
 
 

@@ -81,8 +81,8 @@ def request_file_upload(
     }
     
     max_sizes = {
-        "voice_material": 50 * 1024 * 1024,  # 50MB
-        "reference_text": 5 * 1024 * 1024,    # 5MB
+        "voice_material": 1024 * 1024 * 1024,  # 1GB (支持高清视频)
+        "reference_text": 5 * 1024 * 1024,      # 5MB
         "knowledge_document": 20 * 1024 * 1024  # 20MB
     }
     
@@ -309,3 +309,4 @@ def bind_trained_voice(
             "status": "binding_failed",
             "reason": str(e)
         }
+

@@ -55,9 +55,9 @@ from rag.adaptive_graph import serialize_document
 from rag.web_search import web_search_documents
 
 
-Worker = Literal["knowledge", "web", "memory", "management", "voice_clone", "config"]
-WORKERS: tuple[Worker, ...] = ("knowledge", "web", "memory", "management", "voice_clone", "config")
-_WORKER_SPECIALISTS = {"knowledge": "conversation", "web": "web", "memory": "memory", "management": "management", "voice_clone": "voice_clone", "config": "config"}
+Worker = Literal["conversation", "management", "voice_clone", "config"]
+WORKERS: tuple[Worker, ...] = ("conversation", "management", "voice_clone", "config")
+_WORKER_SPECIALISTS = {"conversation": "conversation", "management": "management", "voice_clone": "voice_clone", "config": "config"}
 
 
 class PersonaWorkflowState(MessagesState):
@@ -1009,3 +1009,4 @@ def build_persona_workflow(
         builder.add_edge(worker_node, finalize_node)
         builder.add_edge(finalize_node, "persona_supervisor")
     return builder.compile(checkpointer=checkpointer, name="persona_workflow")
+
