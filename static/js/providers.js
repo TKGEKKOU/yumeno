@@ -65,6 +65,7 @@ function renderProvidersByCategory(category) {
     const statusClass = provider.is_configured ? 'is-configured' : 'is-unconfigured';
     return `<article class="provider-card ${activeClass}" data-provider-id="${provider.id}">
       <div class="provider-card-header">
+        <span class="drag-handle" title="拖动排序"><i data-lucide="grip-vertical"></i></span>
         <h3 class="provider-name">${escapeHtml(provider.name)}</h3>
         <label class="provider-toggle" onclick="event.stopPropagation()">
           <input type="checkbox" ${provider.is_active ? 'checked' : ''} ${!provider.is_configured ? 'disabled' : ''} data-provider-id="${provider.id}">
