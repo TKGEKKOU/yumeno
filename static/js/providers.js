@@ -121,10 +121,23 @@ function openProviderConfig(providerId) {
   const descEl = modal.querySelector(".provider-description");
   if (descEl) descEl.textContent = provider.description;
   const form = modal.querySelector(".provider-config-form");
+  const apiKeyInput = form.querySelector('[name="api_key"]');
   const baseUrlInput = form.querySelector('[name="base_url"]');
   const modelInput = form.querySelector('[name="model"]');
-  if (baseUrlInput) baseUrlInput.placeholder = provider.default_base_url || "留空使用默认地址";
-  if (modelInput) modelInput.placeholder = provider.default_model || "留空使用默认模型";
+  
+  // 填充已有配置值
+  if (apiKeyInput) {
+    apiKeyInput.value = provider.current_api_key || "";
+    apiKeyInput.placeholder = "请输入 API Key";
+  }
+  if (baseUrlInput) {
+    baseUrlInput.value = provider.current_base_url || "";
+    baseUrlInput.placeholder = provider.default_base_url || "留空使用默认地址";
+  }
+  if (modelInput) {
+    modelInput.value = provider.current_model || "";
+    modelInput.placeholder = provider.default_model || "留空使用默认模型";
+  }
 
   if (!provider.requires_api_key) {
     const apiKeyField = form.querySelector('[name="api_key"]')?.closest(".field");
@@ -144,7 +157,7 @@ function openProviderConfig(providerId) {
   });
   const closeBtn = modal.querySelector(".modal-close");
   if (closeBtn) closeBtn.addEventListener("click", () => modal.remove());
-  modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
+  // 已禁用点击外部关闭弹窗
   document.body.appendChild(modal);
   lucide.createIcons();
 }
