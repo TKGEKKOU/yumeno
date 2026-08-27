@@ -1315,32 +1315,29 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 }
 
 /* ==================== Providers Page ==================== */
-/* ==================== Providers Page (Redesigned) ==================== */
+/* ==================== Providers Page (Fixed) ==================== */
 .providers-container {
   max-width: 1400px;
   margin: 0 auto;
   padding: 2rem 3rem;
   display: flex;
   flex-direction: column;
-  gap: 2.5rem;
+  gap: 2rem;
 }
 
-/* 顶部 Tab 导航 */
+/* 顶部 Tab 导航 - 简化 */
 .providers-tabs {
   display: flex;
   justify-content: center;
-  gap: 0.5rem;
-  padding: 0.5rem;
-  background: var(--surface-1);
-  border-radius: 12px;
-  border: 1px solid var(--border);
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .providers-tab {
-  padding: 0.75rem 1.5rem;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
+  padding: 0.625rem 1.25rem;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #64748b;
   font-size: 0.9375rem;
   font-weight: 500;
   cursor: pointer;
@@ -1350,14 +1347,15 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 }
 
 .providers-tab:hover {
-  background: var(--surface-2);
-  color: var(--text-primary);
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
 }
 
 .providers-tab.active {
-  background: var(--accent);
+  background: #3b82f6;
   color: white;
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+  border-color: #3b82f6;
 }
 
 /* 加载和错误状态 */
@@ -1368,7 +1366,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   align-items: center;
   justify-content: center;
   min-height: 300px;
-  color: var(--text-secondary);
+  color: #64748b;
   gap: 1rem;
 }
 
@@ -1380,22 +1378,21 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 }
 
 .providers-error {
-  color: var(--danger);
+  color: #ef4444;
 }
 
 /* 提供商卡片网格 */
 .providers-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1.25rem;
-  justify-content: center;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
 }
 
 /* 提供商卡片 */
 .provider-card {
   position: relative;
-  background: var(--surface-1);
-  border: 1px solid var(--border);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 10px;
   padding: 1.25rem;
   cursor: pointer;
@@ -1406,14 +1403,13 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 }
 
 .provider-card:hover {
-  border-color: var(--accent);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  transform: translateY(-2px);
+  border-color: #94a3b8;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .provider-card.is-active {
-  border-color: var(--accent);
-  background: rgba(59, 130, 246, 0.03);
+  border-color: #3b82f6;
+  background: #eff6ff;
 }
 
 /* 卡片头部：名称 + 开关 */
@@ -1428,7 +1424,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   font-size: 1rem;
   font-weight: 600;
   margin: 0;
-  color: var(--text-primary);
+  color: #0f172a;
   flex: 1;
 }
 
@@ -1473,7 +1469,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 }
 
 .provider-toggle input:checked + .toggle-slider {
-  background: var(--accent);
+  background: #3b82f6;
 }
 
 .provider-toggle input:checked + .toggle-slider:before {
@@ -1487,7 +1483,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 
 /* 卡片描述 */
 .provider-description {
-  color: var(--text-secondary);
+  color: #64748b;
   font-size: 0.875rem;
   line-height: 1.5;
   margin: 0;
@@ -1499,7 +1495,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   align-items: center;
   gap: 0.375rem;
   font-size: 0.8125rem;
-  color: var(--text-secondary);
+  color: #64748b;
   margin-top: 0.25rem;
 }
 
@@ -1509,19 +1505,19 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 }
 
 .provider-status.is-configured {
-  color: var(--success);
+  color: #22c55e;
 }
 
 .provider-status.is-unconfigured {
-  color: var(--text-tertiary);
+  color: #94a3b8;
 }
 
 /* 配置弹窗 */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1530,14 +1526,15 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 }
 
 .provider-config-modal {
-  background: var(--surface-1);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 12px;
   width: 90%;
   max-width: 520px;
   max-height: 85vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
   animation: slideUp 0.25s;
 }
 
@@ -1562,14 +1559,15 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   align-items: center;
   justify-content: space-between;
   padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
 }
 
 .modal-title {
   font-size: 1.25rem;
   font-weight: 600;
   margin: 0;
-  color: var(--text-primary);
+  color: #0f172a;
 }
 
 .modal-close {
@@ -1577,7 +1575,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   height: 32px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: #64748b;
   font-size: 1.5rem;
   line-height: 1;
   cursor: pointer;
@@ -1586,8 +1584,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 }
 
 .modal-close:hover {
-  background: var(--surface-2);
-  color: var(--text-primary);
+  background: #e2e8f0;
+  color: #0f172a;
 }
 
 .config-form-body {
@@ -1596,11 +1594,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  background: #ffffff;
 }
 
 .provider-config-form .provider-description {
   padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .form-fields {
@@ -1618,11 +1617,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 .field > span {
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: #475569;
 }
 
 .required {
-  color: var(--danger);
+  color: #ef4444;
 }
 
 .field input[type="text"],
@@ -1630,17 +1629,17 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 .field input[type="password"] {
   width: 100%;
   padding: 0.625rem 0.875rem;
-  border: 1px solid var(--border);
+  border: 1px solid #cbd5e1;
   border-radius: 8px;
-  background: var(--surface-1);
-  color: var(--text-primary);
+  background: #ffffff;
+  color: #0f172a;
   font-size: 0.9375rem;
   transition: all 0.2s;
 }
 
 .field input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
@@ -1663,7 +1662,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   height: 32px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: #64748b;
   cursor: pointer;
   border-radius: 6px;
   display: flex;
@@ -1673,8 +1672,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 }
 
 .toggle-visibility:hover {
-  background: var(--surface-2);
-  color: var(--text-primary);
+  background: #f1f5f9;
+  color: #0f172a;
 }
 
 .toggle-visibility i {
@@ -1688,7 +1687,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   justify-content: space-between;
   gap: 1rem;
   padding-top: 1rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid #e2e8f0;
 }
 
 .form-actions-right {
@@ -1712,20 +1711,20 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 }
 
 .test-result.is-success {
-  background: rgba(34, 197, 94, 0.1);
-  color: var(--success);
-  border: 1px solid rgba(34, 197, 94, 0.2);
+  background: #dcfce7;
+  color: #16a34a;
+  border: 1px solid #86efac;
 }
 
 .test-result.is-error {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--danger);
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  background: #fee2e2;
+  color: #dc2626;
+  border: 1px solid #fca5a5;
 }
 
 .test-result .latency {
   margin-left: auto;
-  color: var(--text-secondary);
+  color: #64748b;
   font-weight: 500;
 }
 
