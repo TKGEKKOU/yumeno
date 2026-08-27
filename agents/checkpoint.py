@@ -36,3 +36,5 @@ def delete_persona_checkpoints(settings: Settings, persona_id: str) -> None:
                 )
     finally:
         connection.close()
+
+

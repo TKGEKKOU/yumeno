@@ -128,10 +128,18 @@ CAPABILITY_QUESTION_SIGNALS = (
 
 _STAGE_BY_NODE = {
     "persona_supervisor": "正在思考…",
-    "knowledge_worker": "知识agent · 正在检索角色资料…",
-    "web_worker": "联网agent · 正在搜索…",
-    "memory_worker": "记忆agent · 正在读取记忆…",
-    "management_worker": "管理agent · 正在处理角色资料…",
+    "knowledge_worker": "知识检索 · 正在搜索资料和网络信息…",
+    "memory_worker": "记忆管理 · 正在读写角色记忆…",
+    "document_worker": "文档管理 · 正在处理知识文档…",
+    "profile_worker": "档案管理 · 正在更新角色档案…",
+    "voice_clone_worker": "声音克隆 · 正在处理音色训练…",
+    "config_worker": "配置管理 · 正在修改系统设置…",
+    "finalize_knowledge": "知识检索完成，整理结果中…",
+    "finalize_memory": "记忆操作完成，整理结果中…",
+    "finalize_document": "文档操作完成，整理结果中…",
+    "finalize_profile": "档案操作完成，整理结果中…",
+    "finalize_voice_clone": "声音克隆完成，整理结果中…",
+    "finalize_config": "配置修改完成，整理结果中…",
 }
 
 
@@ -704,3 +712,4 @@ class PersonaAgentService:
             return json.loads(content)
         except json.JSONDecodeError:
             return content
+
