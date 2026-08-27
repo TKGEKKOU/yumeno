@@ -22,6 +22,20 @@ from agents.tools import (
     update_persona_profile,
     web_search,
 )
+from agents.tools.voice_clone import (
+    start_voice_clone_session,
+    analyze_voice_material,
+    request_training_confirmation,
+    start_voice_training,
+    check_training_progress,
+    bind_trained_voice,
+)
+from agents.tools.config import (
+    list_available_configs,
+    get_config_detail,
+    request_config_change,
+    apply_config_change,
+)
 
 
 @dataclass(frozen=True)
@@ -58,6 +72,16 @@ _TOOL_SPECS = (
     ToolSpec("rename_persona", "management", rename_persona, True, True),
     ToolSpec("update_persona_profile", "management", update_persona_profile, True, True),
     ToolSpec("delete_persona_document", "management", delete_persona_document, True, True),
+    ToolSpec("start_voice_clone_session", "voice_clone", start_voice_clone_session, False, True),
+    ToolSpec("analyze_voice_material", "voice_clone", analyze_voice_material),
+    ToolSpec("request_training_confirmation", "voice_clone", request_training_confirmation, True, False),
+    ToolSpec("start_voice_training", "voice_clone", start_voice_training, False, True),
+    ToolSpec("check_training_progress", "voice_clone", check_training_progress),
+    ToolSpec("bind_trained_voice", "voice_clone", bind_trained_voice, False, True),
+    ToolSpec("list_available_configs", "config", list_available_configs),
+    ToolSpec("get_config_detail", "config", get_config_detail),
+    ToolSpec("request_config_change", "config", request_config_change, True, False),
+    ToolSpec("apply_config_change", "config", apply_config_change, False, True),
 )
 
 READ_ONLY_TOOL_NAMES = tuple(spec.name for spec in _TOOL_SPECS if not spec.mutates_data)

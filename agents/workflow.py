@@ -55,9 +55,9 @@ from rag.adaptive_graph import serialize_document
 from rag.web_search import web_search_documents
 
 
-Worker = Literal["knowledge", "web", "memory", "management"]
-WORKERS: tuple[Worker, ...] = ("knowledge", "web", "memory", "management")
-_WORKER_SPECIALISTS = {"knowledge": "conversation", "web": "web", "memory": "memory", "management": "management"}
+Worker = Literal["knowledge", "web", "memory", "management", "voice_clone", "config"]
+WORKERS: tuple[Worker, ...] = ("knowledge", "web", "memory", "management", "voice_clone", "config")
+_WORKER_SPECIALISTS = {"knowledge": "conversation", "web": "web", "memory": "memory", "management": "management", "voice_clone": "voice_clone", "config": "config"}
 
 
 class PersonaWorkflowState(MessagesState):

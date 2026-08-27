@@ -80,6 +80,12 @@ def query_structured_data_for_context(
             "rows": [],
             "uncertainties": ["当前角色没有可查询的结构化表格。"],
         }
+        # 增强安全验证
+    security_guard = get_sql_security_guard()
+    is_valid, error_msg = security_guard.validate_sql(sql, all_tables)
+    if not is_valid:
+        raise ValueError(f"query_denied:{error_msg}")
+    
     try:
         validated = validate_read_only_sql(sql, allowed_tables=all_tables)
     except SqlPolicyError as exc:
