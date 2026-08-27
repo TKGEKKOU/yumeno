@@ -23,6 +23,8 @@ async def test_llm_provider(api_key: str, base_url: str, model: str) -> Dict[str
             )
             if response.status_code == 200:
                 return {"success": True, "message": "连接成功"}
+            elif response.status_code == 429:
+                return {"success": True, "message": "连接正常（速率限制）"}
             else:
                 return {"success": False, "message": f"HTTP {response.status_code}"}
     except Exception as e:

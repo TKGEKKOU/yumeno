@@ -308,6 +308,13 @@ def configure_provider(payload: ProviderConfigUpdate, request: Request) -> dict:
     # 保存配置
     update_local_settings(SETTINGS_PATH, updates)
     
+    # 清除 LLM 缓存，强制下次对话重新加载配置
+    try:
+        from rag.llm import clear_llm_cache
+        clear_llm_cache()
+    except Exception:
+        pass  # 缓存清除失败不影响配置保存
+    
     return {"ok": True, "message": f"提供商 {metadata.name} 配置已保存"}
 
 

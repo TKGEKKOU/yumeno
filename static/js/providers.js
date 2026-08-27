@@ -95,6 +95,16 @@ async function handleToggleChange(providerId, enabled) {
   const provider = providersData.find(p => p.id === providerId);
   if (!provider) return;
   
+  // 如果是关闭操作，弹出确认
+  if (!enabled) {
+    const confirmed = confirm('确定要停用 ' + provider.name + ' 吗？');
+    if (!confirmed) {
+      // 用户取消，重新加载以恢复开关状态
+      await loadProviders();
+      return;
+    }
+  }
+  
   // 如果是开启，检查是否已配置
   if (enabled && !provider.is_configured) {
     alert('请先配置该提供商');

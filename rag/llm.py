@@ -56,6 +56,14 @@ def _build_llm(api_key: str, base_url: str, model: str) -> ChatOpenAI:
     return _create_llm(api_key, base_url, model, timeout=30, max_retries=0)
 
 
+def clear_llm_cache() -> None:
+    """清除 LLM 缓存，强制下次调用重新加载配置。
+    
+    配置更新后调用此函数，确保新的 API Key、Base URL 和模型名称生效。
+    """
+    _build_llm.cache_clear()
+
+
 def get_llm(settings: Settings | None = None) -> ChatOpenAI:
     active = settings or Settings.load()
     return _build_llm(active.openai_api_key, active.openai_base_url, active.openai_model)
