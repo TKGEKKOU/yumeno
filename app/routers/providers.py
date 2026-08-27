@@ -257,8 +257,11 @@ def configure_provider(payload: ProviderConfigUpdate, request: Request) -> dict:
     updates = {}
     type_str = payload.provider_type
     
-    # 设置当前提供商
-    updates[f"{type_str}_provider"] = payload.provider_id
+    # 设置当前提供商（如果 enabled 为 False，则清空）
+    if payload.enabled:
+        updates[f"{type_str}_provider"] = payload.provider_id
+    else:
+        updates[f"{type_str}_provider"] = None
     
     # 根据提供商类型设置对应字段
     if type_str == "llm":
