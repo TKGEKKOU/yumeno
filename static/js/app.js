@@ -8,6 +8,7 @@ const MODULES = {
   integrations: { view: "integrations", init: window.PL.modules.integrations?.init, onShow: window.PL.modules.integrations?.onShow },
   napcat: { view: "napcat", init: window.PL.modules.napcat?.init, onShow: window.PL.modules.napcat?.onShow, onHide: window.PL.modules.napcat?.onHide },
   plugins: { view: "plugins", init: window.PL.modules.plugins?.init, onShow: window.PL.modules.plugins?.onShow, onHide: window.PL.modules.plugins?.onHide },
+  providers: { view: "providers", init: window.PL.modules.providers?.init, onShow: window.PL.modules.providers?.onShow },
   test: { view: "test", init: window.PL.modules.test?.init, onShow: window.PL.modules.test?.onShow, onHide: window.PL.modules.test?.onHide },
   settings: { view: "settings", init: window.PL.modules.settings?.init },
 };

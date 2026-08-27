@@ -1,0 +1,138 @@
+<section id="providers-view" class="view is-hidden">
+  <div class="providers-layout">
+    <!-- 左侧分类导航 -->
+    <aside class="providers-sidebar">
+      <div class="providers-sidebar-header">
+        <h2>提供商配置</h2>
+        <p class="providers-subtitle">统一管理 AI 服务</p>
+      </div>
+      <nav class="providers-category-nav">
+        <button class="category-nav-item active" data-category="llm">
+          <i data-lucide="bot"></i>
+          <span>LLM</span>
+          <span class="category-count">0</span>
+        </button>
+        <button class="category-nav-item" data-category="embedding">
+          <i data-lucide="align-justify"></i>
+          <span>嵌入 (Embedding)</span>
+          <span class="category-count">0</span>
+        </button>
+        <button class="category-nav-item" data-category="reranker">
+          <i data-lucide="list-ordered"></i>
+          <span>重排序 (Reranker)</span>
+          <span class="category-count">0</span>
+        </button>
+        <button class="category-nav-item" data-category="stt">
+          <i data-lucide="mic"></i>
+          <span>语音转文字 (STT)</span>
+          <span class="category-count">0</span>
+        </button>
+        <button class="category-nav-item" data-category="tts">
+          <i data-lucide="volume-2"></i>
+          <span>文字转语音 (TTS)</span>
+          <span class="category-count">0</span>
+        </button>
+        <button class="category-nav-item" data-category="web_search">
+          <i data-lucide="search"></i>
+          <span>联网搜索</span>
+          <span class="category-count">0</span>
+        </button>
+      </nav>
+    </aside>
+
+    <!-- 右侧提供商列表 -->
+    <main class="providers-main">
+      <div class="providers-main-header">
+        <div class="providers-breadcrumb">
+          <span class="breadcrumb-category">LLM</span>
+          <span class="breadcrumb-count">共 <strong>0</strong> 个提供商</span>
+        </div>
+        <button id="providers-refresh" class="button button-secondary" type="button">
+          <i data-lucide="refresh-cw"></i>
+          刷新
+        </button>
+      </div>
+
+      <div id="providers-loading" class="providers-loading">
+        <i data-lucide="loader-circle" class="spin"></i>
+        <p>加载中...</p>
+      </div>
+
+      <div id="providers-error" class="providers-error is-hidden">
+        <i data-lucide="alert-circle"></i>
+        <p class="error-message"></p>
+        <button class="button button-primary" onclick="loadProviders()">重试</button>
+      </div>
+
+      <div id="providers-grid" class="providers-grid"></div>
+    </main>
+  </div>
+
+  <!-- 配置弹窗模板 -->
+  <template id="provider-config-modal-template">
+    <div class="modal-overlay" data-provider-modal>
+      <div class="modal-content provider-config-modal">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <i class="provider-icon"></i>
+            <h3 class="modal-title"></h3>
+          </div>
+          <button class="modal-close" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <form class="provider-config-form">
+          <div class="config-form-body">
+            <p class="provider-description"></p>
+
+            <div class="form-section">
+              <h4>基本配置</h4>
+              
+              <label class="field">
+                <span>API Key <span class="required">*</span></span>
+                <div class="secret-input">
+                  <input type="password" name="api_key" autocomplete="off" />
+                  <span class="secret-actions">
+                    <button type="button" class="toggle-visibility" title="显示/隐藏">
+                      <i data-lucide="eye"></i>
+                    </button>
+                  </span>
+                </div>
+              </label>
+
+              <label class="field">
+                <span>Base URL</span>
+                <input type="url" name="base_url" placeholder="留空使用默认地址" />
+              </label>
+
+              <label class="field">
+                <span>模型名称</span>
+                <input type="text" name="model" placeholder="留空使用默认模型" />
+              </label>
+            </div>
+
+            <div class="form-section">
+              <h4>高级设置</h4>
+              <label class="field checkbox-field">
+                <input type="checkbox" name="is_active" />
+                <span>设为当前激活提供商</span>
+              </label>
+            </div>
+
+            <div class="form-actions">
+              <button type="button" class="button button-secondary test-connection">
+                <i data-lucide="wifi"></i>
+                测试连接
+              </button>
+              <div class="form-actions-right">
+                <button type="button" class="button button-secondary" onclick="this.closest('[data-provider-modal]').remove()">取消</button>
+                <button type="submit" class="button button-primary">保存配置</button>
+              </div>
+            </div>
+
+            <div class="test-result is-hidden"></div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </template>
+</section>

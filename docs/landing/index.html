@@ -3,578 +3,738 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YUMENO - 企业级 AI 知识助手</title>
+    <title>YUMENO - 企业级本地 RAG 平台</title>
     <meta name="description" content="本地优先的企业级 RAG 多智能体平台，支持语音克隆、知识检索、智能编排">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
         :root {
-            --bg-dark: #0A0D12;
-            --bg-card: #0F131C;
-            --bg-hover: #161D2B;
-            --accent: #38BDF8;
-            --accent-dim: #6EE7B7;
-            --text-primary: #F8FAFC;
-            --text-secondary: #94A3B8;
-            --border: #1E293B;
+            --surface-0: #FFFFFF;
+            --surface-1: #F8F9FA;
+            --surface-2: #E9ECEF;
+            --surface-3: #DEE2E6;
+            --accent: #0066CC;
+            --accent-hover: #0052A3;
+            --accent-light: #E6F2FF;
+            --text-primary: #212529;
+            --text-secondary: #6C757D;
+            --border: #CED4DA;
+            --code-bg: #F1F3F5;
+            --success: #28A745;
+            --danger: #DC3545;
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: var(--bg-dark);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--surface-0);
             color: var(--text-primary);
-            line-height: 1.6;
+            line-height: 1.65;
+            font-size: clamp(15px, 1.5vw, 16px);
         }
         
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 0 24px;
+            padding: 0 clamp(20px, 4vw, 40px);
         }
         
-        /* Header */
+        .container-wide {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 clamp(20px, 4vw, 40px);
+        }
+        
+        /* Header - Floating minimal */
         header {
-            padding: 24px 0;
-            border-bottom: 1px solid var(--border);
-            position: sticky;
-            top: 0;
-            background: var(--bg-dark);
-            backdrop-filter: blur(12px);
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
             z-index: 100;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 12px 32px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
         }
         
         .header-content {
             display: flex;
             align-items: center;
-            justify-content: space-between;
+            gap: clamp(24px, 4vw, 48px);
         }
         
         .logo {
-            font-size: 24px;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            font-size: clamp(16px, 1.8vw, 18px);
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+        
+        nav {
+            display: flex;
+            gap: clamp(16px, 2.5vw, 28px);
         }
         
         nav a {
             color: var(--text-secondary);
             text-decoration: none;
-            margin-left: 32px;
-            font-size: 15px;
+            font-size: clamp(13px, 1.3vw, 14px);
             transition: color 0.2s;
+            font-weight: 500;
         }
         
-        nav a:hover { color: var(--text-primary); }
+        nav a:hover { 
+            color: var(--accent); 
+        }
         
-        /* Hero */
+        /* Hero - Split layout with metrics grid */
         .hero {
-            padding: 120px 0 80px;
-            text-align: center;
+            padding: clamp(120px, 15vw, 160px) 0 clamp(80px, 10vw, 100px);
+            position: relative;
         }
         
-        .hero h1 {
-            font-size: 56px;
-            font-weight: 700;
-            line-height: 1.1;
-            margin-bottom: 24px;
-            letter-spacing: -0.02em;
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: clamp(40px, 6vw, 80px);
+            align-items: center;
         }
         
-        .hero .subtitle {
-            font-size: 20px;
-            color: var(--text-secondary);
-            margin-bottom: 48px;
-            max-width: 600px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-        
-        .hero .tags {
-            display: flex;
-            gap: 16px;
-            justify-content: center;
-            margin-bottom: 48px;
-            flex-wrap: wrap;
-        }
-        
-        .tag {
-            padding: 8px 16px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 999px;
-            font-size: 14px;
-            color: var(--accent);
-        }
-        
-        .cta-buttons {
-            display: flex;
-            gap: 16px;
-            justify-content: center;
-            flex-wrap: wrap;
-        }
-        
-        .btn {
-            padding: 14px 32px;
-            border-radius: 12px;
-            font-size: 16px;
+        .hero-left h1 {
+            font-size: clamp(36px, 5.5vw, 56px);
             font-weight: 600;
-            text-decoration: none;
-            transition: all 0.2s;
+            line-height: 1.15;
+            margin-bottom: clamp(20px, 2.5vw, 28px);
+            letter-spacing: -0.025em;
+            color: var(--text-primary);
+        }
+        
+        .hero-left .tagline {
+            font-size: clamp(16px, 1.8vw, 18px);
+            color: var(--text-secondary);
+            margin-bottom: clamp(32px, 4vw, 40px);
+            line-height: 1.7;
+        }
+        
+        .hero-left .cta {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-        }
-        
-        .btn-primary {
+            gap: 12px;
+            padding: clamp(14px, 1.8vw, 16px) clamp(32px, 4vw, 40px);
             background: var(--accent);
-            color: var(--bg-dark);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: clamp(15px, 1.6vw, 16px);
+            font-weight: 600;
+            transition: all 0.25s;
+            box-shadow: 0 4px 12px rgba(0, 102, 204, 0.2);
         }
         
-        .btn-primary:hover {
-            background: #22D3EE;
+        .hero-left .cta:hover {
+            background: var(--accent-hover);
             transform: translateY(-2px);
-            box-shadow: 0 12px 24px rgba(56, 189, 248, 0.3);
+            box-shadow: 0 8px 20px rgba(0, 102, 204, 0.3);
         }
         
-        .btn-secondary {
-            background: var(--bg-card);
-            color: var(--text-primary);
-            border: 1px solid var(--border);
+        .hero-left .cta::after {
+            content: '→';
+            font-size: 1.2em;
         }
         
-        .btn-secondary:hover {
-            background: var(--bg-hover);
-            border-color: var(--accent);
-        }
-        
-        /* Deployment Modes */
-        .deployment-section {
-            padding: 80px 0;
-            background: linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-card) 100%);
-        }
-        
-        .section-title {
-            text-align: center;
-            font-size: 40px;
-            font-weight: 700;
-            margin-bottom: 16px;
-        }
-        
-        .section-subtitle {
-            text-align: center;
-            color: var(--text-secondary);
-            font-size: 18px;
-            margin-bottom: 64px;
-        }
-        
-        .deployment-grid {
+        .metrics-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 24px;
+            grid-template-columns: 1fr 1fr;
+            gap: clamp(16px, 2vw, 20px);
         }
         
-        .deployment-card {
-            background: var(--bg-card);
+        .metric-card {
+            background: var(--surface-1);
             border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 32px;
+            border-radius: 12px;
+            padding: clamp(20px, 2.5vw, 28px);
             transition: all 0.3s;
             position: relative;
             overflow: hidden;
         }
         
-        .deployment-card:hover {
-            border-color: var(--accent);
-            transform: translateY(-4px);
-            box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
-        }
-        
-        .deployment-card.featured {
-            border-color: var(--accent);
-        }
-        
-        .deployment-card.featured::before {
-            content: '推荐';
+        .metric-card::before {
+            content: '';
             position: absolute;
-            top: 16px;
-            right: 16px;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
             background: var(--accent);
-            color: var(--bg-dark);
+            transform: scaleY(0);
+            transform-origin: top;
+            transition: transform 0.3s;
+        }
+        
+        .metric-card:hover::before {
+            transform: scaleY(1);
+        }
+        
+        .metric-card:hover {
+            background: var(--surface-0);
+            border-color: var(--accent);
+            box-shadow: 0 8px 24px rgba(0, 102, 204, 0.1);
+            transform: translateX(4px);
+        }
+        
+        .metric-value {
+            font-size: clamp(28px, 4vw, 40px);
+            font-weight: 700;
+            color: var(--accent);
+            line-height: 1.1;
+            margin-bottom: 8px;
+        }
+        
+        .metric-label {
+            font-size: clamp(13px, 1.3vw, 14px);
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+        
+        /* Deployment - Horizontal cards */
+        .deployment-section {
+            padding: clamp(80px, 12vw, 120px) 0;
+            background: linear-gradient(180deg, var(--surface-0) 0%, var(--surface-1) 100%);
+        }
+        
+        .section-header {
+            text-align: center;
+            margin-bottom: clamp(48px, 6vw, 64px);
+        }
+        
+        .section-title {
+            font-size: clamp(32px, 4.5vw, 44px);
+            font-weight: 600;
+            margin-bottom: clamp(12px, 1.5vw, 16px);
+            letter-spacing: -0.02em;
+        }
+        
+        .section-subtitle {
+            color: var(--text-secondary);
+            font-size: clamp(16px, 1.7vw, 17px);
+            max-width: 640px;
+            margin: 0 auto;
+        }
+        
+        .deploy-cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: clamp(20px, 2.5vw, 28px);
+        }
+        
+        .deploy-card {
+            background: var(--surface-0);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            padding: clamp(28px, 3.5vw, 36px);
+            transition: all 0.3s;
+            position: relative;
+        }
+        
+        .deploy-card::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: var(--accent);
+            transform: scaleX(0);
+            transition: transform 0.3s;
+        }
+        
+        .deploy-card:hover::after {
+            transform: scaleX(1);
+        }
+        
+        .deploy-card:hover {
+            border-color: var(--accent);
+            box-shadow: 0 12px 32px rgba(0, 102, 204, 0.12);
+            transform: translateY(-4px);
+        }
+        
+        .deploy-card.featured {
+            border-color: var(--accent);
+            background: linear-gradient(135deg, var(--surface-0) 0%, var(--accent-light) 100%);
+        }
+        
+        .deploy-badge {
+            display: inline-block;
             padding: 4px 12px;
-            border-radius: 999px;
-            font-size: 12px;
+            background: var(--accent);
+            color: white;
+            border-radius: 4px;
+            font-size: clamp(11px, 1.1vw, 12px);
+            font-weight: 600;
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .deploy-card h3 {
+            font-size: clamp(20px, 2.2vw, 24px);
+            font-weight: 600;
+            margin-bottom: clamp(12px, 1.5vw, 16px);
+            color: var(--text-primary);
+        }
+        
+        .deploy-size {
+            font-size: clamp(24px, 3vw, 32px);
+            font-weight: 700;
+            color: var(--accent);
+            margin-bottom: 8px;
+        }
+        
+        .deploy-features {
+            list-style: none;
+            margin: clamp(16px, 2vw, 20px) 0;
+        }
+        
+        .deploy-features li {
+            padding: 8px 0;
+            font-size: clamp(13px, 1.35vw, 14px);
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--surface-2);
+        }
+        
+        .deploy-features li:last-child {
+            border-bottom: none;
+        }
+        
+        .deploy-features strong {
+            color: var(--text-primary);
             font-weight: 600;
         }
         
-        .deployment-card h3 {
-            font-size: 24px;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
+        /* Architecture - Bento grid */
+        .architecture-section {
+            padding: clamp(80px, 12vw, 120px) 0;
         }
         
-        .deployment-card .meta {
-            color: var(--text-secondary);
-            font-size: 14px;
-            margin-bottom: 24px;
-            display: flex;
-            gap: 16px;
-        }
-        
-        .deployment-card ul {
-            list-style: none;
-            margin-bottom: 24px;
-        }
-        
-        .deployment-card li {
-            padding: 8px 0;
-            color: var(--text-secondary);
-            display: flex;
-            align-items: flex-start;
-            gap: 8px;
-        }
-        
-        .deployment-card li::before {
-            content: '✓';
-            color: var(--accent-dim);
-            font-weight: 700;
-            flex-shrink: 0;
-        }
-        
-        /* Features */
-        .features-section {
-            padding: 80px 0;
-        }
-        
-        .features-grid {
+        .bento-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 32px;
+            grid-template-columns: repeat(6, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: clamp(16px, 2vw, 20px);
+            margin-top: clamp(48px, 6vw, 64px);
         }
         
-        .feature-card {
-            text-align: center;
-        }
-        
-        .feature-icon {
-            width: 64px;
-            height: 64px;
-            background: var(--bg-card);
+        .bento-item {
+            background: var(--surface-1);
             border: 1px solid var(--border);
             border-radius: 16px;
+            padding: clamp(24px, 3vw, 32px);
+            transition: all 0.3s;
             display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 32px;
-            margin: 0 auto 24px;
-        }
-        
-        .feature-card h3 {
-            font-size: 20px;
-            margin-bottom: 12px;
-        }
-        
-        .feature-card p {
-            color: var(--text-secondary);
-            font-size: 15px;
-        }
-        
-        /* Comparison */
-        .comparison-section {
-            padding: 80px 0;
-            background: var(--bg-card);
-        }
-        
-        .comparison-table {
-            max-width: 900px;
-            margin: 0 auto;
-            border: 1px solid var(--border);
-            border-radius: 16px;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
             overflow: hidden;
         }
         
-        .comparison-table table {
-            width: 100%;
-            border-collapse: collapse;
+        .bento-item::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(0, 102, 204, 0.05) 0%, transparent 70%);
+            opacity: 0;
+            transition: opacity 0.4s;
         }
         
-        .comparison-table th,
-        .comparison-table td {
-            padding: 16px 24px;
-            text-align: left;
-            border-bottom: 1px solid var(--border);
+        .bento-item:hover::before {
+            opacity: 1;
         }
         
-        .comparison-table th {
-            background: var(--bg-dark);
+        .bento-item:hover {
+            background: var(--surface-0);
+            border-color: var(--accent);
+            box-shadow: 0 8px 32px rgba(0, 102, 204, 0.12);
+            transform: translateY(-2px);
+        }
+        
+        .bento-item h3 {
+            font-size: clamp(16px, 1.8vw, 18px);
             font-weight: 600;
-            color: var(--accent);
+            margin-bottom: clamp(8px, 1vw, 12px);
+            color: var(--text-primary);
+            position: relative;
+            z-index: 1;
         }
         
-        .comparison-table td:first-child {
+        .bento-item p {
+            font-size: clamp(13px, 1.35vw, 14px);
             color: var(--text-secondary);
+            line-height: 1.6;
+            position: relative;
+            z-index: 1;
         }
         
-        .comparison-table .check {
-            color: var(--accent-dim);
-            font-weight: 700;
+        .bento-metric {
+            display: inline-block;
+            margin-top: clamp(12px, 1.5vw, 16px);
+            padding: 6px 12px;
+            background: var(--accent-light);
+            color: var(--accent);
+            border-radius: 6px;
+            font-size: clamp(12px, 1.2vw, 13px);
+            font-weight: 600;
+            position: relative;
+            z-index: 1;
         }
         
-        .comparison-table .cross {
-            color: #EF4444;
+        .bento-large { grid-column: span 3; grid-row: span 2; }
+        .bento-tall { grid-column: span 2; grid-row: span 2; }
+        .bento-wide { grid-column: span 3; grid-row: span 1; }
+        .bento-normal { grid-column: span 2; grid-row: span 1; }
+        
+        /* Comparison - Side by side */
+        .comparison-section {
+            padding: clamp(80px, 12vw, 120px) 0;
+            background: var(--surface-1);
+        }
+        
+        .comparison-wrapper {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: clamp(32px, 4vw, 48px);
+            margin-top: clamp(48px, 6vw, 64px);
+        }
+        
+        .comparison-col h3 {
+            font-size: clamp(20px, 2.2vw, 24px);
+            font-weight: 600;
+            margin-bottom: clamp(24px, 3vw, 32px);
+            text-align: center;
+            padding-bottom: 16px;
+            border-bottom: 2px solid var(--border);
+        }
+        
+        .comparison-list {
+            list-style: none;
+        }
+        
+        .comparison-list li {
+            padding: clamp(14px, 1.8vw, 18px) clamp(16px, 2vw, 20px);
+            background: var(--surface-0);
+            margin-bottom: 12px;
+            border-radius: 8px;
+            font-size: clamp(14px, 1.4vw, 15px);
+            border: 1px solid var(--border);
+            transition: all 0.2s;
+        }
+        
+        .comparison-list li:hover {
+            border-color: var(--accent);
+            transform: translateX(4px);
+        }
+        
+        .comparison-list .check::before {
+            content: '✓';
+            color: var(--success);
+            font-weight: bold;
+            margin-right: 12px;
+            font-size: 1.1em;
+        }
+        
+        .comparison-list .cross::before {
+            content: '✗';
+            color: var(--danger);
+            font-weight: bold;
+            margin-right: 12px;
+            font-size: 1.1em;
         }
         
         /* Footer */
         footer {
-            padding: 48px 0;
+            padding: clamp(48px, 6vw, 64px) 0;
+            background: var(--surface-0);
             border-top: 1px solid var(--border);
-            text-align: center;
+        }
+        
+        .footer-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         
         .footer-links {
             display: flex;
-            justify-content: center;
-            gap: 32px;
-            margin-bottom: 24px;
-            flex-wrap: wrap;
+            gap: clamp(24px, 3vw, 32px);
         }
         
         .footer-links a {
             color: var(--text-secondary);
             text-decoration: none;
+            font-size: clamp(14px, 1.4vw, 15px);
             transition: color 0.2s;
         }
         
         .footer-links a:hover {
-            color: var(--text-primary);
+            color: var(--accent);
         }
         
         .copyright {
             color: var(--text-secondary);
-            font-size: 14px;
+            font-size: clamp(13px, 1.3vw, 14px);
         }
         
-        /* Responsive */
+        @media (max-width: 1024px) {
+            header {
+                position: static;
+                transform: none;
+                border-radius: 0;
+                top: 0;
+                padding: 16px 24px;
+            }
+            
+            .hero-grid {
+                grid-template-columns: 1fr;
+                gap: 48px;
+            }
+            
+            .deploy-cards {
+                grid-template-columns: 1fr;
+            }
+            
+            .bento-grid {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto;
+            }
+            
+            .bento-large,
+            .bento-tall,
+            .bento-wide,
+            .bento-normal {
+                grid-column: span 1;
+                grid-row: span 1;
+            }
+            
+            .comparison-wrapper {
+                grid-template-columns: 1fr;
+            }
+            
+            .footer-content {
+                flex-direction: column;
+                gap: 24px;
+                text-align: center;
+            }
+        }
+        
         @media (max-width: 768px) {
-            .hero h1 { font-size: 36px; }
-            .hero .subtitle { font-size: 18px; }
-            .section-title { font-size: 32px; }
-            .deployment-grid { grid-template-columns: 1fr; }
-            nav { display: none; }
+            nav {
+                display: none;
+            }
+            
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
 <body>
-    <!-- Header -->
     <header>
-        <div class="container">
-            <div class="header-content">
-                <div class="logo">YUMENO</div>
-                <nav>
-                    <a href="#features">功能特性</a>
-                    <a href="#deployment">部署方案</a>
-                    <a href="#comparison">对比</a>
-                    <a href="https://github.com/TKGEKKOU/yumeno">GitHub</a>
-                    <a href="http://127.0.0.1:17000/docs">API 文档</a>
-                </nav>
-            </div>
+        <div class="header-content">
+            <div class="logo">YUMENO</div>
+            <nav>
+                <a href="#deployment">部署</a>
+                <a href="#architecture">架构</a>
+                <a href="#comparison">对比</a>
+            </nav>
         </div>
     </header>
 
-    <!-- Hero -->
     <section class="hero">
         <div class="container">
-            <h1>企业级 AI 知识助手</h1>
-            <p class="subtitle">本地优先的 RAG 多智能体平台，支持语音克隆、知识检索、智能编排</p>
-            
-            <div class="tags">
-                <span class="tag">🤖 6-Worker 多智能体</span>
-                <span class="tag">🎤 本地语音克隆</span>
-                <span class="tag">📚 自适应 RAG</span>
-                <span class="tag">🔒 数据本地化</span>
-            </div>
-            
-            <div class="cta-buttons">
-                <a href="https://github.com/TKGEKKOU/yumeno/releases" class="btn btn-primary">
-                    下载安装包
-                    <span>→</span>
-                </a>
-                <a href="https://github.com/TKGEKKOU/yumeno" class="btn btn-secondary">
-                    查看源码
-                </a>
+            <div class="hero-grid">
+                <div class="hero-left">
+                    <h1>企业级<br>本地 RAG 平台</h1>
+                    <p class="tagline">
+                        多智能体知识检索系统，支持完全离线运行、本地语音克隆、自适应 RAG 及多层 SQL 防护，专为金融、医疗、政府等强监管行业设计。
+                    </p>
+                    <a href="https://github.com/TKGEKKOU/yumeno/releases" class="cta">立即下载</a>
+                </div>
+                
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <div class="metric-value">6</div>
+                        <div class="metric-label">专业 Worker 智能体协同编排</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">+31%</div>
+                        <div class="metric-label">RAG 准确率提升（内部评测）</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">10</div>
+                        <div class="metric-label">层 SQL 安全防护机制</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">117</div>
+                        <div class="metric-label">单元测试全部通过</div>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
 
-    <!-- Deployment Modes -->
     <section id="deployment" class="deployment-section">
         <div class="container">
-            <h2 class="section-title">选择适合你的部署方案</h2>
-            <p class="section-subtitle">从快速试用到企业离线，灵活满足不同场景</p>
+            <div class="section-header">
+                <h2 class="section-title">三种部署模式</h2>
+                <p class="section-subtitle">根据合规要求、性能需求和基础设施灵活选择</p>
+            </div>
             
-            <div class="deployment-grid">
-                <!-- 云端版 -->
-                <div class="deployment-card">
-                    <h3>⚡ 云端版</h3>
-                    <div class="meta">
-                        <span>📦 50MB</span>
-                        <span>⏱️ 5 分钟</span>
-                    </div>
-                    <ul>
-                        <li>调用 OpenAI/DashScope API</li>
-                        <li>快速体验 RAG 问答</li>
-                        <li>Edge TTS 云端语音</li>
-                        <li>适合个人试用</li>
+            <div class="deploy-cards">
+                <div class="deploy-card">
+                    <h3>云端模式</h3>
+                    <div class="deploy-size">~50 MB</div>
+                    <ul class="deploy-features">
+                        <li><strong>LLM:</strong> OpenAI API</li>
+                        <li><strong>向量:</strong> text-embedding-3</li>
+                        <li><strong>语音:</strong> 不支持</li>
+                        <li><strong>场景:</strong> 快速验证</li>
                     </ul>
-                    <a href="https://github.com/TKGEKKOU/yumeno/releases" class="btn btn-secondary" style="width: 100%;">下载轻量版</a>
                 </div>
                 
-                <!-- 标准版 -->
-                <div class="deployment-card featured">
-                    <h3>🔧 标准版</h3>
-                    <div class="meta">
-                        <span>📦 500MB</span>
-                        <span>⏱️ 15 分钟</span>
-                    </div>
-                    <ul>
-                        <li>本地 Reranker 模型</li>
-                        <li>GPT-SoVITS 语音克隆</li>
-                        <li>5 步自动化训练流程</li>
-                        <li>支持云端 + 本地混合</li>
+                <div class="deploy-card featured">
+                    <div class="deploy-badge">推荐</div>
+                    <h3>标准模式</h3>
+                    <div class="deploy-size">~500 MB</div>
+                    <ul class="deploy-features">
+                        <li><strong>LLM:</strong> OpenAI API</li>
+                        <li><strong>向量:</strong> bge-reranker-v2-m3</li>
+                        <li><strong>语音:</strong> GPT-SoVITS 本地</li>
+                        <li><strong>场景:</strong> 混合部署</li>
                     </ul>
-                    <a href="https://github.com/TKGEKKOU/yumeno/releases" class="btn btn-primary" style="width: 100%;">下载标准版</a>
                 </div>
                 
-                <!-- 离线版 -->
-                <div class="deployment-card">
-                    <h3>🏢 离线版</h3>
-                    <div class="meta">
-                        <span>📦 3GB</span>
-                        <span>⏱️ 30 分钟</span>
-                    </div>
-                    <ul>
-                        <li>完全本地化部署</li>
-                        <li>本地 Embedding 模型</li>
-                        <li>Docker Compose 编排</li>
-                        <li>适合企业内网/强监管</li>
+                <div class="deploy-card">
+                    <h3>离线模式</h3>
+                    <div class="deploy-size">~3 GB</div>
+                    <ul class="deploy-features">
+                        <li><strong>LLM:</strong> Ollama (qwen2.5:7b)</li>
+                        <li><strong>向量:</strong> bge-m3 本地</li>
+                        <li><strong>语音:</strong> GPT-SoVITS 本地</li>
+                        <li><strong>场景:</strong> 完全离线</li>
                     </ul>
-                    <a href="https://github.com/TKGEKKOU/yumeno#docker-部署" class="btn btn-secondary" style="width: 100%;">查看部署文档</a>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Features -->
-    <section id="features" class="features-section">
-        <div class="container">
-            <h2 class="section-title">核心功能特性</h2>
-            <p class="section-subtitle">不只是聊天，更是企业级 AI 编排引擎</p>
+    <section id="architecture" class="architecture-section">
+        <div class="container-wide">
+            <div class="section-header">
+                <h2 class="section-title">核心技术架构</h2>
+                <p class="section-subtitle">基于 LangGraph 1.2.9 的多智能体编排系统</p>
+            </div>
             
-            <div class="features-grid">
-                <div class="feature-card">
-                    <div class="feature-icon">🤖</div>
-                    <h3>多智能体编排</h3>
-                    <p>基于 LangGraph 1.2.9 的 Supervisor + 6-Worker 架构，专业 Agent 分工协作</p>
+            <div class="bento-grid">
+                <div class="bento-item bento-large">
+                    <div>
+                        <h3>自适应 RAG 引擎</h3>
+                        <p>混合检索（向量 + BM25）+ 查询改写 + 答案质量门 + 自动纠错流程，在内部评测集上准确率提升 31%，幻觉率降低 39%。</p>
+                    </div>
+                    <span class="bento-metric">+31% 准确率</span>
                 </div>
                 
-                <div class="feature-card">
-                    <div class="feature-icon">🎤</div>
-                    <h3>本地语音克隆</h3>
-                    <p>GPT-SoVITS 5 步自动化流程，质量门自动拒绝不合格素材</p>
+                <div class="bento-item bento-tall">
+                    <div>
+                        <h3>多智能体编排</h3>
+                        <p>Supervisor 统筹调度，6 个专业 Worker 分工协作，26 个工具函数覆盖 RAG、数据库、语音、配置等场景。</p>
+                    </div>
+                    <span class="bento-metric">6 Workers</span>
                 </div>
                 
-                <div class="feature-card">
-                    <div class="feature-icon">📚</div>
-                    <h3>自适应 RAG</h3>
-                    <p>准确率提升 31%，幻觉率降低 39%，混合检索 + 查询改写 + 质量门</p>
+                <div class="bento-item bento-normal">
+                    <div>
+                        <h3>本地语音克隆</h3>
+                        <p>GPT-SoVITS 5 步自动化工作流，质量门自动拒绝不合格素材。</p>
+                    </div>
+                    <span class="bento-metric">5 步流程</span>
                 </div>
                 
-                <div class="feature-card">
-                    <div class="feature-icon">🔒</div>
-                    <h3>数据本地化</h3>
-                    <p>知识库、模型、推理全本地，满足金融/医疗/政府强监管要求</p>
+                <div class="bento-item bento-wide">
+                    <div>
+                        <h3>SQL 安全防护</h3>
+                        <p>10 层安全检测：递归 CTE、JOIN 深度、子查询深度、表白名单、危险函数、结果集限制、超时保护等，10 个单元测试全部通过。</p>
+                    </div>
+                    <span class="bento-metric">10 层防护</span>
                 </div>
                 
-                <div class="feature-card">
-                    <div class="feature-icon">⚙️</div>
-                    <h3>运行时配置</h3>
-                    <p>Web 界面动态修改 LLM/Embedding/RAG 参数，HITL 确认防误操作</p>
+                <div class="bento-item bento-normal">
+                    <div>
+                        <h3>运行时配置</h3>
+                        <p>Web 界面动态修改参数，HITL 确认防误操作。</p>
+                    </div>
+                    <span class="bento-metric">HITL</span>
                 </div>
                 
-                <div class="feature-card">
-                    <div class="feature-icon">🛡️</div>
-                    <h3>SQL 安全防护</h3>
-                    <p>10 层安全检测，防止注入/爆破/递归，结果集大小/超时保护</p>
+                <div class="bento-item bento-normal">
+                    <div>
+                        <h3>向量存储</h3>
+                        <p>Milvus 3.0，支持混合检索、重排序、元数据过滤。</p>
+                    </div>
+                    <span class="bento-metric">Milvus 3.0</span>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Comparison -->
     <section id="comparison" class="comparison-section">
         <div class="container">
-            <h2 class="section-title">与通用方案的对比</h2>
-            <p class="section-subtitle">专为知识密集场景设计</p>
+            <div class="section-header">
+                <h2 class="section-title">专业定位</h2>
+                <p class="section-subtitle">为知识密集型、高合规要求场景设计，而非通用聊天</p>
+            </div>
             
-            <div class="comparison-table">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>特性</th>
-                            <th>通用 IM 机器人</th>
-                            <th>YUMENO</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td>Multi-Agent 架构</td>
-                            <td class="cross">✗ 单 Agent</td>
-                            <td class="check">✓ Supervisor + 6 Worker</td>
-                        </tr>
-                        <tr>
-                            <td>RAG 深度</td>
-                            <td class="cross">简单检索</td>
-                            <td class="check">✓ 自适应纠错 + 评测数据</td>
-                        </tr>
-                        <tr>
-                            <td>语音克隆</td>
-                            <td class="cross">✗ 不支持</td>
-                            <td class="check">✓ 本地 GPT-SoVITS 5 步流程</td>
-                        </tr>
-                        <tr>
-                            <td>离线运行</td>
-                            <td class="cross">✗ 依赖云端 API</td>
-                            <td class="check">✓ 完全本地化</td>
-                        </tr>
-                        <tr>
-                            <td>SQL 安全</td>
-                            <td class="cross">✗ 无结构化查询</td>
-                            <td class="check">✓ 10 层防护 + 10 测试</td>
-                        </tr>
-                        <tr>
-                            <td>适用场景</td>
-                            <td>日常聊天、娱乐</td>
-                            <td class="check">企业知识库、合规问答</td>
-                        </tr>
-                    </tbody>
-                </table>
+            <div class="comparison-wrapper">
+                <div class="comparison-col">
+                    <h3>通用 IM 机器人</h3>
+                    <ul class="comparison-list">
+                        <li class="cross">单 Agent 架构</li>
+                        <li class="cross">简单向量检索</li>
+                        <li class="cross">不支持语音克隆</li>
+                        <li class="cross">依赖云端 API</li>
+                        <li class="cross">无结构化查询防护</li>
+                        <li class="cross">适用于日常聊天娱乐</li>
+                    </ul>
+                </div>
+                
+                <div class="comparison-col">
+                    <h3>YUMENO</h3>
+                    <ul class="comparison-list">
+                        <li class="check">Supervisor + 6 Worker</li>
+                        <li class="check">自适应纠错 + 评测数据集</li>
+                        <li class="check">本地 GPT-SoVITS 工作流</li>
+                        <li class="check">完全本地化（Ollama）</li>
+                        <li class="check">10 层防护 + 10 单元测试</li>
+                        <li class="check">企业知识库、合规问答</li>
+                    </ul>
+                </div>
             </div>
         </div>
     </section>
 
-    <!-- Footer -->
     <footer>
         <div class="container">
-            <div class="footer-links">
-                <a href="https://github.com/TKGEKKOU/yumeno">GitHub</a>
-                <a href="https://github.com/TKGEKKOU/yumeno/releases">下载</a>
-                <a href="https://github.com/TKGEKKOU/yumeno/blob/main/README.md">文档</a>
-                <a href="https://github.com/TKGEKKOU/yumeno/issues">问题反馈</a>
+            <div class="footer-content">
+                <div class="footer-links">
+                    <a href="https://github.com/TKGEKKOU/yumeno/releases">下载</a>
+                    <a href="https://github.com/TKGEKKOU/yumeno/blob/main/README.md">文档</a>
+                    <a href="https://github.com/TKGEKKOU/yumeno/issues">反馈</a>
+                </div>
+                <p class="copyright">© 2026 YUMENO Project</p>
             </div>
-            <p class="copyright">© 2026 YUMENO. 开源协议待定.</p>
         </div>
     </footer>
 </body>
