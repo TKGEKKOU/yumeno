@@ -256,3 +256,156 @@ window.PL.modules.providers = {
   init: initProviders,
   onShow: () => { if (providersData.length === 0) loadProviders(); }
 };
+
+let draggedCard = null;
+let dragStartX = 0;
+let dragStartY = 0;
+let isDragging = false;
+let longPressTimer = null;
+
+function setupCardDrag(card) {
+  let touchStartTime = 0;
+  
+  // 鼠标长按开始拖拽
+  card.addEventListener("mousedown", (e) => {
+    if (e.target.closest(".provider-toggle") || e.target.closest("input")) return;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    longPressTimer = setTimeout(() => {
+      startDrag(card, e);
+    }, 500); // 500ms 长按
+  });
+  
+  card.addEventListener("mouseup", () => {
+    clearTimeout(longPressTimer);
+  });
+  
+  card.addEventListener("mouseleave", () => {
+    clearTimeout(longPressTimer);
+  });
+  
+  // 触摸长按开始拖拽
+  card.addEventListener("touchstart", (e) => {
+    if (e.target.closest(".provider-toggle") || e.target.closest("input")) return;
+    touchStartTime = Date.now();
+    const touch = e.touches[0];
+    dragStartX = touch.clientX;
+    dragStartY = touch.clientY;
+    longPressTimer = setTimeout(() => {
+      startDrag(card, e);
+    }, 500);
+  });
+  
+  card.addEventListener("touchend", () => {
+    clearTimeout(longPressTimer);
+  });
+  
+  card.addEventListener("touchmove", (e) => {
+    if (isDragging) {
+      e.preventDefault();
+    } else {
+      const touch = e.touches[0];
+      const moveDistance = Math.sqrt(
+        Math.pow(touch.clientX - dragStartX, 2) + 
+        Math.pow(touch.clientY - dragStartY, 2)
+      );
+      if (moveDistance > 10) {
+        clearTimeout(longPressTimer);
+      }
+    }
+  });
+}
+
+function startDrag(card, event) {
+  isDragging = true;
+  draggedCard = card;
+  card.classList.add("dragging");
+  card.setAttribute("draggable", "true");
+  
+  // 添加拖拽事件监听
+  card.addEventListener("dragstart", handleDragStart);
+  card.addEventListener("dragend", handleDragEnd);
+  
+  // 为所有其他卡片添加 drop 事件
+  document.querySelectorAll(".provider-card").forEach(c => {
+    if (c !== card) {
+      c.addEventListener("dragover", handleDragOver);
+      c.addEventListener("dragleave", handleDragLeave);
+      c.addEventListener("drop", handleDrop);
+    }
+  });
+}
+
+function handleDragStart(e) {
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/html", this.innerHTML);
+}
+
+function handleDragOver(e) {
+  if (e.preventDefault) {
+    e.preventDefault();
+  }
+  e.dataTransfer.dropEffect = "move";
+  this.classList.add("drag-over");
+  return false;
+}
+
+function handleDragLeave(e) {
+  this.classList.remove("drag-over");
+}
+
+function handleDrop(e) {
+  if (e.stopPropagation) {
+    e.stopPropagation();
+  }
+  e.preventDefault();
+  
+  if (draggedCard !== this) {
+    // 交换位置
+    const draggedIndex = Array.from(this.parentNode.children).indexOf(draggedCard);
+    const targetIndex = Array.from(this.parentNode.children).indexOf(this);
+    
+    if (draggedIndex < targetIndex) {
+      this.parentNode.insertBefore(draggedCard, this.nextSibling);
+    } else {
+      this.parentNode.insertBefore(draggedCard, this);
+    }
+    
+    // 保存新的排序
+    saveProviderOrder();
+  }
+  
+  this.classList.remove("drag-over");
+  return false;
+}
+
+function handleDragEnd(e) {
+  this.classList.remove("dragging");
+  this.setAttribute("draggable", "false");
+  isDragging = false;
+  
+  // 移除所有拖拽样式
+  document.querySelectorAll(".provider-card").forEach(card => {
+    card.classList.remove("drag-over", "dragging");
+    card.removeEventListener("dragover", handleDragOver);
+    card.removeEventListener("dragleave", handleDragLeave);
+    card.removeEventListener("drop", handleDrop);
+  });
+  
+  draggedCard = null;
+}
+
+function saveProviderOrder() {
+  const grid = document.getElementById("providers-grid");
+  const order = Array.from(grid.children).map(card => card.dataset.providerId);
+  
+  // 保存到 localStorage
+  const orderKey = `provider_order_${currentCategory}`;
+  localStorage.setItem(orderKey, JSON.stringify(order));
+}
+
+function loadProviderOrder() {
+  const orderKey = `provider_order_${currentCategory}`;
+  const savedOrder = localStorage.getItem(orderKey);
+  return savedOrder ? JSON.parse(savedOrder) : null;
+}

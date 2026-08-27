@@ -1795,3 +1795,23 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   color: #64748b;
   font-weight: 400;
 }
+/* 提供商卡片拖拽样式 */
+.provider-card {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.provider-card:active {
+  cursor: grabbing;
+}
+
+.provider-card.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.provider-card.drag-over {
+  border: 2px dashed var(--accent);
+  background: var(--surface-2);
+}
