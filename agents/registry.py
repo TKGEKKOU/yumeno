@@ -62,8 +62,8 @@ class ToolSpec:
 # 避免把全部工具塞进单一 Agent 的上下文。
 _TOOL_SPECS = (
     ToolSpec("search_persona_knowledge", "knowledge", search_persona_knowledge),
-    ToolSpec("web_search", "web", web_search),
-    ToolSpec("list_persona_documents", "management", list_persona_documents),
+    ToolSpec("web_search", "knowledge", web_search),
+    ToolSpec("list_persona_documents", "document", list_persona_documents),
     ToolSpec("read_persona_memories", "memory", read_persona_memories),
     ToolSpec("save_persona_memory", "memory", save_persona_memory, False, True),
     ToolSpec("update_persona_memory", "memory", update_persona_memory, False, True),
@@ -73,10 +73,10 @@ _TOOL_SPECS = (
     ToolSpec("query_structured_data", "knowledge", query_structured_data),
     ToolSpec("save_workspace_memory", "memory", save_workspace_memory, True, True),
     ToolSpec("delete_workspace_memory", "memory", delete_workspace_memory, True, True),
-    ToolSpec("add_persona_knowledge", "management", add_persona_knowledge, True, True),
-    ToolSpec("rename_persona", "management", rename_persona, True, True),
-    ToolSpec("update_persona_profile", "management", update_persona_profile, True, True),
-    ToolSpec("delete_persona_document", "management", delete_persona_document, True, True),
+    ToolSpec("add_persona_knowledge", "document", add_persona_knowledge, True, True),
+    ToolSpec("rename_persona", "profile", rename_persona, True, True),
+    ToolSpec("update_persona_profile", "profile", update_persona_profile, True, True),
+    ToolSpec("delete_persona_document", "document", delete_persona_document, True, True),
     ToolSpec("start_voice_clone_session", "voice_clone", start_voice_clone_session, False, True),
     ToolSpec("request_file_upload", "voice_clone", request_file_upload),
     ToolSpec("analyze_voice_material", "voice_clone", analyze_voice_material),
@@ -88,8 +88,8 @@ _TOOL_SPECS = (
     ToolSpec("get_config_detail", "config", get_config_detail),
     ToolSpec("request_config_change", "config", request_config_change, True, False),
     ToolSpec("apply_config_change", "config", apply_config_change, False, True),
-    ToolSpec("import_knowledge_from_url", "management", import_knowledge_from_url, True, True),
-    ToolSpec("export_conversation", "management", export_conversation),
+    ToolSpec("import_knowledge_from_url", "knowledge", import_knowledge_from_url, True, True),
+    ToolSpec("export_conversation", "profile", export_conversation),
 )
 
 READ_ONLY_TOOL_NAMES = tuple(spec.name for spec in _TOOL_SPECS if not spec.mutates_data)

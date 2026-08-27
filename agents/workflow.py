@@ -55,9 +55,9 @@ from rag.adaptive_graph import serialize_document
 from rag.web_search import web_search_documents
 
 
-Worker = Literal["knowledge", "web", "memory", "management", "conversation", "voice_clone", "config"]
-WORKERS: tuple[Worker, ...] = ("knowledge", "web", "memory", "management", "conversation", "voice_clone", "config")
-_WORKER_SPECIALISTS = {"knowledge": "knowledge", "web": "web", "memory": "memory", "management": "management", "conversation": "conversation", "voice_clone": "voice_clone", "config": "config"}
+Worker = Literal["knowledge", "memory", "document", "profile", "voice_clone", "config"]
+WORKERS: tuple[Worker, ...] = ("knowledge", "memory", "document", "profile", "voice_clone", "config")
+_WORKER_SPECIALISTS = {"knowledge": "knowledge", "memory": "memory", "document": "document", "profile": "profile", "voice_clone": "voice_clone", "config": "config"}
 
 
 class PersonaWorkflowState(MessagesState):
@@ -120,11 +120,10 @@ def _handoff_name(worker: Worker) -> str:
 
 def _handoff_tool(worker: Worker):
     description = {
-        "knowledge": "Delegate uploaded persona knowledge retrieval to the knowledge specialist.",
-        "web": "Delegate current public information lookup to the web specialist.",
+        "knowledge": "Delegate knowledge retrieval, web search, or knowledge import to the knowledge specialist.",
         "memory": "Delegate durable user memory operations to the memory specialist.",
-        "management": "Delegate persona profile or document management to the management specialist.",
-        "conversation": "Delegate conversational interaction to the conversation specialist.",
+        "document": "Delegate persona document management to the document specialist.",
+        "profile": "Delegate persona profile management to the profile specialist.",
         "voice_clone": "Delegate voice cloning tasks to the voice clone specialist.",
         "config": "Delegate configuration modifications to the config specialist.",
     }[worker]
@@ -133,7 +132,7 @@ def _handoff_tool(worker: Worker):
     def handoff(request: str, runtime: ToolRuntime[PersonaAgentContext]) -> Command:
         # create_agent 的工具运行在子图内；Command.PARENT 将控制权交回父图的
         # Worker 节点，而不是让主 Agent 在当前节点里继续生成答案。
-        if worker == "web" and not _web_tool_allowed("delegate_to_web", runtime.state):
+        if worker == "knowledge" and not _web_tool_allowed("delegate_to_web", runtime.state):
             return Command(
                 update={
                     "messages": [
@@ -170,10 +169,9 @@ def _handoff_tool(worker: Worker):
             writer = get_stream_writer()
             stage_names = {
                 "knowledge": "正在检索知识库",
-                "web": "正在联网搜索",
                 "memory": "正在查询记忆",
-                "management": "正在管理文件",
-                "conversation": "正在对话处理",
+                "document": "正在管理文档",
+                "profile": "正在管理人设",
                 "voice_clone": "正在克隆语音",
                 "config": "正在修改配置",
             }
@@ -312,17 +310,16 @@ def _supervisor_prompt(context: PersonaAgentContext, intent_hint: str = "") -> s
 
 def _worker_prompt(worker: Worker, context: PersonaAgentContext) -> str:
     duties = {
-        "conversation": "Handle general conversational interactions and provide thoughtful responses based on persona profile and context.",
+        "knowledge": (
+            "Retrieve the active persona's uploaded knowledge, search current web information, "
+            "or import knowledge from URLs. For structured data queries over CSV/XLSX, "
+            "list tables first and use query_structured_data with physical column names."
+        ),
+        "memory": "Read or maintain only the active persona's user memory (both persona-specific and workspace-wide).",
+        "document": "Inspect or manage only the active persona's knowledge documents and uploaded files.",
+        "profile": "Inspect or modify only the active persona's profile, name, and export conversations.",
         "voice_clone": "Manage voice cloning workflows including material analysis, training coordination, and voice profile binding.",
         "config": "Inspect and modify system configuration settings after user confirmation.",
-        "knowledge": (
-            "Retrieve only the active persona's uploaded knowledge. For aggregations, filters, "
-            "sorting, or calculations over uploaded CSV/XLSX data, list structured tables first "
-            "and then use query_structured_data with physical table and column names."
-        ),
-        "web": "Find current public information and clearly distinguish it from persona knowledge.",
-        "memory": "Read or maintain only the active persona's user memory.",
-        "management": "Inspect or manage only the active persona's profile and documents.",
     }
     handoff_format = (
         "Finish with this concise factual handoff format:\n"
@@ -333,7 +330,7 @@ def _worker_prompt(worker: Worker, context: PersonaAgentContext) -> str:
     web_guidance = (
         " For weather, extract the requested location and date, conditions, high/low temperature, precipitation, "
         "and wind when present. Ignore search results unrelated to the request."
-        if worker == "web"
+        if worker == "knowledge"
         else ""
     )
     return (
@@ -742,10 +739,9 @@ def _finalize_worker(worker: Worker):
             writer = get_stream_writer()
             complete_names = {
                 "knowledge": "知识检索完成",
-                "web": "联网搜索完成",
                 "memory": "记忆查询完成",
-                "management": "文件管理完成",
-                "conversation": "对话处理完成",
+                "document": "文档管理完成",
+                "profile": "人设管理完成",
                 "voice_clone": "语音克隆完成",
                 "config": "配置修改完成",
             }
@@ -1037,7 +1033,7 @@ def build_persona_workflow(
         ),
     )
     builder.add_edge("knowledge_worker", END)
-    for worker in ("web", "memory", "management", "conversation", "voice_clone", "config"):
+    for worker in ("memory", "document", "profile", "voice_clone", "config"):
         worker_node = f"{worker}_worker"
         finalize_node = f"finalize_{worker}"
         builder.add_node(worker_node, _worker_agent(worker, model))
