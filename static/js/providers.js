@@ -131,12 +131,12 @@ function openProviderConfig(providerId) {
     apiKeyInput.placeholder = "请输入 API Key";
   }
   if (baseUrlInput) {
-    baseUrlInput.value = provider.current_base_url || "";
-    baseUrlInput.placeholder = provider.default_base_url || "留空使用默认地址";
+    baseUrlInput.value = provider.current_base_url || provider.default_base_url || "";
+    baseUrlInput.placeholder = "API 服务地址";
   }
   if (modelInput) {
-    modelInput.value = provider.current_model || "";
-    modelInput.placeholder = provider.default_model || "留空使用默认模型";
+    modelInput.value = provider.current_model || provider.default_model || "";
+    modelInput.placeholder = "模型名称";
   }
 
   if (!provider.requires_api_key) {
@@ -264,65 +264,31 @@ let isDragging = false;
 let longPressTimer = null;
 
 function setupCardDrag(card) {
-  let touchStartTime = 0;
+  const dragHandle = card.querySelector(".drag-handle");
+  if (!dragHandle) return;
   
-  // 鼠标长按开始拖拽
-  card.addEventListener("mousedown", (e) => {
-    if (e.target.closest(".provider-toggle") || e.target.closest("input")) return;
-    dragStartX = e.clientX;
-    dragStartY = e.clientY;
-    longPressTimer = setTimeout(() => {
-      startDrag(card, e);
-    }, 500); // 500ms 长按
+  // 鼠标拖拽
+  dragHandle.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startDrag(card);
   });
   
-  card.addEventListener("mouseup", () => {
-    clearTimeout(longPressTimer);
-  });
-  
-  card.addEventListener("mouseleave", () => {
-    clearTimeout(longPressTimer);
-  });
-  
-  // 触摸长按开始拖拽
-  card.addEventListener("touchstart", (e) => {
-    if (e.target.closest(".provider-toggle") || e.target.closest("input")) return;
-    touchStartTime = Date.now();
-    const touch = e.touches[0];
-    dragStartX = touch.clientX;
-    dragStartY = touch.clientY;
-    longPressTimer = setTimeout(() => {
-      startDrag(card, e);
-    }, 500);
-  });
-  
-  card.addEventListener("touchend", () => {
-    clearTimeout(longPressTimer);
-  });
-  
-  card.addEventListener("touchmove", (e) => {
-    if (isDragging) {
-      e.preventDefault();
-    } else {
-      const touch = e.touches[0];
-      const moveDistance = Math.sqrt(
-        Math.pow(touch.clientX - dragStartX, 2) + 
-        Math.pow(touch.clientY - dragStartY, 2)
-      );
-      if (moveDistance > 10) {
-        clearTimeout(longPressTimer);
-      }
-    }
+  // 触摸拖拽
+  dragHandle.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startDrag(card);
   });
 }
 
-function startDrag(card, event) {
+function startDrag(card) {
   isDragging = true;
   draggedCard = card;
   card.classList.add("dragging");
   card.setAttribute("draggable", "true");
   
-  // 添加拖拽事件监听
+  // 立即触发拖拽
   card.addEventListener("dragstart", handleDragStart);
   card.addEventListener("dragend", handleDragEnd);
   

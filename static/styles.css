@@ -1795,15 +1795,39 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   color: #64748b;
   font-weight: 400;
 }
-/* 提供商卡片拖拽样式 */
-.provider-card {
+/* 拖拽手柄样式 */
+.drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 8px;
   cursor: grab;
-  user-select: none;
-  -webkit-user-select: none;
+  color: var(--text-3);
+  opacity: 0.6;
+  transition: opacity 0.2s, color 0.2s;
+  flex-shrink: 0;
 }
 
-.provider-card:active {
+.drag-handle:hover {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.drag-handle:active {
   cursor: grabbing;
+}
+
+.drag-handle svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* 提供商卡片拖拽样式 */
+.provider-card {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .provider-card.dragging {
@@ -1814,4 +1838,20 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 .provider-card.drag-over {
   border: 2px dashed var(--accent);
   background: var(--surface-2);
+}
+.provider-card-header {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 0;
+}
+
+.provider-card-header .provider-name {
+  flex: 1;
+  margin: 0;
+}
+
+.provider-card-header .provider-toggle {
+  margin-left: auto;
 }
