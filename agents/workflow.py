@@ -124,6 +124,9 @@ def _handoff_tool(worker: Worker):
         "web": "Delegate current public information lookup to the web specialist.",
         "memory": "Delegate durable user memory operations to the memory specialist.",
         "management": "Delegate persona profile or document management to the management specialist.",
+        "conversation": "Delegate conversational interaction to the conversation specialist.",
+        "voice_clone": "Delegate voice cloning tasks to the voice clone specialist.",
+        "config": "Delegate configuration modifications to the config specialist.",
     }[worker]
 
     @tool(_handoff_name(worker), description=description)

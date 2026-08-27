@@ -520,7 +520,17 @@ WEB_SEARCH_PROVIDERS = {
         default_base_url="https://google.serper.dev",
         default_model="serper",
         icon="globe"
+    ),    "freesearch": ProviderMetadata(
+        id="freesearch",
+        name="FreeSearch",
+        type=ProviderType.WEB_SEARCH,
+        description="免费联网搜索 API",
+        default_base_url="https://api.freesearch.io",
+        default_model="freesearch",
+        requires_api_key=False,
+        icon="search-check"
     ),
+
     "custom_search": ProviderMetadata(
         id="custom_search",
         name="自定义搜索 API",
