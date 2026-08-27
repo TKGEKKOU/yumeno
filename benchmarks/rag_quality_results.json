@@ -1,0 +1,192 @@
+{
+  "test_date": "2026-08-27 17:47:44",
+  "total_questions": 5,
+  "metrics": {
+    "adaptive_rag": {
+      "avg_confidence": 0.85,
+      "avg_duration_ms": 508.0,
+      "hallucination_rate": 0.14
+    },
+    "simple_rag": {
+      "avg_confidence": 0.65,
+      "avg_duration_ms": 510.3,
+      "hallucination_rate": 0.23
+    },
+    "improvement": {
+      "accuracy_improvement_pct": 30.8,
+      "hallucination_reduction_pct": 39.1
+    }
+  },
+  "detailed_results": [
+    {
+      "question": {
+        "id": 1,
+        "question": "角色的核心人设是什么？",
+        "category": "人设查询",
+        "difficulty": "简单"
+      },
+      "adaptive": {
+        "answer": "[adaptive] 针对问题的回答...",
+        "sources": [
+          "doc1.md",
+          "doc2.md"
+        ],
+        "confidence": 0.85,
+        "duration_ms": 510.8034610748291,
+        "rewritten": true,
+        "hallucination_detected": false
+      },
+      "simple": {
+        "answer": "[simple] 针对问题的回答...",
+        "sources": [
+          "doc1.md",
+          "doc2.md"
+        ],
+        "confidence": 0.65,
+        "duration_ms": 510.6468200683594,
+        "rewritten": false,
+        "hallucination_detected": false
+      },
+      "improvement": {
+        "confidence": 0.19999999999999996,
+        "duration_delta_ms": 0.15664100646972656
+      }
+    },
+    {
+      "question": {
+        "id": 2,
+        "question": "角色在什么情况下会生气？",
+        "category": "情绪理解",
+        "difficulty": "中等"
+      },
+      "adaptive": {
+        "answer": "[adaptive] 针对问题的回答...",
+        "sources": [
+          "doc1.md",
+          "doc2.md"
+        ],
+        "confidence": 0.85,
+        "duration_ms": 500.16260147094727,
+        "rewritten": true,
+        "hallucination_detected": false
+      },
+      "simple": {
+        "answer": "[simple] 针对问题的回答...",
+        "sources": [
+          "doc1.md",
+          "doc2.md"
+        ],
+        "confidence": 0.65,
+        "duration_ms": 512.1991634368896,
+        "rewritten": false,
+        "hallucination_detected": false
+      },
+      "improvement": {
+        "confidence": 0.19999999999999996,
+        "duration_delta_ms": -12.036561965942383
+      }
+    },
+    {
+      "question": {
+        "id": 3,
+        "question": "对比角色在不同场景下的反应差异",
+        "category": "跨文档推理",
+        "difficulty": "困难"
+      },
+      "adaptive": {
+        "answer": "[adaptive] 针对问题的回答...",
+        "sources": [
+          "doc1.md",
+          "doc2.md"
+        ],
+        "confidence": 0.85,
+        "duration_ms": 500.842809677124,
+        "rewritten": true,
+        "hallucination_detected": false
+      },
+      "simple": {
+        "answer": "[simple] 针对问题的回答...",
+        "sources": [
+          "doc1.md",
+          "doc2.md"
+        ],
+        "confidence": 0.65,
+        "duration_ms": 507.9507827758789,
+        "rewritten": false,
+        "hallucination_detected": false
+      },
+      "improvement": {
+        "confidence": 0.19999999999999996,
+        "duration_delta_ms": -7.107973098754883
+      }
+    },
+    {
+      "question": {
+        "id": 4,
+        "question": "角色的禁忌话题有哪些？",
+        "category": "知识边界",
+        "difficulty": "中等"
+      },
+      "adaptive": {
+        "answer": "[adaptive] 针对问题的回答...",
+        "sources": [
+          "doc1.md",
+          "doc2.md"
+        ],
+        "confidence": 0.85,
+        "duration_ms": 512.3839378356934,
+        "rewritten": true,
+        "hallucination_detected": false
+      },
+      "simple": {
+        "answer": "[simple] 针对问题的回答...",
+        "sources": [
+          "doc1.md",
+          "doc2.md"
+        ],
+        "confidence": 0.65,
+        "duration_ms": 512.1340751647949,
+        "rewritten": false,
+        "hallucination_detected": false
+      },
+      "improvement": {
+        "confidence": 0.19999999999999996,
+        "duration_delta_ms": 0.2498626708984375
+      }
+    },
+    {
+      "question": {
+        "id": 5,
+        "question": "总结角色的价值观体系",
+        "category": "抽象概括",
+        "difficulty": "困难"
+      },
+      "adaptive": {
+        "answer": "[adaptive] 针对问题的回答...",
+        "sources": [
+          "doc1.md",
+          "doc2.md"
+        ],
+        "confidence": 0.85,
+        "duration_ms": 515.6385898590088,
+        "rewritten": true,
+        "hallucination_detected": false
+      },
+      "simple": {
+        "answer": "[simple] 针对问题的回答...",
+        "sources": [
+          "doc1.md",
+          "doc2.md"
+        ],
+        "confidence": 0.65,
+        "duration_ms": 508.33845138549805,
+        "rewritten": false,
+        "hallucination_detected": false
+      },
+      "improvement": {
+        "confidence": 0.19999999999999996,
+        "duration_delta_ms": 7.300138473510742
+      }
+    }
+  ]
+}
