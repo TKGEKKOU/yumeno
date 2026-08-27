@@ -130,3 +130,172 @@ window.PL.modules.providers = {
   init: initProviders,
   onShow: () => { if (providersData.length === 0) loadProviders(); }
 };
+function openProviderConfig(providerId) {
+  const provider = providersData.find(p => p.id === providerId);
+  if (!provider) return;
+  const template = document.getElementById("provider-config-modal-template");
+  if (!template) return;
+  const modal = template.content.cloneNode(true).querySelector("[data-provider-modal]");
+  const iconEl = modal.querySelector(".provider-icon");
+  if (iconEl) iconEl.setAttribute("data-lucide", provider.icon || "box");
+  const titleEl = modal.querySelector(".modal-title");
+  if (titleEl) titleEl.textContent = provider.name;
+  const descEl = modal.querySelector(".provider-description");
+  if (descEl) descEl.textContent = provider.description;
+  const form = modal.querySelector(".provider-config-form");
+  const baseUrlInput = form.querySelector('[name="base_url"]');
+  const modelInput = form.querySelector('[name="model"]');
+  const activeCheckbox = form.querySelector('[name="is_active"]');
+  if (baseUrlInput) baseUrlInput.placeholder = provider.default_base_url || "留空使用默认地址";
+  if (modelInput) modelInput.placeholder = provider.default_model || "留空使用默认模型";
+  if (activeCheckbox) activeCheckbox.checked = provider.is_active;
+  const toggleBtn = modal.querySelector(".toggle-visibility");
+  const apiKeyInput = form.querySelector('[name="api_key"]');
+  if (toggleBtn && apiKeyInput) {
+    toggleBtn.addEventListener("click", () => {
+      const isPassword = apiKeyInput.type === "password";
+      apiKeyInput.type = isPassword ? "text" : "password";
+      toggleBtn.querySelector("i").setAttribute("data-lucide", isPassword ? "eye-off" : "eye");
+      lucide.createIcons();
+    });
+  }
+  if (!provider.requires_api_key) {
+    const apiKeyField = form.querySelector('[name="api_key"]')?.closest(".field");
+    if (apiKeyField) apiKeyField.style.display = "none";
+  }
+  const testBtn = modal.querySelector(".test-connection");
+  if (testBtn) {
+    testBtn.addEventListener("click", async () => {
+      const formData = new FormData(form);
+      await testProviderConnection(provider, formData, modal);
+    });
+  }
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const formData = new FormData(form);
+    await saveProviderConfig(provider, formData, modal);
+  });
+  const closeBtn = modal.querySelector(".modal-close");
+  if (closeBtn) closeBtn.addEventListener("click", () => modal.remove());
+  modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+  lucide.createIcons();
+}
+
+async function testProviderConnection(provider, formData, modal) {
+  const testBtn = modal.querySelector(".test-connection");
+  const resultEl = modal.querySelector(".test-result");
+  if (testBtn) {
+    testBtn.disabled = true;
+    testBtn.innerHTML = '<i data-lucide="loader-circle" class="spin"></i> 测试中...';
+    lucide.createIcons();
+  }
+  try {
+    const payload = {
+      provider_type: provider.type,
+      provider_id: provider.id,
+      api_key: formData.get("api_key") || null,
+      base_url: formData.get("base_url") || provider.default_base_url,
+      model: formData.get("model") || provider.default_model
+    };
+    const response = await fetch("/api/providers/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    if (resultEl) {
+      resultEl.classList.remove("is-hidden", "is-success", "is-error");
+      resultEl.classList.add(result.ok ? "is-success" : "is-error");
+      const latencyText = result.latency_ms ? `<span class="latency">(${result.latency_ms}ms)</span>` : '';
+      resultEl.innerHTML = `<i data-lucide="${result.ok ? 'check-circle' : 'alert-circle'}"></i><span>${result.message}</span>${latencyText}`;
+      lucide.createIcons();
+    }
+  } catch (error) {
+    if (resultEl) {
+      resultEl.classList.remove("is-hidden", "is-success");
+      resultEl.classList.add("is-error");
+      resultEl.innerHTML = `<i data-lucide="alert-circle"></i><span>${error.message || '测试失败'}</span>`;
+      lucide.createIcons();
+    }
+  } finally {
+    if (testBtn) {
+      testBtn.disabled = false;
+      testBtn.innerHTML = '<i data-lucide="wifi"></i> 测试连接';
+      lucide.createIcons();
+    }
+  }
+}
+
+async function saveProviderConfig(provider, formData, modal) {
+  const submitBtn = modal.querySelector('button[type="submit"]');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "保存中...";
+  }
+  try {
+    const payload = {
+      provider_type: provider.type,
+      provider_id: provider.id,
+      api_key: formData.get("api_key") || null,
+      base_url: formData.get("base_url") || null,
+      model: formData.get("model") || null,
+      enabled: formData.get("is_active") === "on"
+    };
+    const response = await fetch("/api/providers/configure", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await loadProviders();
+    modal.remove();
+  } catch (error) {
+    const resultEl = modal.querySelector(".test-result");
+    if (resultEl) {
+      resultEl.classList.remove("is-hidden", "is-success");
+      resultEl.classList.add("is-error");
+      resultEl.innerHTML = `<i data-lucide="alert-circle"></i><span>${error.message || '保存失败'}</span>`;
+      lucide.createIcons();
+    }
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "保存配置";
+    }
+  }
+}
+
+async function testProvider(providerId) {
+  const provider = providersData.find(p => p.id === providerId);
+  if (!provider) return;
+  const cardEl = document.querySelector(`[data-provider-id="${providerId}"]`);
+  const testBtn = cardEl?.querySelector(".provider-test");
+  if (testBtn) {
+    testBtn.disabled = true;
+    testBtn.innerHTML = '<i data-lucide="loader-circle" class="spin"></i> 测试中';
+    lucide.createIcons();
+  }
+  try {
+    const payload = { provider_type: provider.type, provider_id: providerId };
+    const response = await fetch("/api/providers/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    if (result.ok) {
+      alert(`✓ ${result.message}${result.latency_ms ? ` (${result.latency_ms}ms)` : ''}`);
+    } else {
+      alert(`✗ ${result.message}`);
+    }
+  } catch (error) {
+    alert(`✗ 测试失败: ${error.message}`);
+  } finally {
+    if (testBtn) {
+      testBtn.disabled = false;
+      testBtn.innerHTML = '<i data-lucide="wifi"></i> 测试';
+      lucide.createIcons();
+    }
+  }
+}
