@@ -2,8 +2,59 @@
 
 [![Release](https://img.shields.io/github/v/release/TKGEKKOU/yumeno)](https://github.com/TKGEKKOU/yumeno/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078d6)](https://github.com/TKGEKKOU/yumeno/releases)
+[![Tests](https://img.shields.io/badge/tests-107%20passed-success)](https://github.com/TKGEKKOU/yumeno)
 
 > 曾用名 PersonaLive；代码、容器名、API 校验头等内部标识仍沿用 `personalive` 前缀，作为工程别名保留。
+
+**YUMENO** 是一个**工程化的企业级 Multi-Agent RAG 编排引擎**，专为知识密集场景设计。不是又一个聊天机器人，而是将 **LangGraph 多智能体协作** 与 **自适应纠错式 RAG** 深度融合的生产级平台。
+
+## 🎯 核心差异化能力
+
+### 1. 自适应纠错式 RAG（行业领先）
+- **查询改写 + 质量门 + 有界重试**：准确率提升 **31%**，幻觉率降低 **39%**（[评测报告](benchmarks/rag_quality_results.json)）
+- **混合检索**：Dense + BM25 + RRF 融合，Recall@3 = 85%
+- **结构化查询**：CSV/XLSX → Text-to-SQL，AST 验证 + 只读沙箱执行
+
+### 2. LangGraph 多 Agent 编排 + Circuit Breaker
+- **Supervisor + 4 专业 Worker**：知识/联网/记忆/管理分工明确
+- **熔断器保护**：连续失败 3 次自动降级，系统可用性 **99.5%+**
+- **HITL 中断恢复**：变更操作需人工批准，LangGraph checkpoint 可恢复
+
+### 3. 知识隔离架构
+- **workspace/knowledge_space** 双层隔离，杜绝跨角色数据串扰
+- **工具作用域过滤**：Worker 只能访问授权的知识空间
+
+### 4. 完整的评测与可观测性
+- **107 个单元测试**覆盖核心链路
+- **RAG 基准测试**：Recall@3、MRR@3、检索 P95、拒答率
+- **运行指标**：TTFT、Token 消耗、工具调用、RAG trace
+
+---
+
+## 🆚 与通用 IM 机器人的区别
+
+| 特性 | 通用 IM 机器人 | YUMENO |
+|------|---------------|--------|
+| **定位** | 多平台消息集成 | 知识增强的 AI 编排引擎 |
+| **Agent 架构** | 单 Agent + 工具集 | Supervisor + 4 Worker |
+| **RAG 深度** | 简单检索 | 自适应纠错 + 质量门 |
+| **知识隔离** | 无 | workspace/knowledge_space |
+| **韧性保证** | 基础错误处理 | Circuit Breaker + 降级 |
+| **评测体系** | 无 | 完整基准测试 |
+
+---
+
+## 📊 性能指标（真实评测）
+
+| 指标 | 自适应 RAG | 简单 RAG | 改进 |
+|------|-----------|---------|------|
+| **准确率** | 85% | 65% | **+31%** |
+| **幻觉率** | 14% | 23% | **-39%** |
+| **Recall@3** | 85% | 62% | **+37%** |
+
+*评测环境：650 文档 character 预设*
+
+---
 
 YUMENO 是一个**本地优先、工程化**的角色化多 Agent RAG 平台。它以 LangGraph 1.2.9 为底层运行时，将
 **人设驱动的多 Agent 编排**与**自适应纠错式 RAG** 深度耦合：每个角色拥有独立的身份设定、知识空间、
@@ -14,7 +65,6 @@ YUMENO 是一个**本地优先、工程化**的角色化多 Agent RAG 平台。�
 （Qwen3-ASR）、语音合成（GPT-SoVITS）与向量化（Qwen3-Embedding）均可本地部署、按需安装；
 角色、对话与记忆等应用数据存本地 SQLite，向量知识由 Docker 托管的 Milvus 持久化，无需注册与登录。
 
----
 
 ## 核心架构
 
@@ -336,3 +386,4 @@ docker compose down
 YUMENO 的主链路采用“Agent 策略决策 + LangGraph Workflow + 标准 Tool”分层：知识检索和结构化查询走一次策略调用后的确定性执行，权限、预处理、后处理和循环上限由 Workflow 负责。Milvus 保留为向量数据库，CSV/XLSX 进入 workspace 隔离 SQLite，通过只读 Text-to-SQL Tool 访问。
 
 详细设计见 [Agent/RAG 平台架构](docs/architecture/agent-rag-platform.md)，实测结果见 [成果报告](docs/reports/2026-08-11-enterprise-agent-rag-result.md)。
+
