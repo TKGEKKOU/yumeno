@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 
 window.PL = window.PL || { modules: {} };
 
@@ -291,18 +291,3 @@ window.PL.modules.providers = {
   init: initProviders,
   onShow: () => { if (providersData.length === 0) loadProviders(); }
 };
-
-);
-}
-
-e.dataTransfer.dropEffect = "move";
-
-e.preventDefault();
-  
-);
-  
-function loadProviderOrder() {
-  const orderKey = `provider_order_${currentCategory}`;
-  const savedOrder = localStorage.getItem(orderKey);
-  return savedOrder ? JSON.parse(savedOrder) : null;
-}
