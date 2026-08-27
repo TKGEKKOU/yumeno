@@ -56,7 +56,7 @@ async function fetchProviders() {
   error.value = "";
   try {
     const response = await fetch("/api/providers/list");
-    if (!response.ok) throw new Error(\HTTP \\);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     providers.value = data.providers || [];
     
@@ -106,7 +106,7 @@ async function saveConfig() {
       },
       body: JSON.stringify(configForm.value),
     });
-    if (!response.ok) throw new Error(\HTTP \\);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     await fetchProviders();
     closeConfig();
   } catch (e) {
@@ -134,7 +134,7 @@ async function testProvider(providerId: string) {
         provider_id: providerId,
       }),
     });
-    if (!response.ok) throw new Error(\HTTP \\);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
     if (result.success) {
       alert("✓ 测试成功");
