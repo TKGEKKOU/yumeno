@@ -44,6 +44,7 @@ from app.routers.voice_assets import router as voice_assets_router
 from app.routers.voice_studio import router as voice_studio_router
 from app.routers.voice import router as voice_router
 from app.routers.voice_stream import router as voice_stream_router
+from app.routers.providers import router as providers_router
 from settings import Settings
 from extensions.events import EVENT_MESSAGE, EventBus
 from ingestion.status import get_system_status
@@ -377,6 +378,7 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     app.include_router(voice_studio_router)
     app.include_router(voice_router)
     app.include_router(voice_stream_router)
+    app.include_router(providers_router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

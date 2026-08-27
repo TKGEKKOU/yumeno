@@ -198,6 +198,21 @@ class LocalSettingsUpdate(BaseModel):
     tavily_api_key: str | None = None
     enable_web_fallback: bool | None = None
 
+    # Provider configurations
+    llm_provider: str | None = None
+    tts_provider: str | None = None
+    tts_api_key: str | None = None
+    tts_base_url: str | None = None
+    tts_model: str | None = None
+    asr_provider: str | None = None
+    asr_api_key: str | None = None
+    asr_base_url: str | None = None
+    asr_model: str | None = None
+    reranker_provider: str | None = None
+    reranker_api_key: str | None = None
+    reranker_base_url: str | None = None
+    reranker_model: str | None = None
+
 
 class LLMConnectionTestPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")

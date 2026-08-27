@@ -21,7 +21,8 @@ async function initEvaluation() { const module = await loadVuePages(); module.mo
 async function showEvaluation() { const module = await loadVuePages(); module.mountEvaluationApp("#evaluation-app-root"); module.showEvaluationApp(); }
 async function hideEvaluation() { const module = await loadVuePages(); module.hideEvaluationApp(); }
 async function mountRerankerSettings() { const module = await loadVuePages(); module.mountRerankerSettingsApp("#reranker-settings-root"); }
-window.PL.vuePages = { ...(window.PL.vuePages || {}), mountRerankerSettings };
+async function mountProvidersSettings() { const module = await loadVuePages(); module.mountProvidersApp("#providers-root"); }
+window.PL.vuePages = { ...(window.PL.vuePages || {}), mountRerankerSettings, mountProvidersSettings };
 window.PL.modules.plugins = { init: initExtensions, onShow: showExtensions, onHide: hideExtensions };
 window.PL.modules.test = { init: initEvaluation, onShow: showEvaluation, onHide: hideEvaluation };
 window.addEventListener("pagehide", () => vuePagesPromise?.then((module) => {
