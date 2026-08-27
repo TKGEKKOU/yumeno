@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YUMENO - 企业级 AI 知识助手</title>
+    <meta name="description" content="本地优先的企业级 RAG 多智能体平台，支持语音克隆、知识检索、智能编排">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --bg-dark: #0A0D12;
+            --bg-card: #0F131C;
+            --bg-hover: #161D2B;
+            --accent: #38BDF8;
+            --accent-dim: #6EE7B7;
+            --text-primary: #F8FAFC;
+            --text-secondary: #94A3B8;
+            --border: #1E293B;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+        
+        /* Header */
+        header {
+            padding: 24px 0;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            background: var(--bg-dark);
+            backdrop-filter: blur(12px);
+            z-index: 100;
+        }
+        
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        nav a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            margin-left: 32px;
+            font-size: 15px;
+            transition: color 0.2s;
+        }
+        
+        nav a:hover { color: var(--text-primary); }
+        
+        /* Hero */
+        .hero {
+            padding: 120px 0 80px;
+            text-align: center;
+        }
+        
+        .hero h1 {
+            font-size: 56px;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 24px;
+            letter-spacing: -0.02em;
+        }
+        
+        .hero .subtitle {
+            font-size: 20px;
+            color: var(--text-secondary);
+            margin-bottom: 48px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .hero .tags {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            margin-bottom: 48px;
+            flex-wrap: wrap;
+        }
+        
+        .tag {
+            padding: 8px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            font-size: 14px;
+            color: var(--accent);
+        }
+        
+        .cta-buttons {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 14px 32px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: var(--accent);
+            color: var(--bg-dark);
+        }
+        
+        .btn-primary:hover {
+            background: #22D3EE;
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px rgba(56, 189, 248, 0.3);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+            border-color: var(--accent);
+        }
+        
+        /* Deployment Modes */
+        .deployment-section {
+            padding: 80px 0;
+            background: linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-card) 100%);
+        }
+        
+        .section-title {
+            text-align: center;
+            font-size: 40px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+        
+        .section-subtitle {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 18px;
+            margin-bottom: 64px;
+        }
+        
+        .deployment-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 24px;
+        }
+        
+        .deployment-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .deployment-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+        }
+        
+        .deployment-card.featured {
+            border-color: var(--accent);
+        }
+        
+        .deployment-card.featured::before {
+            content: '推荐';
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: var(--accent);
+            color: var(--bg-dark);
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .deployment-card h3 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .deployment-card .meta {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-bottom: 24px;
+            display: flex;
+            gap: 16px;
+        }
+        
+        .deployment-card ul {
+            list-style: none;
+            margin-bottom: 24px;
+        }
+        
+        .deployment-card li {
+            padding: 8px 0;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        }
+        
+        .deployment-card li::before {
+            content: '✓';
+            color: var(--accent-dim);
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        
+        /* Features */
+        .features-section {
+            padding: 80px 0;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 32px;
+        }
+        
+        .feature-card {
+            text-align: center;
+        }
+        
+        .feature-icon {
+            width: 64px;
+            height: 64px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            margin: 0 auto 24px;
+        }
+        
+        .feature-card h3 {
+            font-size: 20px;
+            margin-bottom: 12px;
+        }
+        
+        .feature-card p {
+            color: var(--text-secondary);
+            font-size: 15px;
+        }
+        
+        /* Comparison */
+        .comparison-section {
+            padding: 80px 0;
+            background: var(--bg-card);
+        }
+        
+        .comparison-table {
+            max-width: 900px;
+            margin: 0 auto;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        
+        .comparison-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .comparison-table th,
+        .comparison-table td {
+            padding: 16px 24px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .comparison-table th {
+            background: var(--bg-dark);
+            font-weight: 600;
+            color: var(--accent);
+        }
+        
+        .comparison-table td:first-child {
+            color: var(--text-secondary);
+        }
+        
+        .comparison-table .check {
+            color: var(--accent-dim);
+            font-weight: 700;
+        }
+        
+        .comparison-table .cross {
+            color: #EF4444;
+        }
+        
+        /* Footer */
+        footer {
+            padding: 48px 0;
+            border-top: 1px solid var(--border);
+            text-align: center;
+        }
+        
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 32px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+        
+        .footer-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        
+        .footer-links a:hover {
+            color: var(--text-primary);
+        }
+        
+        .copyright {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 36px; }
+            .hero .subtitle { font-size: 18px; }
+            .section-title { font-size: 32px; }
+            .deployment-grid { grid-template-columns: 1fr; }
+            nav { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">YUMENO</div>
+                <nav>
+                    <a href="#features">功能特性</a>
+                    <a href="#deployment">部署方案</a>
+                    <a href="#comparison">对比</a>
+                    <a href="https://github.com/TKGEKKOU/yumeno">GitHub</a>
+                    <a href="http://127.0.0.1:17000/docs">API 文档</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="container">
+            <h1>企业级 AI 知识助手</h1>
+            <p class="subtitle">本地优先的 RAG 多智能体平台，支持语音克隆、知识检索、智能编排</p>
+            
+            <div class="tags">
+                <span class="tag">🤖 6-Worker 多智能体</span>
+                <span class="tag">🎤 本地语音克隆</span>
+                <span class="tag">📚 自适应 RAG</span>
+                <span class="tag">🔒 数据本地化</span>
+            </div>
+            
+            <div class="cta-buttons">
+                <a href="https://github.com/TKGEKKOU/yumeno/releases" class="btn btn-primary">
+                    下载安装包
+                    <span>→</span>
+                </a>
+                <a href="https://github.com/TKGEKKOU/yumeno" class="btn btn-secondary">
+                    查看源码
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Deployment Modes -->
+    <section id="deployment" class="deployment-section">
+        <div class="container">
+            <h2 class="section-title">选择适合你的部署方案</h2>
+            <p class="section-subtitle">从快速试用到企业离线，灵活满足不同场景</p>
+            
+            <div class="deployment-grid">
+                <!-- 云端版 -->
+                <div class="deployment-card">
+                    <h3>⚡ 云端版</h3>
+                    <div class="meta">
+                        <span>📦 50MB</span>
+                        <span>⏱️ 5 分钟</span>
+                    </div>
+                    <ul>
+                        <li>调用 OpenAI/DashScope API</li>
+                        <li>快速体验 RAG 问答</li>
+                        <li>Edge TTS 云端语音</li>
+                        <li>适合个人试用</li>
+                    </ul>
+                    <a href="https://github.com/TKGEKKOU/yumeno/releases" class="btn btn-secondary" style="width: 100%;">下载轻量版</a>
+                </div>
+                
+                <!-- 标准版 -->
+                <div class="deployment-card featured">
+                    <h3>🔧 标准版</h3>
+                    <div class="meta">
+                        <span>📦 500MB</span>
+                        <span>⏱️ 15 分钟</span>
+                    </div>
+                    <ul>
+                        <li>本地 Reranker 模型</li>
+                        <li>GPT-SoVITS 语音克隆</li>
+                        <li>5 步自动化训练流程</li>
+                        <li>支持云端 + 本地混合</li>
+                    </ul>
+                    <a href="https://github.com/TKGEKKOU/yumeno/releases" class="btn btn-primary" style="width: 100%;">下载标准版</a>
+                </div>
+                
+                <!-- 离线版 -->
+                <div class="deployment-card">
+                    <h3>🏢 离线版</h3>
+                    <div class="meta">
+                        <span>📦 3GB</span>
+                        <span>⏱️ 30 分钟</span>
+                    </div>
+                    <ul>
+                        <li>完全本地化部署</li>
+                        <li>本地 Embedding 模型</li>
+                        <li>Docker Compose 编排</li>
+                        <li>适合企业内网/强监管</li>
+                    </ul>
+                    <a href="https://github.com/TKGEKKOU/yumeno#docker-部署" class="btn btn-secondary" style="width: 100%;">查看部署文档</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="features-section">
+        <div class="container">
+            <h2 class="section-title">核心功能特性</h2>
+            <p class="section-subtitle">不只是聊天，更是企业级 AI 编排引擎</p>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🤖</div>
+                    <h3>多智能体编排</h3>
+                    <p>基于 LangGraph 1.2.9 的 Supervisor + 6-Worker 架构，专业 Agent 分工协作</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🎤</div>
+                    <h3>本地语音克隆</h3>
+                    <p>GPT-SoVITS 5 步自动化流程，质量门自动拒绝不合格素材</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">📚</div>
+                    <h3>自适应 RAG</h3>
+                    <p>准确率提升 31%，幻觉率降低 39%，混合检索 + 查询改写 + 质量门</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>数据本地化</h3>
+                    <p>知识库、模型、推理全本地，满足金融/医疗/政府强监管要求</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">⚙️</div>
+                    <h3>运行时配置</h3>
+                    <p>Web 界面动态修改 LLM/Embedding/RAG 参数，HITL 确认防误操作</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🛡️</div>
+                    <h3>SQL 安全防护</h3>
+                    <p>10 层安全检测，防止注入/爆破/递归，结果集大小/超时保护</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Comparison -->
+    <section id="comparison" class="comparison-section">
+        <div class="container">
+            <h2 class="section-title">与通用方案的对比</h2>
+            <p class="section-subtitle">专为知识密集场景设计</p>
+            
+            <div class="comparison-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>特性</th>
+                            <th>通用 IM 机器人</th>
+                            <th>YUMENO</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Multi-Agent 架构</td>
+                            <td class="cross">✗ 单 Agent</td>
+                            <td class="check">✓ Supervisor + 6 Worker</td>
+                        </tr>
+                        <tr>
+                            <td>RAG 深度</td>
+                            <td class="cross">简单检索</td>
+                            <td class="check">✓ 自适应纠错 + 评测数据</td>
+                        </tr>
+                        <tr>
+                            <td>语音克隆</td>
+                            <td class="cross">✗ 不支持</td>
+                            <td class="check">✓ 本地 GPT-SoVITS 5 步流程</td>
+                        </tr>
+                        <tr>
+                            <td>离线运行</td>
+                            <td class="cross">✗ 依赖云端 API</td>
+                            <td class="check">✓ 完全本地化</td>
+                        </tr>
+                        <tr>
+                            <td>SQL 安全</td>
+                            <td class="cross">✗ 无结构化查询</td>
+                            <td class="check">✓ 10 层防护 + 10 测试</td>
+                        </tr>
+                        <tr>
+                            <td>适用场景</td>
+                            <td>日常聊天、娱乐</td>
+                            <td class="check">企业知识库、合规问答</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-links">
+                <a href="https://github.com/TKGEKKOU/yumeno">GitHub</a>
+                <a href="https://github.com/TKGEKKOU/yumeno/releases">下载</a>
+                <a href="https://github.com/TKGEKKOU/yumeno/blob/main/README.md">文档</a>
+                <a href="https://github.com/TKGEKKOU/yumeno/issues">问题反馈</a>
+            </div>
+            <p class="copyright">© 2026 YUMENO. 开源协议待定.</p>
+        </div>
+    </footer>
+</body>
+</html>
