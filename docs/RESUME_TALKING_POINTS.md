@@ -8,7 +8,7 @@
 ## 核心成果（可直接写入简历）
 
 ### 技术架构
-1. **基于 LangGraph 1.2.9 的 Supervisor + 4-Worker 多智能体架构**
+1. **基于 LangGraph 1.2.9 的 Supervisor + 6-Worker 多智能体架构**
    - 实现知识/联网/记忆/管理四类专业 Worker，通过 Handoff 机制实现状态交接
    - 集成 HITL（Human-in-the-loop）中断恢复，变更操作需人工批准
    - 通过 LangGraph checkpoint 实现会话状态持久化和断点恢复

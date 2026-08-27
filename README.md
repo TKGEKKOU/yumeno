@@ -16,7 +16,7 @@
 - **结构化查询**：CSV/XLSX → Text-to-SQL，AST 验证 + 只读沙箱执行
 
 ### 2. LangGraph 多 Agent 编排 + Circuit Breaker
-- **Supervisor + 4 专业 Worker**：知识/联网/记忆/管理分工明确
+- **Supervisor + 6 专业 Worker**：知识/联网/记忆/管理/语音克隆/配置管理 分工明确
 - **熔断器保护**：连续失败 3 次自动降级，系统可用性 **99.5%+**
 - **HITL 中断恢复**：变更操作需人工批准，LangGraph checkpoint 可恢复
 
@@ -44,6 +44,11 @@
 
 ---
 
+
+### 4. 端到端 Agent 能力展示
+- **语音克隆 Worker**：自动化 5 步流程（上传素材 → 质量检测 → 训练 → 试听 → 绑定）
+- **配置管理 Worker**：运行时修改 LLM/Embedding/RAG/TTS/安全设置，支持 HITL 确认
+- **SQL 安全加固**：10 层防护机制（递归 CTE/JOIN 深度/子查询/表白名单/危险函数/结果集限制）
 ## 📊 性能指标（真实评测）
 
 | 指标 | 自适应 RAG | 简单 RAG | 改进 |
