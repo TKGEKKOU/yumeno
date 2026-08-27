@@ -1,7 +1,7 @@
 """语音克隆 Worker 工具集"""
 from __future__ import annotations
 import logging
-from typing import Any
+from typing import Any, Literal
 from langchain.tools import ToolRuntime, tool
 from langgraph.types import Command
 
@@ -42,7 +42,7 @@ def start_voice_clone_session(
         return {
             "status": "created",
             "session_id": session.id,
-            "next_step": "upload_material",
+            "next_step": "request_file_upload",
             "guidance": (
                 "请上传 10-30 秒的干净语音素材（支持视频/音频）。"
                 "要求：单人说话、无背景音乐、无明显噪音。"
@@ -54,6 +54,53 @@ def start_voice_clone_session(
             "status": "failed",
             "reason": str(e)
         }
+
+
+@tool
+def request_file_upload(
+    purpose: Literal["voice_material", "reference_text", "knowledge_document"],
+    description: str,
+    session_id: str = None,
+    runtime: ToolRuntime[PersonaAgentContext] = None
+) -> dict[str, Any]:
+    """
+    请求用户上传文件。前端会监听此工具调用并弹出文件选择器。
+    
+    Args:
+        purpose: 文件用途（voice_material=音频素材, reference_text=参考文本, knowledge_document=知识文档）
+        description: 向用户说明需要上传什么文件
+        session_id: 可选的会话ID（语音克隆时需要）
+    
+    Returns:
+        上传请求信息
+    """
+    accepted_types = {
+        "voice_material": "audio/*, video/*",
+        "reference_text": "text/*, .txt, .srt",
+        "knowledge_document": ".pdf, .docx, .txt, .md, .csv, .xlsx"
+    }
+    
+    max_sizes = {
+        "voice_material": 50 * 1024 * 1024,  # 50MB
+        "reference_text": 5 * 1024 * 1024,    # 5MB
+        "knowledge_document": 20 * 1024 * 1024  # 20MB
+    }
+    
+    return {
+        "action": "request_upload",
+        "purpose": purpose,
+        "description": description,
+        "session_id": session_id,
+        "upload_endpoint": f"/api/upload?purpose={purpose}" + (f"&session_id={session_id}" if session_id else ""),
+        "accepted_types": accepted_types[purpose],
+        "max_size_bytes": max_sizes[purpose],
+        "max_size_mb": max_sizes[purpose] // (1024 * 1024),
+        "guidance": {
+            "voice_material": "支持 mp3/wav/m4a/mp4/mkv 等格式，建议 10-30 秒",
+            "reference_text": "支持 txt/srt 文本格式",
+            "knowledge_document": "支持 PDF/Word/Markdown/CSV/Excel"
+        }[purpose]
+    }
 
 
 @tool

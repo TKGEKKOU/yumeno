@@ -24,6 +24,7 @@ from agents.tools import (
 )
 from agents.tools.voice_clone import (
     start_voice_clone_session,
+    request_file_upload,
     analyze_voice_material,
     request_training_confirmation,
     start_voice_training,
@@ -35,6 +36,10 @@ from agents.tools.config import (
     get_config_detail,
     request_config_change,
     apply_config_change,
+)
+from agents.tools.extended import (
+    import_knowledge_from_url,
+    export_conversation,
 )
 
 
@@ -73,15 +78,18 @@ _TOOL_SPECS = (
     ToolSpec("update_persona_profile", "management", update_persona_profile, True, True),
     ToolSpec("delete_persona_document", "management", delete_persona_document, True, True),
     ToolSpec("start_voice_clone_session", "voice_clone", start_voice_clone_session, False, True),
+    ToolSpec("request_file_upload", "voice_clone", request_file_upload),
     ToolSpec("analyze_voice_material", "voice_clone", analyze_voice_material),
     ToolSpec("request_training_confirmation", "voice_clone", request_training_confirmation, True, False),
     ToolSpec("start_voice_training", "voice_clone", start_voice_training, False, True),
     ToolSpec("check_training_progress", "voice_clone", check_training_progress),
     ToolSpec("bind_trained_voice", "voice_clone", bind_trained_voice, False, True),
-    ToolSpec("list_available_configs", "config", list_available_configs),
+        ToolSpec("list_available_configs", "config", list_available_configs),
     ToolSpec("get_config_detail", "config", get_config_detail),
     ToolSpec("request_config_change", "config", request_config_change, True, False),
     ToolSpec("apply_config_change", "config", apply_config_change, False, True),
+    ToolSpec("import_knowledge_from_url", "management", import_knowledge_from_url, True, True),
+    ToolSpec("export_conversation", "conversation", export_conversation),
 )
 
 READ_ONLY_TOOL_NAMES = tuple(spec.name for spec in _TOOL_SPECS if not spec.mutates_data)
@@ -205,3 +213,8 @@ def capability_summary() -> str:
         summary += f"外部 MCP 工具（需先加载对应技能）：{mcp_tools}。"
     summary += "联网搜索使用 web_search；需在设置页配置 API key 后才可用。"
     return summary
+
+
+
+
+
