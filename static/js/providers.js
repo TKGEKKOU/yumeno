@@ -125,16 +125,7 @@ function openProviderConfig(providerId) {
   const modelInput = form.querySelector('[name="model"]');
   if (baseUrlInput) baseUrlInput.placeholder = provider.default_base_url || "留空使用默认地址";
   if (modelInput) modelInput.placeholder = provider.default_model || "留空使用默认模型";
-  const toggleBtn = modal.querySelector(".toggle-visibility");
-  const apiKeyInput = form.querySelector('[name="api_key"]');
-  if (toggleBtn && apiKeyInput) {
-    toggleBtn.addEventListener("click", () => {
-      const isPassword = apiKeyInput.type === "password";
-      apiKeyInput.type = isPassword ? "text" : "password";
-      toggleBtn.querySelector("i").setAttribute("data-lucide", isPassword ? "eye-off" : "eye");
-      lucide.createIcons();
-    });
-  }
+
   if (!provider.requires_api_key) {
     const apiKeyField = form.querySelector('[name="api_key"]')?.closest(".field");
     if (apiKeyField) apiKeyField.style.display = "none";

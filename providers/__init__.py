@@ -61,7 +61,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="智谱 GLM 系列模型",
         default_base_url="https://open.bigmodel.cn/api/paas/v4",
-        default_model="glm-4-flash",
+        default_model="glm-5.3-flash",
         supports_streaming=True,
         icon="zap"
     ),

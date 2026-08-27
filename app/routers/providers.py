@@ -39,6 +39,10 @@ class ProviderInfo(BaseModel):
     supports_streaming: bool
     is_configured: bool = False
     is_active: bool = False
+    # 当前配置值（明文）
+    current_api_key: str = ""
+    current_base_url: str = ""
+    current_model: str = ""
 
 
 class ProviderListResponse(BaseModel):
@@ -100,24 +104,44 @@ def list_all_providers(request: Request) -> ProviderListResponse:
     # 遍历所有提供商类型
     for provider_type, providers in ALL_PROVIDERS.items():
         for provider_id, metadata in providers.items():
-            # 检查是否已配置
-            is_configured = False
             type_str = provider_type.value
-            
-            if type_str == "llm":
-                is_configured = bool(settings.get("openai_api_key")) if provider_id == current_llm else False
-            elif type_str == "embedding":
-                is_configured = bool(settings.get("embedding_api_key")) if provider_id == current_embedding else False
-            elif type_str == "tts":
-                is_configured = bool(settings.get("tts_api_key")) if provider_id == current_tts else False
-            elif type_str == "asr":
-                is_configured = bool(settings.get("asr_api_key")) if provider_id == current_asr else False
-            elif type_str == "reranker":
-                is_configured = True if provider_id == "managed_local" else bool(settings.get("reranker_api_key"))
-            elif type_str == "web_search":
-                is_configured = bool(settings.get("web_search_api_key")) if provider_id == current_web_search else False
-            
             is_active = (current_map.get(type_str) == provider_id)
+            
+            # 读取当前配置值
+            current_api_key = ""
+            current_base_url = ""
+            current_model = ""
+            is_configured = False
+            
+            if type_str == "llm" and is_active:
+                current_api_key = settings.get("openai_api_key", "")
+                current_base_url = settings.get("openai_base_url", "")
+                current_model = settings.get("openai_model", "")
+                is_configured = bool(current_api_key)
+            elif type_str == "embedding" and is_active:
+                current_api_key = settings.get("embedding_api_key", "")
+                current_base_url = settings.get("embedding_base_url", "")
+                current_model = settings.get("embedding_model", "")
+                is_configured = bool(current_api_key)
+            elif type_str == "tts" and is_active:
+                current_api_key = settings.get("tts_api_key", "")
+                current_base_url = settings.get("tts_base_url", "")
+                current_model = settings.get("tts_model", "")
+                is_configured = bool(current_api_key) if metadata.requires_api_key else True
+            elif type_str == "asr" and is_active:
+                current_api_key = settings.get("asr_api_key", "")
+                current_base_url = settings.get("asr_base_url", "")
+                current_model = settings.get("asr_model", "")
+                is_configured = bool(current_api_key) if metadata.requires_api_key else True
+            elif type_str == "reranker" and is_active:
+                current_api_key = settings.get("reranker_api_key", "")
+                current_base_url = settings.get("reranker_base_url", "")
+                current_model = settings.get("reranker_model", "")
+                is_configured = True if provider_id == "managed_local" else bool(current_api_key)
+            elif type_str == "web_search" and is_active:
+                current_api_key = settings.get("web_search_api_key", "")
+                current_base_url = settings.get("web_search_base_url", "")
+                is_configured = bool(current_api_key)
             
             providers_info.append(ProviderInfo(
                 id=provider_id,
@@ -129,7 +153,10 @@ def list_all_providers(request: Request) -> ProviderListResponse:
                 requires_api_key=metadata.requires_api_key,
                 supports_streaming=metadata.supports_streaming,
                 is_configured=is_configured,
-                is_active=is_active
+                is_active=is_active,
+                current_api_key=current_api_key,
+                current_base_url=current_base_url,
+                current_model=current_model
             ))
     
     return ProviderListResponse(providers=providers_info)
@@ -146,27 +173,65 @@ def list_providers(provider_type: str, request: Request) -> ProviderListResponse
         raise HTTPException(status_code=400, detail=f"不支持的提供商类型: {provider_type}")
     
     settings = read_settings(SETTINGS_PATH)
-    providers = list_providers_by_type(ptype)
     providers_info = []
     
-    current_provider = settings.get(f"{provider_type}_provider", "")
+    type_str = ptype.value
+    current_provider = settings.get(f"{type_str}_provider", "")
     
-    for provider_id, metadata in providers.items():
-        # 简化配置检查逻辑
-        is_configured = not metadata.requires_api_key or bool(settings.get(f"{provider_type}_api_key"))
+    for provider_id, metadata in list_providers_by_type(ptype).items():
         is_active = (current_provider == provider_id)
+        
+        # 读取当前配置值
+        current_api_key = ""
+        current_base_url = ""
+        current_model = ""
+        is_configured = False
+        
+        if is_active:
+            if type_str == "llm":
+                current_api_key = settings.get("openai_api_key", "")
+                current_base_url = settings.get("openai_base_url", "")
+                current_model = settings.get("openai_model", "")
+                is_configured = bool(current_api_key)
+            elif type_str == "embedding":
+                current_api_key = settings.get("embedding_api_key", "")
+                current_base_url = settings.get("embedding_base_url", "")
+                current_model = settings.get("embedding_model", "")
+                is_configured = bool(current_api_key)
+            elif type_str == "tts":
+                current_api_key = settings.get("tts_api_key", "")
+                current_base_url = settings.get("tts_base_url", "")
+                current_model = settings.get("tts_model", "")
+                is_configured = bool(current_api_key) if metadata.requires_api_key else True
+            elif type_str == "asr":
+                current_api_key = settings.get("asr_api_key", "")
+                current_base_url = settings.get("asr_base_url", "")
+                current_model = settings.get("asr_model", "")
+                is_configured = bool(current_api_key) if metadata.requires_api_key else True
+            elif type_str == "reranker":
+                current_api_key = settings.get("reranker_api_key", "")
+                current_base_url = settings.get("reranker_base_url", "")
+                current_model = settings.get("reranker_model", "")
+                is_configured = True if provider_id == "managed_local" else bool(current_api_key)
+            elif type_str == "web_search":
+                current_api_key = settings.get("web_search_api_key", "")
+                current_base_url = settings.get("web_search_base_url", "")
+                is_configured = bool(current_api_key)
         
         providers_info.append(ProviderInfo(
             id=provider_id,
             name=metadata.name,
-            type=provider_type,
+            type=type_str,
             description=metadata.description,
             default_base_url=metadata.default_base_url,
             default_model=metadata.default_model,
             requires_api_key=metadata.requires_api_key,
             supports_streaming=metadata.supports_streaming,
             is_configured=is_configured,
-            is_active=is_active
+            is_active=is_active,
+            current_api_key=current_api_key,
+            current_base_url=current_base_url,
+            current_model=current_model
         ))
     
     return ProviderListResponse(providers=providers_info)
