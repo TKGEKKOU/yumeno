@@ -8,6 +8,15 @@ export interface PersonaSummary {
   profile?: Record<string, unknown>;
 }
 
+export interface RetrievalConfig {
+  profile?: "precise" | "deep" | "custom";
+  retrieval_k?: number;
+  rerank_k?: number;
+  final_context_k?: number;
+  evidence_token_budget?: number;
+  allow_neighbors?: boolean;
+}
+
 export interface CapabilityDependency {
   id: string;
   name: string;

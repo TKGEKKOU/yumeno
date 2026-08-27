@@ -1,4 +1,5 @@
 from typing import Any
+import inspect
 
 from langchain.tools import ToolRuntime, tool
 
@@ -19,10 +20,10 @@ def run_persona_knowledge_search(
     query: str,
     context: PersonaAgentContext,
     service: RagService | None = None,
+    on_step=None,
 ) -> dict[str, Any]:
     active_service = service or create_rag_service()
-    result = active_service.query(
-        RagRequest(
+    request = RagRequest(
             question=query,
             context=RagQueryContext(
                 persona_id=context.persona_id,
@@ -33,9 +34,13 @@ def run_persona_knowledge_search(
             allow_web_fallback=False,
             persona_name=context.persona_name,
             persona_profile=context.persona_profile,
+            retrieval_config=(context.persona_profile or {}).get("rag"),
             force_knowledge=True,
-        )
     )
+    if "on_step" in inspect.signature(active_service.query).parameters:
+        result = active_service.query(request, on_step=on_step)
+    else:
+        result = active_service.query(request)
     evidence_result = RagEvidenceResult.from_rag_result(result)
     return SpecialistResult.from_rag_evidence(evidence_result).as_dict()
 

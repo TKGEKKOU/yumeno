@@ -126,69 +126,23 @@ def load_servers(path: Path) -> list[MCPServerConfig]:
 
 
 def default_servers() -> list[MCPServerConfig]:
-    """首次启动默认预置：内置免 key 联网搜索（free-search）。
+    """项目不再预置 MCP 服务器。"""
 
-    固定到 free-search-mcp==0.4.2 + mcp==1.29.0：0.7+ 已切换到 MCP
-    2026-07-28 新协议（mcp>=2.0.0），与本项目使用的 mcp 1.x 客户端不兼容，
-    握手会失败；且 0.4.2 的 mcp 依赖无上限，uvx 默认会装到 2.x，必须用
-    --with 一并钉住服务端 SDK 版本。其默认引擎 DuckDuckGo/Mojeek/GoogleNews/
-    Bing 在国内大多不可达，这里覆盖为百度，保证开箱即用。
-    """
-
-    return [
-        MCPServerConfig(
-            name="free-search",
-            transport="stdio",
-            command="uvx",
-            args=[
-                "--from",
-                "free-search-mcp==0.9.2",
-                "--with",
-                "mcp==2.0.0",
-                "free-search-mcp",
-            ],
-            env={
-                "UV_DEFAULT_INDEX": "https://mirrors.aliyun.com/pypi/simple/",
-                "SEARCH_MCP_DOWNLOAD_ENABLED": "false",
-                # 0.4.2 用 pydantic-settings 解析 list 字段，环境变量必须是 JSON 数组
-                "SEARCH_MCP_DEFAULT_ENGINES": '["baidu"]',
-            },
-            enabled=True,
-            description="免 API key 联网搜索（本地优先）",
-            # 平台级基础能力：全局可用（所有现有与新建角色均可见）
-            allowed_persona_ids=[GLOBAL_ALL],
-        )
-    ]
+    return []
 
 
 def ensure_default_servers(path: Path) -> None:
-    """保证内置默认服务器以最新预置形态存在。
-
-    - 配置文件不存在：写入默认服务器列表（free-search 全局可用）。
-    - 文件已存在但 free-search 缺失：保持不变，尊重用户显式关闭/移除。
-    - free-search 存在但未标记全局：迁移为全局（含旧版按角色授权的数据）。
-    """
+    """初始化 MCP 配置，并移除旧版本遗留的免费搜索服务器。"""
 
     target = Path(path)
     if not target.is_file():
         save_servers(target, default_servers())
         return
     servers = load_servers(target)
-    free_search = next((s for s in servers if s.name == "free-search"), None)
-    if free_search is None:
+    remaining = [server for server in servers if server.name != "free-search"]
+    if len(remaining) == len(servers):
         return
-    defaults = default_servers()[0]
-    changed = False
-    if GLOBAL_ALL not in free_search.allowed_persona_ids:
-        free_search.allowed_persona_ids = [GLOBAL_ALL]
-        changed = True
-    if "free-search-mcp==0.4.2" in free_search.args or "mcp==1.29.0" in free_search.args:
-        free_search.args = list(defaults.args)
-        free_search.env = {**defaults.env, **free_search.env}
-        changed = True
-    if not changed:
-        return
-    save_servers(target, servers)
+    save_servers(target, remaining)
 
 
 def save_servers(path: Path, servers: list[MCPServerConfig]) -> None:

@@ -262,7 +262,7 @@ def list_persona_documents(runtime: ToolRuntime[PersonaAgentContext]) -> list[di
 @tool("rename_persona")
 def rename_persona(name: str, runtime: ToolRuntime[PersonaAgentContext]) -> dict:
     """Rename the active persona."""
-    return rename_persona_for_context(runtime.context, name)
+    return rename_persona_for_context(runtime.context, name, confirmer=lambda _action: True)
 
 
 @tool("update_persona_profile")
@@ -271,7 +271,7 @@ def update_persona_profile(
     runtime: ToolRuntime[PersonaAgentContext],
 ) -> dict:
     """Merge updates into the active persona profile."""
-    return update_profile_for_context(runtime.context, profile)
+    return update_profile_for_context(runtime.context, profile, confirmer=lambda _action: True)
 
 
 @tool("add_persona_knowledge")
@@ -281,7 +281,9 @@ def add_persona_knowledge(
     title: str = "对话补充资料",
 ) -> dict:
     """Append user-supplied factual knowledge to the active persona after confirmation."""
-    return add_knowledge_for_context(runtime.context, content, title)
+    return add_knowledge_for_context(
+        runtime.context, content, title, confirmer=lambda _action: True
+    )
 
 
 @tool("delete_persona_document")
@@ -290,4 +292,6 @@ def delete_persona_document(
     runtime: ToolRuntime[PersonaAgentContext],
 ) -> dict:
     """Delete one uploaded document from the active persona knowledge space."""
-    return delete_document_for_context(runtime.context, document_id)
+    return delete_document_for_context(
+        runtime.context, document_id, confirmer=lambda _action: True
+    )

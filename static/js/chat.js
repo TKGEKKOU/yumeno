@@ -20,6 +20,7 @@ function rememberPersonaId(personaId, storage) {
 window.PL.chatPreferences = { resolveRecentPersonaId, rememberPersonaId };
 
 let chatGlobalEventsBound = false;
+let chatRenderVersion = 0;
 
 function formatMessageTime(iso) {
   const date = iso ? new Date(iso) : new Date();
@@ -225,10 +226,6 @@ function handleRealtimeEvent(event) {
   if (event.turn_id && event.turn_id !== state.realtimeTurnId) return;
   if (event.type === "agent.stage") {
     if (!state.realtimeAnswerNode) state.realtimeAnswerNode = showReplyLoading();
-    state.realtimeAnswerNode.classList.remove("message-loading");
-    const body = state.realtimeAnswerNode.querySelector("p");
-    if (body.classList.contains("loading-bubble")) body.textContent = "";
-    body.classList.remove("loading-bubble");
     setReplyStage(state.realtimeAnswerNode, event.stage);
   } else if (event.type === "text.delta") {
     if (!state.realtimeAnswerNode) state.realtimeAnswerNode = showReplyLoading();
@@ -584,6 +581,7 @@ function closeChatSettingsMenu() {
   button.setAttribute("aria-expanded", "false");
 }
 async function selectPersona(personaId = "") {
+  chatRenderVersion += 1;
   stopVoiceChat();
   stopVoicePlayback();
   resetPacing();
@@ -619,6 +617,7 @@ async function submitQuestion(event) {
   sendQuestionText(question);
 }
 function sendQuestionText(question) {
+  chatRenderVersion += 1;
   stopVoicePlayback();
   resetPacing();
   state.agentRequestPending = true;
@@ -676,10 +675,6 @@ async function streamAgentQuery(question) {
 function handleAgentStreamEvent(event) {
   if (event.kind === "stage") {
     if (!state.pendingReplyNode) state.pendingReplyNode = showReplyLoading();
-    state.pendingReplyNode.classList.remove("message-loading");
-    const body = state.pendingReplyNode.querySelector("p");
-    if (body.classList.contains("loading-bubble")) body.textContent = "";
-    body.classList.remove("loading-bubble");
     setReplyStage(state.pendingReplyNode, event.stage);
   } else if (event.kind === "token") {
     if (!state.pendingReplyNode) state.pendingReplyNode = showReplyLoading();
@@ -828,8 +823,17 @@ async function retryVoiceMessage(messageId) {
 }
 async function loadConversationMessages() {
   if (!state.activePersona) return;
+  const version = chatRenderVersion;
+  const personaId = state.activePersona.id;
+  const conversationId = state.conversationId;
   try {
-    const messages = await api(fetch(`/api/personas/${state.activePersona.id}/conversations/${state.conversationId}/messages`));
+    const messages = await api(fetch(`/api/personas/${personaId}/conversations/${conversationId}/messages`));
+    if (
+      version !== chatRenderVersion
+      || state.activePersona?.id !== personaId
+      || state.conversationId !== conversationId
+      || isConversationBusy()
+    ) return;
     $("chat-log").replaceChildren();
     if (!messages.length) return $("chat-log").append(empty("开始对话"));
     for (const message of messages) message.kind === "audio" ? appendAudioMessage(message) : appendMessage(message.role, message.content, message.created_at);

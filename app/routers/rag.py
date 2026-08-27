@@ -49,6 +49,7 @@ def query_persona(
             allow_web_fallback=settings.enable_web_fallback,
             persona_name=persona.name,
             persona_profile=persona.profile_json,
+            retrieval_config=(persona.profile_json or {}).get("rag"),
         )
     )
     return RagQueryResponse(

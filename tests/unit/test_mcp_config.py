@@ -93,15 +93,14 @@ def test_atomic_write_has_no_tmp_leftover(tmp_path):
     assert not list(tmp_path.glob("*.tmp"))
 
 
-def test_ensure_default_servers_writes_global_free_search(tmp_path):
+def test_ensure_default_servers_writes_empty_config(tmp_path):
     path = tmp_path / "mcp_servers.json"
     ensure_default_servers(path)
     servers = load_servers(path)
-    assert [s.name for s in servers] == ["free-search"]
-    assert servers[0].allowed_persona_ids == ["*"]
+    assert servers == []
 
 
-def test_ensure_default_servers_migrates_legacy_persona_grants(tmp_path):
+def test_ensure_default_servers_removes_legacy_free_search(tmp_path):
     path = tmp_path / "mcp_servers.json"
     save_servers(
         path,
@@ -117,9 +116,8 @@ def test_ensure_default_servers_migrates_legacy_persona_grants(tmp_path):
     )
     ensure_default_servers(path)
     servers = load_servers(path)
-    free_search = next(s for s in servers if s.name == "free-search")
     custom = next(s for s in servers if s.name == "custom")
-    assert free_search.allowed_persona_ids == ["*"]
+    assert [server.name for server in servers] == ["custom"]
     assert custom.allowed_persona_ids == []
 
 

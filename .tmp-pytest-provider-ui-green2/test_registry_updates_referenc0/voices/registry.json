@@ -1,0 +1,21 @@
+[
+  {
+    "id": "7345602a8bb949c2ab4c5e4c9f687e04",
+    "name": "voice",
+    "status": "ready",
+    "engine": "gpt_sovits",
+    "gpt_weights_path": "",
+    "sovits_weights_path": "",
+    "refer_audio_path": "D:\\CodePython\\YUMENO\\.tmp-pytest-provider-ui-green2\\test_registry_updates_referenc0\\voices\\voice--7345602a\\reference.wav",
+    "reference_language": "zh",
+    "reference_text": "新的参考文本",
+    "dataset_dir": "",
+    "training_stage": "",
+    "error_message": "",
+    "training_preset": "standard",
+    "gpt_epochs": 15,
+    "sovits_epochs": 30,
+    "training_progress": null,
+    "dir_name": "voice--7345602a"
+  }
+]

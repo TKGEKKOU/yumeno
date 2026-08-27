@@ -229,3 +229,15 @@ class MilvusRagStore:
             collection_name=self.settings.collection_name,
             filter=knowledge_space_filter(scope),
         )
+
+    def load_chunks(self, scope: KnowledgeSpaceScope, chunk_ids: list[str]) -> list[Document]:
+        if not chunk_ids or not self.collection_exists():
+            return []
+        ids = ", ".join(quote_filter_value(value) for value in dict.fromkeys(chunk_ids))
+        rows = self.client().query(
+            collection_name=self.settings.collection_name,
+            filter=f"{knowledge_space_filter(scope)} and chunk_id in [{ids}] and category == \"content\"",
+            output_fields=["text", "source", "filename", "title", "section", "doc_id", "chunk_id", "document_id"],
+            limit=len(chunk_ids),
+        )
+        return [Document(page_content=str(row.get("text") or ""), metadata={key: value for key, value in row.items() if key not in {"text", "id"}}) for row in rows]

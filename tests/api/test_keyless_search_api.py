@@ -1,4 +1,4 @@
-"""免 key 联网搜索开关 API 测试。"""
+"""已移除的免费联网搜索 API 不再暴露。"""
 
 import pytest
 
@@ -45,46 +45,9 @@ def keyless(client, monkeypatch):
     return manager
 
 
-def test_keyless_status_disabled_by_default(client, keyless):
-    body = client.get("/api/system/web-search-keyless").json()
-    assert body["enabled"] is False
-    assert body["uvx_available"] is True
+def test_keyless_status_endpoint_is_removed(client, keyless):
+    assert client.get("/api/system/web-search-keyless").status_code == 404
 
 
-def test_keyless_enable_writes_config_and_reloads(client, keyless):
-    response = client.post("/api/system/web-search-keyless", json={"enabled": True})
-    assert response.status_code == 200
-    body = response.json()
-    assert body["enabled"] is True
-    assert body["status"] == "connected"
-    assert body["tool_count"] == 2
-    assert keyless.reloaded == ["free-search"]
-    config = keyless.get_config("free-search")
-    assert config.command == "uvx"
-    assert config.args == [
-        "--from",
-        "free-search-mcp==0.9.2",
-        "--with",
-        "mcp==2.0.0",
-        "free-search-mcp",
-    ]
-    assert config.env["UV_DEFAULT_INDEX"] == "https://mirrors.aliyun.com/pypi/simple/"
-    assert config.env["SEARCH_MCP_DOWNLOAD_ENABLED"] == "false"
-    assert config.allowed_persona_ids == ["*"]
-
-
-def test_keyless_disable_removes_config(client, keyless):
-    client.post("/api/system/web-search-keyless", json={"enabled": True})
-    response = client.post("/api/system/web-search-keyless", json={"enabled": False})
-    assert response.status_code == 200
-    body = response.json()
-    assert body["enabled"] is False
-    assert keyless.disabled == ["free-search"]
-    assert keyless.get_config("free-search") is None
-
-
-def test_keyless_requires_uvx(client, keyless, monkeypatch):
-    monkeypatch.setattr("app.routers.system.shutil.which", lambda name: None)
-    response = client.post("/api/system/web-search-keyless", json={"enabled": True})
-    assert response.status_code == 422
-    assert "uvx" in response.json()["detail"]
+def test_keyless_mutation_endpoint_is_removed(client, keyless):
+    assert client.post("/api/system/web-search-keyless", json={"enabled": True}).status_code == 404

@@ -4,7 +4,6 @@ from langchain.tools import ToolRuntime, tool
 from sqlalchemy import select
 
 from agents.context import PersonaAgentContext
-from agents.tools.management import request_confirmation
 from app.models import WorkspaceMemory
 
 
@@ -93,10 +92,6 @@ def save_workspace_memory(
 ) -> dict:
     """Save a shared workspace fact after user confirmation."""
 
-    if not request_confirmation(
-        {"tool": "save_workspace_memory", "title": "保存全局记忆"}
-    ):
-        return {"status": "cancelled"}
     return save_workspace_memory_for_context(runtime.context, content)
 
 
@@ -107,8 +102,4 @@ def delete_workspace_memory(
 ) -> dict:
     """Delete a shared workspace fact after user confirmation."""
 
-    if not request_confirmation(
-        {"tool": "delete_workspace_memory", "title": "删除全局记忆"}
-    ):
-        return {"status": "cancelled"}
     return delete_workspace_memory_for_context(runtime.context, memory_id)

@@ -11,6 +11,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
 from agents.context import PersonaAgentContext
+from agents.intent_funnel import analyze_intents
 from agents.observability import RunRecorder
 from agents import registry as tool_registry
 from agents.registry import capability_summary, specialist_for_tool, tool_specs
@@ -20,6 +21,14 @@ from rag.llm import LLM_UNAVAILABLE_MESSAGE, get_llm, is_transient_provider_erro
 
 
 logger = logging.getLogger(__name__)
+
+EXECUTION_DEGRADED_MESSAGE = "请求处理超时或暂时失败，请稍后重试。"
+
+
+def _execution_error_message(error: Exception) -> str:
+    if isinstance(error, TimeoutError) or error.__class__.__name__.lower().endswith("timeout"):
+        return "请求处理超时，请稍后重试。"
+    return EXECUTION_DEGRADED_MESSAGE
 
 
 _DSML_PROTOCOL_PATTERN = re.compile(
@@ -135,6 +144,16 @@ def _stage_from_update(update: dict) -> str | None:
     return None
 
 
+def _initial_stage(intent) -> str:
+    labels = {
+        "web": "已识别为联网查询，正在准备搜索...",
+        "knowledge": "已识别为资料查询，正在准备检索...",
+        "memory": "已识别为记忆请求，正在检查记忆...",
+        "management": "已识别为管理请求，正在检查操作权限...",
+    }
+    return labels.get(intent.primary, "正在判断请求类型...")
+
+
 _CAPABILITY_SELF_INSPECTION_PATTERNS = (
     re.compile(r"(?:你|您)(?:有哪(?:些|些)|具备哪些|拥有哪些).*(?:工具|tools?|能力|技能|功能)"),
     re.compile(r"(?:你|您)(?:具备|拥有|有什么).*(?:能力|技能|功能)"),
@@ -157,15 +176,9 @@ def is_capability_question(question: str) -> bool:
 
 
 def is_explicit_web_search_question(question: str) -> bool:
-    """Return True only for explicit web requests or clear external fresh facts."""
+    """Compatibility wrapper around the shared intent decision."""
 
-    normalized = question.strip().lower()
-    if any(pattern.search(normalized) for pattern in _EXPLICIT_WEB_SEARCH_PATTERNS):
-        return True
-    return (
-        any(signal in normalized for signal in _WEB_FRESHNESS_SIGNALS)
-        and any(subject in normalized for subject in _EXTERNAL_FACT_OBJECTS)
-    )
+    return analyze_intents(question).web_authorized
 
 
 def _latest_turn_messages(messages: list) -> list:
@@ -248,13 +261,15 @@ class PersonaAgentService:
                 metrics=recorder.metrics(),
             )
         try:
-            initial_loaded_skills = ["web-research"] if is_explicit_web_search_question(question) else []
+            initial_loaded_skills = []
+            intent = analyze_intents(question)
             result = graph.invoke(
                 {
                     "messages": [{"role": "user", "content": question}],
                     "active_worker": None,
                     "loaded_skills": initial_loaded_skills,
-                    "web_search_authorized": bool(initial_loaded_skills),
+                    "intent_decision": intent.to_state(),
+                    "web_search_authorized": intent.web_authorized,
                     "worker_results": [],
                     "handoff_count": 0,
                 },
@@ -324,21 +339,24 @@ class PersonaAgentService:
         started = time.perf_counter()
         failed = False
         emitted_tokens = False
-        last_stage: str | None = None
+        intent = analyze_intents(question)
+        last_stage: str | None = _initial_stage(intent)
         visible_stream = _VisibleTextStream()
+        yield {"kind": "stage", "stage": last_stage}
         try:
-            initial_loaded_skills = ["web-research"] if is_explicit_web_search_question(question) else []
+            initial_loaded_skills = []
             for _namespace, mode, payload in graph.stream(
                 {
                     "messages": [{"role": "user", "content": question}],
                     "active_worker": None,
                     "loaded_skills": initial_loaded_skills,
-                    "web_search_authorized": bool(initial_loaded_skills),
+                    "intent_decision": intent.to_state(),
+                    "web_search_authorized": intent.web_authorized,
                     "worker_results": [],
                     "handoff_count": 0,
                 },
                 config,
-                stream_mode=["messages", "updates"],
+                stream_mode=["messages", "updates", "custom"],
                 subgraphs=True,
                 context=context,
             ):
@@ -361,10 +379,21 @@ class PersonaAgentService:
                             "agent", "workflow_stage", stage, status="completed"
                         )
                         yield {"kind": "stage", "stage": stage}
+                elif mode == "custom" and isinstance(payload, dict):
+                    stage = str(payload.get("stage") or "").strip()
+                    if payload.get("kind") == "stage" and stage and stage != last_stage:
+                        last_stage = stage
+                        event = {"kind": "stage", "stage": stage}
+                        if payload.get("details"):
+                            event["details"] = payload["details"]
+                        yield event
         except Exception as exc:
-            if not is_transient_provider_error(exc):
-                raise
-            logger.warning("Agent 流式查询时 LLM 服务瞬时故障，返回降级提示：%s", exc)
+            if is_transient_provider_error(exc):
+                logger.warning("Agent 流式查询时 LLM 服务瞬时故障，返回降级提示：%s", exc)
+                answer = LLM_UNAVAILABLE_MESSAGE
+            else:
+                logger.exception("Agent 流式查询执行失败，返回可见降级结果")
+                answer = _execution_error_message(exc)
             failed = True
         trailing = visible_stream.finish()
         if trailing:
@@ -376,8 +405,8 @@ class PersonaAgentService:
             yield {
                 "kind": "result",
                 "result": AgentTurnResult(
-                    status="completed",
-                    answer=LLM_UNAVAILABLE_MESSAGE,
+                    status="degraded",
+                    answer=answer,
                     specialist="conversation",
                     duration_seconds=time.perf_counter() - started,
                     events=recorder.events(),
@@ -429,13 +458,14 @@ class PersonaAgentService:
             return
         failed = False
         emitted_tokens = False
-        last_stage: str | None = None
+        last_stage: str | None = "正在判断请求类型..."
         visible_stream = _VisibleTextStream()
+        yield {"kind": "stage", "stage": last_stage}
         try:
             for _namespace, mode, payload in graph.stream(
                 Command(resume={"approved": approved}),
                 config,
-                stream_mode=["messages", "updates"],
+                stream_mode=["messages", "updates", "custom"],
                 subgraphs=True,
                 context=context,
             ):
@@ -458,10 +488,21 @@ class PersonaAgentService:
                             "agent", "workflow_stage", stage, status="completed"
                         )
                         yield {"kind": "stage", "stage": stage}
+                elif mode == "custom" and isinstance(payload, dict):
+                    stage = str(payload.get("stage") or "").strip()
+                    if payload.get("kind") == "stage" and stage and stage != last_stage:
+                        last_stage = stage
+                        event = {"kind": "stage", "stage": stage}
+                        if payload.get("details"):
+                            event["details"] = payload["details"]
+                        yield event
         except Exception as exc:
-            if not is_transient_provider_error(exc):
-                raise
-            logger.warning("Agent 流式恢复时 LLM 服务瞬时故障，返回降级提示：%s", exc)
+            if is_transient_provider_error(exc):
+                logger.warning("Agent 流式恢复时 LLM 服务瞬时故障，返回降级提示：%s", exc)
+                answer = LLM_UNAVAILABLE_MESSAGE
+            else:
+                logger.exception("Agent 流式恢复执行失败，返回可见降级结果")
+                answer = _execution_error_message(exc)
             failed = True
         trailing = visible_stream.finish()
         if trailing:
@@ -473,8 +514,8 @@ class PersonaAgentService:
             yield {
                 "kind": "result",
                 "result": AgentTurnResult(
-                    status="completed",
-                    answer=LLM_UNAVAILABLE_MESSAGE,
+                    status="degraded",
+                    answer=answer,
                     specialist="conversation",
                     duration_seconds=time.perf_counter() - started,
                     events=recorder.events(),

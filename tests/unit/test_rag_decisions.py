@@ -39,6 +39,9 @@ def test_empty_evidence_rewrites_then_uses_web_fallback():
     assert decide_after_batch_grade(
         {"documents": [], "rewrite_count": 2, "used_web_search": True}, 2, True
     ) == "no_answer"
+    assert decide_after_batch_grade(
+        {"documents": [], "irrelevant_after_rerank": True, "rewrite_count": 0}, 2, True
+    ) == "no_answer"
 
 
 def test_quality_failure_has_bounded_retry_and_feedback():
@@ -91,6 +94,26 @@ def test_interaction_router_keeps_chat_and_capabilities_out_of_rag():
     assert route_interaction("你会调用哪些 tools", True) == "capability"
     assert route_interaction("根据资料说明她的经历", True) == "knowledge"
     assert route_interaction("今天北京天气", True) == "web"
+
+
+def test_interaction_router_respects_negation_and_realtime_priority(monkeypatch):
+    from rag.interaction_router import route_interaction
+
+    monkeypatch.setattr(
+        "rag.interaction_router.classify_ambiguous",
+        lambda question: "conversation",
+    )
+
+    assert route_interaction("不要查资料，直接陪我聊聊", True) == "conversation"
+    assert route_interaction("你今天觉得北京天气怎么样？", True) == "web"
+    assert route_interaction("根据角色资料说明她的经历，再查今天北京天气", True) == "knowledge"
+
+
+def test_persona_knowledge_question_does_not_fallback_to_web_without_explicit_request():
+    from rag.interaction_router import route_interaction
+
+    assert route_interaction("梦限大的薇欧拉", True) == "knowledge"
+    assert route_interaction("继续", True) == "knowledge"
 
 
 def test_force_knowledge_bypasses_conversation_routing(rag_context):

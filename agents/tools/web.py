@@ -10,8 +10,7 @@ from settings import Settings
 def web_search(query: str, runtime: ToolRuntime[PersonaAgentContext]) -> list[dict]:
     """Search public web information via the configured API-key provider (Tavily/Bocha).
 
-    Only works when an API-key search service is configured in Settings; otherwise
-    load the web-research skill for keyless web search instead.
+    Only works when an API-key search service is configured in Settings.
     """
     del runtime
     settings = Settings.load()
@@ -22,7 +21,7 @@ def web_search(query: str, runtime: ToolRuntime[PersonaAgentContext]) -> list[di
                 "url": "",
                 "content": (
                     "当前未配置需要 API key 的搜索服务（博查/Tavily）。"
-                    "请加载 web-research 技能执行免 key 联网搜索，"
+                    "请在设置页配置 API key 搜索服务，"
                     "或在设置页配置搜索服务后重试。"
                 ),
             }

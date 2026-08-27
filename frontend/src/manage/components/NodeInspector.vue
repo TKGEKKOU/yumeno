@@ -2,7 +2,7 @@
 import { Check, ExternalLink, Eye, FolderOpen, Play, RefreshCw, RotateCcw, Trash2, Upload } from "lucide-vue-next";
 import { computed, ref, watch } from "vue";
 import { plainClone } from "../api";
-import type { PersonaSummary, RoleGraphNode, WorkbenchSnapshot } from "../types";
+import type { PersonaSummary, RetrievalConfig, RoleGraphNode, WorkbenchSnapshot } from "../types";
 
 const props = defineProps<{ node?: RoleGraphNode; draft: WorkbenchSnapshot; disabled?: boolean; uploadCompleteToken?: number }>();
 const emit = defineEmits<{ profile: [persona: PersonaSummary]; capability: [id: string, mode: "allow" | "deny" | "inherit"]; server: [name: string, allowed: boolean]; upload: [files: File[], text: string]; deleteDocument: [id: string]; retryDocument: [id: string]; deletePersona: []; previewVoice: []; openVoiceStudio: []; openRagEval: []; previewDocument: [document: Record<string, unknown>]; previewLocalFile: [file: File]; refreshLive2d: []; openLive2dDirectory: [] }>();
@@ -26,6 +26,12 @@ function patchPersona(name: string, value: unknown) {
 }
 function patchTts(name: string, value: unknown) { const persona = plainClone(props.draft.persona); const profile = { ...(persona.profile || {}) }; profile.tts = { ...((profile.tts as object) || {}), [name]: value }; persona.profile = profile; emit("profile", persona); }
 function patchLive2d(value: string) { const persona = plainClone(props.draft.persona); const profile = { ...(persona.profile || {}) }; profile.live2d = { ...((profile.live2d as object) || {}), model: value }; persona.profile = profile; emit("profile", persona); }
+const retrievalConfig = computed(() => (props.draft.persona.profile?.rag || {}) as RetrievalConfig);
+function patchRag(name: keyof RetrievalConfig, value: unknown) {
+  const persona = plainClone(props.draft.persona); const profile = { ...(persona.profile || {}) };
+  profile.rag = { ...(profile.rag as RetrievalConfig || {}), [name]: value };
+  persona.profile = profile; emit("profile", persona);
+}
 function chooseFiles(event: Event) { selectedFiles.value = Array.from((event.target as HTMLInputElement).files || []); }
 function dropFiles(event: DragEvent) { selectedFiles.value = Array.from(event.dataTransfer?.files || []); }
 function removeSelectedFile(index: number) { selectedFiles.value = selectedFiles.value.filter((_, itemIndex) => itemIndex !== index); }
@@ -40,6 +46,17 @@ watch(() => props.uploadCompleteToken, () => { selectedFiles.value = []; directT
       <label><span>角色名称</span><input :value="draft.persona.name" @input="patchPersona('name', ($event.target as HTMLInputElement).value)"></label>
       <label><span>角色人设</span><textarea rows="7" :value="String(draft.persona.profile?.description || '')" @input="patchPersona('description', ($event.target as HTMLTextAreaElement).value)"></textarea></label>
       <label><span>回复语言</span><select :value="String(draft.persona.profile?.reply_language || '')" @change="patchPersona('reply_language', ($event.target as HTMLSelectElement).value)"><option value="">跟随对话</option><option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option></select></label>
+      <fieldset class="inspect-fieldset"><legend>知识检索</legend>
+        <label><span>检索预设</span><select :value="String(retrievalConfig.profile || 'deep')" @change="patchRag('profile', ($event.target as HTMLSelectElement).value)"><option value="precise">精准检索</option><option value="deep">深度检索</option><option value="custom">自定义</option></select></label>
+        <template v-if="retrievalConfig.profile === 'custom'">
+          <label><span>初始召回 K</span><input type="number" min="1" max="100" :value="retrievalConfig.retrieval_k || 20" @change="patchRag('retrieval_k', Number(($event.target as HTMLInputElement).value))"></label>
+          <label><span>重排保留 K</span><input type="number" min="1" max="100" :value="retrievalConfig.rerank_k || 8" @change="patchRag('rerank_k', Number(($event.target as HTMLInputElement).value))"></label>
+          <label><span>最终上下文 K</span><input type="number" min="1" max="30" :value="retrievalConfig.final_context_k || 8" @change="patchRag('final_context_k', Number(($event.target as HTMLInputElement).value))"></label>
+          <label><span>证据 Token 预算</span><input type="number" min="256" max="20000" step="256" :value="retrievalConfig.evidence_token_budget || 4500" @change="patchRag('evidence_token_budget', Number(($event.target as HTMLInputElement).value))"></label>
+          <label class="inline-check"><input type="checkbox" :checked="retrievalConfig.allow_neighbors !== false" @change="patchRag('allow_neighbors', ($event.target as HTMLInputElement).checked)"><span>允许补充相邻片段</span></label>
+        </template>
+        <small>查询时直接使用这里保存的参数，不额外调用模型判断检索模式。</small>
+      </fieldset>
       <button type="button" class="inspect-danger" @click="emit('deletePersona')"><Trash2 :size="15"/>删除当前角色</button>
     </div>
     <div v-else-if="kind === 'rag'" class="inspect-stack rag-inspector">

@@ -51,7 +51,9 @@ def _create_llm(
 
 @lru_cache(maxsize=8)
 def _build_llm(api_key: str, base_url: str, model: str) -> ChatOpenAI:
-    return _create_llm(api_key, base_url, model)
+    # 交互式 Agent 外层已有明确的瞬时错误重试；禁止 SDK 再叠加重试，
+    # 并限制单次等待，避免界面长期停留在“正在判断请求类型”。
+    return _create_llm(api_key, base_url, model, timeout=30, max_retries=0)
 
 
 def get_llm(settings: Settings | None = None) -> ChatOpenAI:

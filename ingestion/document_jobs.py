@@ -150,7 +150,13 @@ def index_document_job(
                 structured_imported = True
                 Path(job.markdown_path).write_text(imported.schema_card, encoding="utf-8")
                 job.markdown_preview = imported.schema_card
-            ingest_markdown_file(Path(job.markdown_path), scope)
+            index_kwargs = {}
+            if getattr(job, "chunking_preset", None):
+                index_kwargs = {
+                    "chunking_preset": job.chunking_preset,
+                    "chunker_version": getattr(job, "chunker_version", None),
+                }
+            ingest_markdown_file(Path(job.markdown_path), scope, **index_kwargs)
             job.status = "indexed"
             job.indexed_at = utc_now()
             job.error_message = None

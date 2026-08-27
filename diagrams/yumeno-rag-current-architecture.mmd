@@ -1,0 +1,22 @@
+flowchart LR
+    Q[用户问题] --> S[Supervisor / 角色作用域]
+    S --> R[意图路由]
+    R -->|闲聊/能力| A[直接回答]
+    R -->|知识问题| H[SQLite checkpoint\n不跨角色]
+    H --> D[Dense Embedding + BM25]
+    D --> F[RRF 融合召回]
+    F --> U[内容去重\n精确 + 近似]
+    U --> K[候选 K]
+    K --> X[Qwen3-Reranker-0.6B\n常驻预热]
+    X -->|最高分 < 0.1| N[快速拒答\n资料不足]
+    X -->|保留相关候选| T[Token Budget\n主片段 + 邻居片段]
+    T --> G[生成回答]
+    G --> C[质量门]
+    C -->|通过| Z[最终答案]
+    C -->|失败且未超限| P[有界修正]
+    P --> G
+    C -->|超限| N
+    N --> Z
+    D -.向量存储.- M[(Milvus)]
+    H -.会话状态.- L[(SQLite)]
+    G -.custom stage.- UI[前端过程气泡]

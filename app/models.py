@@ -258,3 +258,7 @@ class DocumentJob(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    document_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    chunking_preset: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    chunker_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    index_version: Mapped[str | None] = mapped_column(String(64), nullable=True)

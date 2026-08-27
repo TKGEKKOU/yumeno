@@ -9,6 +9,23 @@ class TransientServiceError(RuntimeError):
     status_code = 503
 
 
+def test_cached_llm_uses_bounded_single_attempt_client(monkeypatch):
+    from rag import llm
+
+    captured = {}
+
+    def fake_create(api_key, base_url, model, timeout=60, max_retries=2):
+        captured.update(timeout=timeout, max_retries=max_retries)
+        return object()
+
+    llm._build_llm.cache_clear()
+    monkeypatch.setattr(llm, "_create_llm", fake_create)
+
+    llm._build_llm("key", "https://example.invalid", "model")
+
+    assert captured == {"timeout": 30, "max_retries": 0}
+
+
 PROMPT = ChatPromptTemplate.from_messages([("human", "{question}")])
 
 

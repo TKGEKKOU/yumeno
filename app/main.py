@@ -18,6 +18,7 @@ from app.database import (
     build_session_factory,
     upgrade_persona_schema,
     upgrade_voice_asset_schema,
+    upgrade_document_job_schema,
 )
 from app.routers.agents import router as agents_router
 from app.routers.asr import router as asr_router
@@ -32,6 +33,7 @@ from app.routers.persona_drafts import router as persona_drafts_router
 from app.routers.messages import router as messages_router
 from app.routers.personas import router as personas_router
 from app.routers.rag import router as rag_router
+from app.routers.reranker import router as reranker_router
 from app.routers.realtime import router as realtime_router
 from app.routers.settings import router as settings_router
 from app.routers.skills import router as skills_router
@@ -46,6 +48,7 @@ from settings import Settings
 from extensions.events import EVENT_MESSAGE, EventBus
 from ingestion.status import get_system_status
 from ingestion.local_embedding.resources import LocalEmbeddingResourceManager
+from ingestion.local_reranker.resources import LocalRerankerResourceManager
 from ingestion.embeddings import warm_managed_embedding
 from integrations.config import bilibili_runtime_config, onebot_runtime_config
 from integrations.bilibili import BilibiliLiveManager
@@ -117,8 +120,10 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         from ingestion.local_embedding.client import resume_embedding_workers
+        from ingestion.local_reranker.client import resume_reranker_workers
 
         resume_embedding_workers()
+        resume_reranker_workers()
         # MCP 服务器启动时连接并注册工具：连接失败仅记录错误，不阻塞启动；
         # 工具注册发生在 workflow 懒构建之前，因此新技能即可引用 MCP 工具。
         app.state.mcp_manager = MCPManager(
@@ -138,6 +143,10 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         if initialize_database:
             app.state.embedding_warmup_task = asyncio.create_task(
                 asyncio.to_thread(warm_managed_embedding, settings)
+            )
+            from ingestion.local_reranker.client import warm_managed_reranker
+            app.state.reranker_warmup_task = asyncio.create_task(
+                asyncio.to_thread(warm_managed_reranker, settings)
             )
             app.state.asr_warmup_task = asyncio.create_task(warm_asr_worker())
             app.state.gpt_sovits_warmup_task = asyncio.create_task(warm_gpt_sovits())
@@ -164,6 +173,15 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         if embedding_warmup is not None:
             with suppress(asyncio.CancelledError, Exception):
                 await embedding_warmup
+        reranker_warmup = getattr(app.state, "reranker_warmup_task", None)
+        try:
+            from ingestion.local_reranker.client import begin_reranker_shutdown
+            begin_reranker_shutdown()
+        except Exception:
+            pass
+        if reranker_warmup is not None:
+            with suppress(asyncio.CancelledError, Exception):
+                await reranker_warmup
         warmup = getattr(app.state, "asr_warmup_task", None)
         if warmup is not None:
             warmup.cancel()
@@ -214,6 +232,7 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     app.state.vad_factory = build_vad
     app.state.asr_stream_client_factory = WorkerStreamClient
     app.state.embedding_resources = LocalEmbeddingResourceManager(settings.project_root)
+    app.state.reranker_resources = LocalRerankerResourceManager(settings.project_root)
     app.state.gpt_sovits_config = GPTSoVITSConfig(settings.project_root)
     app.state.gpt_sovits = GPTSoVITSAdapter(
         app.state.gpt_sovits_config,
@@ -250,6 +269,7 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         Base.metadata.create_all(engine)
         upgrade_persona_schema(engine)
         upgrade_voice_asset_schema(engine)
+        upgrade_document_job_schema(engine)
         with app.state.session_factory() as migration_session:
             migrate_voice_assets(migration_session)
         # 会话状态（对话历史、中断点、Worker 结果）持久化到本地 SQLite；
@@ -347,6 +367,7 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     app.include_router(persona_drafts_router)
     app.include_router(skills_router)
     app.include_router(rag_router)
+    app.include_router(reranker_router)
     app.include_router(realtime_router)
     app.include_router(settings_router)
     app.include_router(system_router)

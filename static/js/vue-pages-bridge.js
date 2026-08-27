@@ -20,8 +20,10 @@ async function hideExtensions() { const module = await loadVuePages(); module.hi
 async function initEvaluation() { const module = await loadVuePages(); module.mountEvaluationApp("#evaluation-app-root"); }
 async function showEvaluation() { const module = await loadVuePages(); module.mountEvaluationApp("#evaluation-app-root"); module.showEvaluationApp(); }
 async function hideEvaluation() { const module = await loadVuePages(); module.hideEvaluationApp(); }
+async function mountRerankerSettings() { const module = await loadVuePages(); module.mountRerankerSettingsApp("#reranker-settings-root"); }
+window.PL.vuePages = { ...(window.PL.vuePages || {}), mountRerankerSettings };
 window.PL.modules.plugins = { init: initExtensions, onShow: showExtensions, onHide: hideExtensions };
 window.PL.modules.test = { init: initEvaluation, onShow: showEvaluation, onHide: hideEvaluation };
 window.addEventListener("pagehide", () => vuePagesPromise?.then((module) => {
-  module.destroyExtensionsApp(); module.destroyEvaluationApp();
+  module.destroyExtensionsApp(); module.destroyEvaluationApp(); module.destroyRerankerSettingsApp();
 }).catch(() => {}));

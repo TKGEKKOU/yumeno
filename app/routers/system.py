@@ -1,5 +1,4 @@
 import os
-import shutil
 import subprocess
 import threading
 import time
@@ -9,13 +8,11 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from app.routers.settings import require_local
 from app.schemas import DockerSettingsPayload, ShutdownPayload
 from extensions.storage import read_json, write_json
-from integrations.mcp.config import GLOBAL_ALL, MCPServerConfig
 from settings import Settings
 
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 DOCKER_SETTINGS_PATH = Settings.load().project_root / "data" / "docker_settings.json"
-KEYLESS_SERVER_NAME = "free-search"
 
 
 def _docker_settings() -> dict:
@@ -48,72 +45,6 @@ def _mcp_manager(request: Request):
     if manager is None:
         raise HTTPException(status_code=503, detail="MCP 管理器尚未就绪")
     return manager
-
-
-@router.get("/web-search-keyless")
-def web_search_keyless_status(request: Request) -> dict:
-    """返回免 key 搜索当前状态（是否配置、uvx 可用性、连接状态）。"""
-
-    require_local(request)
-    manager = _mcp_manager(request)
-    config = manager.get_config(KEYLESS_SERVER_NAME)
-    status = manager.status().get(KEYLESS_SERVER_NAME, {})
-    return {
-        "enabled": config is not None,
-        "uvx_available": shutil.which("uvx") is not None,
-        "status": status.get("status", "not_loaded"),
-        "tool_count": status.get("tool_count", 0),
-        "error": status.get("error", ""),
-    }
-
-
-@router.post("/web-search-keyless")
-async def web_search_keyless_set(request: Request, payload: dict) -> dict:
-    """启用/关闭内置免 key 搜索（free-search-mcp）；变更即时生效。"""
-
-    require_local(request)
-    manager = _mcp_manager(request)
-    enabled = bool(payload.get("enabled"))
-    servers = manager.list_configs()
-    if enabled:
-        if shutil.which("uvx") is None:
-            raise HTTPException(status_code=422, detail="未检测到 uvx，请先安装 uv")
-        config = MCPServerConfig(
-            name=KEYLESS_SERVER_NAME,
-            transport="stdio",
-            command="uvx",
-            args=[
-                "--from",
-                "free-search-mcp==0.9.2",
-                "--with",
-                "mcp==2.0.0",
-                "free-search-mcp",
-            ],
-            env={
-                "UV_DEFAULT_INDEX": "https://mirrors.aliyun.com/pypi/simple/",
-                "SEARCH_MCP_DOWNLOAD_ENABLED": "false",
-                # 0.4.2 用 pydantic-settings 解析 list 字段，环境变量必须是 JSON 数组
-                "SEARCH_MCP_DEFAULT_ENGINES": '["baidu"]',
-            },
-            enabled=True,
-            description="免 API key 联网搜索（本地优先）",
-            # 平台级基础能力：全局可用（所有现有与新建角色均可见）
-            allowed_persona_ids=[GLOBAL_ALL],
-        )
-        manager.save_configs(
-            [s for s in servers if s.name != KEYLESS_SERVER_NAME] + [config]
-        )
-        await manager.reload_server(KEYLESS_SERVER_NAME)
-    else:
-        remaining = [s for s in servers if s.name != KEYLESS_SERVER_NAME]
-        manager.save_configs(remaining)
-        await manager.disable_server_async(KEYLESS_SERVER_NAME)
-    from agents.mcp_grants import refresh_grants
-    from agents.skills import refresh_skills
-
-    refresh_grants()
-    refresh_skills()
-    return web_search_keyless_status(request)
 
 
 @router.get("/docker-settings")

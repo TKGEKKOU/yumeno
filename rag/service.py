@@ -16,6 +16,7 @@ class RagRequest:
     persona_profile: dict | None = None
     available_tools: tuple[str, ...] = ()
     force_knowledge: bool = False
+    retrieval_config: dict | None = None
 
 
 @dataclass(frozen=True)

@@ -163,6 +163,39 @@ def test_start_boots_server_and_registers_shutdown_callback(tmp_path: Path):
     assert callable(server.app.state.shutdown_callback)
 
 
+def test_start_skips_reranker_when_model_is_not_downloaded(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("ingestion.local_reranker.resources.LocalRerankerResourceManager.status", lambda self: {"installed": False, "ready": False})
+    server = FakeServer(False)
+    api = LauncherApi(tmp_path, FakeDocker(True), server)
+    api._wait_port = lambda port, timeout=120, on_tick=None: True
+    api._wait_http = lambda timeout=15: True
+
+    api.start()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not api.progress()["done"]:
+        time.sleep(0.02)
+
+    assert all(item["key"] != "reranker" for item in api.progress()["steps"])
+
+
+def test_start_warms_downloaded_reranker_without_blocking_on_failure(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("ingestion.local_reranker.resources.LocalRerankerResourceManager.status", lambda self: {"installed": True, "ready": True})
+    server = FakeServer(False)
+    api = LauncherApi(tmp_path, FakeDocker(True), server)
+    api._wait_port = lambda port, timeout=120, on_tick=None: True
+    api._wait_http = lambda timeout=15: True
+    monkeypatch.setattr("ingestion.local_reranker.client.warm_managed_reranker", lambda settings: False)
+
+    api.start()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not api.progress()["done"]:
+        time.sleep(0.02)
+
+    step = next(item for item in api.progress()["steps"] if item["key"] == "reranker")
+    assert step["state"] == "ok"
+    assert "RRF" in step["detail"]
+
+
 def test_do_exit_cleans_up_even_when_step_throws(tmp_path, monkeypatch):
     """do_exit 任一步抛错时，后续清理与窗口销毁仍必须执行。"""
 

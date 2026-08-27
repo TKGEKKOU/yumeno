@@ -20,10 +20,21 @@ from rag.interaction_router import route_interaction
 from rag.persona_chat import describe_capabilities, generate_persona_reply
 from rag.retriever import build_retriever
 from rag.service import RagRequest, RagResult
+from rag.retrieval_config import resolve_retrieval_config
+from rag.candidate_processing import Candidate, deduplicate_candidates
+from rag.reranker import RankedCandidate, rerank_candidates
+from rag.context_assembler import assemble_context
 from rag.web_search import web_search_documents
+from ingestion.embeddings import get_embedding_model
+from ingestion.local_reranker.client import get_managed_reranker
+from ingestion.milvus_store import KnowledgeSpaceScope, MilvusRagStore
 
 
 settings = Settings.load()
+
+# Qwen3-Reranker scores are probabilities for the yes/no relevance decision.
+# A batch whose best score is below this floor is treated as unrelated evidence.
+RERANK_RELEVANCE_THRESHOLD = 0.1
 
 
 # ===== RAG 主流程（Adaptive / Corrective RAG）=====
@@ -73,6 +84,7 @@ class AdaptiveRagState(TypedDict, total=False):
     available_tools: tuple[str, ...]
     interaction_mode: str
     force_knowledge: bool
+    irrelevant_after_rerank: bool
 
 
 def _complete(
@@ -133,7 +145,17 @@ def capability_node(state: AdaptiveRagState) -> AdaptiveRagState:
 # 作用域过滤在 Milvus 服务端下推（见 rag/retriever.py），先过滤再排序。
 def retrieve_node(state: AdaptiveRagState) -> AdaptiveRagState:
     query = state.get("query") or state["question"]
-    documents = build_retriever(state["context"], k=4).invoke(query)
+    retrieval_config = resolve_retrieval_config(state.get("retrieval_config"))
+    documents = build_retriever(state["context"], k=retrieval_config.retrieval_k).invoke(query)
+    try:
+        embedder = get_embedding_model(settings)
+    except Exception:
+        embedder = None
+    dedup = deduplicate_candidates(
+        [Candidate(document, index, "rrf") for index, document in enumerate(documents)],
+        embedder=embedder,
+    )
+    documents = [item.document for item in dedup.candidates]
     return _complete(
         state,
         "retrieve",
@@ -142,6 +164,9 @@ def retrieve_node(state: AdaptiveRagState) -> AdaptiveRagState:
         confidence=0.0,
         confidence_reason="",
         needs_quality_check=True,
+        retrieval_config=retrieval_config,
+        dedup_exact_count=dedup.exact_duplicate_count,
+        dedup_near_count=dedup.near_duplicate_count,
     )
 
 
@@ -150,15 +175,30 @@ def retrieve_node(state: AdaptiveRagState) -> AdaptiveRagState:
 # 让质量门在生成后做 LLM 级校验（高置信则跳过，省一次 LLM 调用）。
 def batch_grade_documents_node(state: AdaptiveRagState) -> AdaptiveRagState:
     documents = state.get("documents", [])
-    score = grade_retrieved_documents(state["question"], documents)
-    filtered = [documents[index] for index in score.relevant_ids]
+    retrieval_config = resolve_retrieval_config(state.get("retrieval_config"))
+    candidates = [Candidate(document, index, "rrf") for index, document in enumerate(documents)]
+    try:
+        reranker = get_managed_reranker(
+            str(settings.project_root.resolve()), settings.reranker_model, settings.reranker_device
+        )
+    except Exception:
+        reranker = None
+    ranked = rerank_candidates(state["question"], candidates, reranker, retrieval_config.rerank_k)
+    scores = [float(item.score) for item in ranked]
+    fallback = any(item.fallback for item in ranked)
+    explicitly_irrelevant = bool(ranked) and not fallback and max(scores) < RERANK_RELEVANCE_THRESHOLD
+    filtered = [] if explicitly_irrelevant else [item.candidate.document for item in ranked]
+    confidence = max(scores) if scores and not fallback else 0.0
     return _complete(
         state,
         "batch_grade_documents",
         documents=filtered,
-        confidence=score.confidence,
-        confidence_reason=score.reason,
-        needs_quality_check=score.confidence < settings.confidence_threshold,
+        confidence=confidence,
+        confidence_reason="Reranker 精排结果" if scores else "没有候选内容",
+        needs_quality_check=confidence < settings.confidence_threshold,
+        rerank_scores=scores,
+        reranker_fallback=fallback,
+        irrelevant_after_rerank=explicitly_irrelevant,
     )
 
 
@@ -175,6 +215,8 @@ def decide_after_batch_grade(
     # 回退顺序固定为：有效本地证据 -> 有界改写 -> 一次联网 -> 保守拒答。
     if state.get("documents"):
         return "generate"
+    if state.get("irrelevant_after_rerank"):
+        return "no_answer"
     if int(state.get("rewrite_count", 0)) < rewrite_limit:
         return "rewrite_query"
     if web_enabled and not state.get("used_web_search", False):
@@ -222,15 +264,50 @@ def decide_after_web_search(state: dict) -> str:
 # 生成节点：结合证据与上一轮质量门的纠错反馈生成答案；
 # 只接收可操作的 missing_points / unsupported_claims，不携带隐藏推理。
 def generate_node(state: AdaptiveRagState) -> AdaptiveRagState:
+    retrieval_config = resolve_retrieval_config(state.get("retrieval_config"))
+    candidates = [Candidate(document, index, "rrf") for index, document in enumerate(state.get("documents", []))]
+    scores = list(state.get("rerank_scores") or [])
+    if len(scores) == len(candidates):
+        ranked = [
+            RankedCandidate(candidate, float(score), index, bool(state.get("reranker_fallback")))
+            for index, (candidate, score) in enumerate(zip(candidates, scores))
+        ]
+    else:
+        ranked = rerank_candidates(state["question"], candidates, None, retrieval_config.rerank_k)
+
+    context = state["context"]
+    def load_neighbors(chunk_ids: list[str]) -> list:
+        store = MilvusRagStore(settings)
+        documents = []
+        for knowledge_space_id in context.knowledge_space_ids:
+            documents.extend(store.load_chunks(KnowledgeSpaceScope(context.workspace_id, knowledge_space_id), chunk_ids))
+        return documents
+
+    assembly = assemble_context(
+        state["question"], ranked, retrieval_config,
+        neighbor_loader=load_neighbors if retrieval_config.allow_neighbors else None,
+    )
     answer = generate_answer(
         state["question"],
-        state.get("documents", []),
+        assembly.documents,
         previous_answer=state.get("previous_answer", ""),
         correction_feedback=state.get("correction_feedback", ""),
         persona_name=state.get("persona_name", "角色"),
         persona_profile=state.get("persona_profile") or {},
     )
-    return _complete(state, "generate", answer=answer, correction_feedback="")
+    return _complete(
+        state,
+        "generate",
+        documents=assembly.documents,
+        answer=answer,
+        correction_feedback="",
+        rerank_count=len(ranked),
+        context_token_count=assembly.token_count,
+        context_truncated=assembly.truncated,
+        context_main_hit_count=assembly.main_hit_count,
+        context_neighbor_count=assembly.neighbor_count,
+        reranker_fallback=any(item.fallback for item in ranked),
+    )
 
 
 def decide_after_generation(state: dict) -> str:
@@ -397,6 +474,7 @@ def run_adaptive(request: RagRequest, on_step: Callable | None = None) -> RagRes
         "question": request.question,
         "query": request.question,
         "context": request.context,
+        "retrieval_config": request.retrieval_config or (request.persona_profile or {}).get("rag"),
         "allow_web_fallback": request.allow_web_fallback,
         "rewrite_count": 0,
         "generation_retry_count": 0,

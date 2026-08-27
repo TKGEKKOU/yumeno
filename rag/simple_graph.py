@@ -8,6 +8,7 @@ from rag.contracts import RagQueryContext
 from rag.generate import generate_answer
 from rag.retriever import build_retriever
 from rag.service import RagRequest, RagResult
+from rag.retrieval_config import resolve_retrieval_config
 
 
 class SimpleRagState(TypedDict, total=False):
@@ -17,10 +18,12 @@ class SimpleRagState(TypedDict, total=False):
     answer: str
     persona_name: str
     persona_profile: dict
+    retrieval_config: dict
 
 
 def retrieve_node(state: SimpleRagState) -> SimpleRagState:
-    documents = build_retriever(state["context"], k=4).invoke(state["question"])
+    config = resolve_retrieval_config(state.get("retrieval_config"))
+    documents = build_retriever(state["context"], k=config.retrieval_k).invoke(state["question"])
     return {**state, "documents": documents}
 
 
@@ -62,6 +65,7 @@ def run_simple(request: RagRequest, on_step: Callable | None = None) -> RagResul
             "context": request.context,
             "persona_name": request.persona_name,
             "persona_profile": request.persona_profile or {},
+            "retrieval_config": request.retrieval_config,
         }
     )
     documents = state.get("documents") or []

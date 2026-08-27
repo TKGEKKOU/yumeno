@@ -3,6 +3,25 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+ProviderKind = Literal["llm", "embedding", "asr", "reranker"]
+
+class ProviderResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    kind: ProviderKind
+    name: str
+    provider: str
+    enabled: bool = True
+    configured: bool = False
+    ready: bool = False
+    status_text: str = ""
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProviderListResponse(BaseModel):
+    providers: list[ProviderResponse]
+
 
 class PersonaCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")

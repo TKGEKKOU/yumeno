@@ -1,0 +1,21 @@
+[
+  {
+    "id": "ff0085f56747554997acebb0f22b4363",
+    "name": "unknown",
+    "status": "needs_configuration",
+    "engine": "gpt_sovits",
+    "gpt_weights_path": "D:\\CodePython\\YUMENO\\.tmp-pytest-voice-ui-full2\\test_unknown_language_is_not_s0\\voices\\unknown\\gpt.ckpt",
+    "sovits_weights_path": "D:\\CodePython\\YUMENO\\.tmp-pytest-voice-ui-full2\\test_unknown_language_is_not_s0\\voices\\unknown\\sovits.pth",
+    "refer_audio_path": "D:\\CodePython\\YUMENO\\.tmp-pytest-voice-ui-full2\\test_unknown_language_is_not_s0\\voices\\unknown\\ref.wav",
+    "reference_language": "",
+    "reference_text": "",
+    "dataset_dir": "D:\\CodePython\\YUMENO\\.tmp-pytest-voice-ui-full2\\test_unknown_language_is_not_s0\\voices\\unknown",
+    "training_stage": "外部音色已导入",
+    "error_message": "",
+    "training_preset": "standard",
+    "gpt_epochs": 15,
+    "sovits_epochs": 30,
+    "training_progress": null,
+    "dir_name": "unknown"
+  }
+]

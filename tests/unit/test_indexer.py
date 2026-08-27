@@ -32,6 +32,21 @@ def test_changed_document_deletes_only_same_space(tmp_path):
     assert {doc.metadata["knowledge_space_id"] for doc in store.added} == {"space-a"}
 
 
+def test_explicit_chunking_preset_uses_semantic_chunks(tmp_path, monkeypatch):
+    path = tmp_path / "guide.md"
+    path.write_text("# Guide\n\n第一段内容。" * 30, encoding="utf-8")
+    scope = DocumentScope("local-default", "space-a", "doc-a")
+    store = FakeStore()
+
+    monkeypatch.setattr("ingestion.indexer.get_embedding_model", lambda settings: None)
+    inserted = ingest_markdown_file(path, scope, store=store, chunking_preset="knowledge_base")
+
+    assert inserted == len(store.added)
+    assert store.added
+    assert all(doc.metadata["chunking_preset"] == "knowledge_base" for doc in store.added)
+    assert all("previous_chunk_id" in doc.metadata for doc in store.added)
+
+
 class _CleanupStore:
     def __init__(self):
         self.deleted = []

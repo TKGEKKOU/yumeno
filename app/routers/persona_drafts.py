@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_session
 from app.models import KnowledgeSpace, Persona, PersonaDraft
 from app.schemas import PersonaDraftResponse, PersonaDraftUpdate, PersonaResponse
+from settings import Settings
 from ingestion.document_jobs import create_conversion_job, index_document_job, prepare_index
 from persona.drafts import (
     analyze_materials,
@@ -95,6 +96,12 @@ async def upload_draft(
             raise HTTPException(status_code=code, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+    preset = "character" if mode == "character" else "knowledge_base"
+    for job in jobs:
+        job.document_type = mode
+        job.chunking_preset = preset
+        job.chunker_version = Settings.load().chunker_version
+    session.commit()
     draft.status = "analyzing"
     session.commit()
     session.refresh(draft)

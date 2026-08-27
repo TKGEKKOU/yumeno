@@ -33,3 +33,10 @@ build/
 dist/
 frontend/node_modules/
 PersonaLive.spec
+
+runtime/reranker/
+.planning/
+.pytest-*/
+.tmp-*/
+tmp*.py
+diagrams/

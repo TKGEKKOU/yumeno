@@ -1,0 +1,9 @@
+{
+  "id": "e2caa7ca46624d51a05fff68b06060b2",
+  "name": "voice",
+  "source_name": "source.wav",
+  "state": "failed",
+  "created_at": "2026-08-14T02:18:44.032471+00:00",
+  "updated_at": "2026-08-14T02:18:44.032913+00:00",
+  "error": "插件重载时任务仍在运行，请重新开始"
+}

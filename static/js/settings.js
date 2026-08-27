@@ -52,6 +52,7 @@ function formatBytes(bytes) {
 
 function initSettings() {
   document.body.classList.add("status-cards-collapsed");
+  window.PL.vuePages?.mountRerankerSettings?.();
   bindSettingsEvents();
   prepareSettingsSections();
   loadStatus();

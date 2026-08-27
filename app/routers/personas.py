@@ -12,6 +12,7 @@ from agents.capability_packages import build_capability_packages
 from integrations.mcp.config import GLOBAL_ALL
 from persona.service import LOCAL_WORKSPACE_ID, PersonaNotFound, create_persona
 from settings import Settings
+from rag.retrieval_config import validate_retrieval_config
 
 router = APIRouter(prefix="/api/personas", tags=["personas"])
 
@@ -220,7 +221,13 @@ def update_persona(
     if payload.name is not None:
         persona.name = payload.name
     if payload.profile is not None:
-        persona.profile_json = {**(persona.profile_json or {}), **payload.profile}
+        merged = {**(persona.profile_json or {}), **payload.profile}
+        if "rag" in merged:
+            try:
+                merged["rag"] = validate_retrieval_config(merged["rag"]).__dict__
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail=f"Invalid RAG configuration: {exc}") from exc
+        persona.profile_json = merged
     session.commit()
     session.refresh(persona)
     return persona

@@ -10,6 +10,7 @@ SUPPORTED_EMBEDDING_PROVIDERS = frozenset({"qwen", "managed_local", "custom"})
 SUPPORTED_EMBEDDING_SOURCES = frozenset({"modelscope", "huggingface"})
 SUPPORTED_EMBEDDING_DEVICES = frozenset({"auto", "cuda", "cpu"})
 DEFAULT_LOCAL_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+DEFAULT_LOCAL_RERANKER_MODEL = "Qwen/Qwen3-Reranker-0.6B"
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,10 @@ class Settings:
     embedding_api_key: str
     embedding_base_url: str
     embedding_model: str
+    reranker_model: str
+    reranker_model_source: str
+    reranker_device: str
+    chunker_version: str
 
     @classmethod
     def load(cls, root: Path | None = None) -> "Settings":
@@ -119,4 +124,8 @@ class Settings:
             embedding_api_key=local_get("embedding_api_key", ""),
             embedding_base_url=embedding_base_url,
             embedding_model=local_get("embedding_model", default_embedding_model),
+            reranker_model=local_get("reranker_model", DEFAULT_LOCAL_RERANKER_MODEL),
+            reranker_model_source=local_get("reranker_model_source", "modelscope"),
+            reranker_device=local_get("reranker_device", embedding_device),
+            chunker_version=local_get("chunker_version", "semantic-v1"),
         )

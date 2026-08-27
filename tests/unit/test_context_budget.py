@@ -68,3 +68,17 @@ def test_context_budget_is_deterministic_for_long_conversations():
         message.content for message in second.messages
     ]
     assert first.tokens_after == second.tokens_after
+
+
+def test_bounded_context_removes_orphan_tool_messages():
+    messages = [
+        HumanMessage(content="old question"),
+        ToolMessage(content="orphan", tool_call_id="missing-call"),
+        AIMessage(content="old answer"),
+        HumanMessage(content="current question"),
+    ]
+
+    result = build_bounded_context(messages, ContextBudget(max_tokens=600))
+
+    assert not any(isinstance(message, ToolMessage) for message in result.messages)
+    assert isinstance(result.messages[-1], HumanMessage)

@@ -31,6 +31,7 @@ def test_web_search_requires_explicit_request_or_external_fact():
     assert is_explicit_web_search_question("今天我很累") is False
     assert is_explicit_web_search_question("工具怎么用") is False
     assert is_explicit_web_search_question("查一下角色资料") is False
+    assert is_explicit_web_search_question("直接搜薇欧拉") is True
 
 
 def test_rag_insufficient_requests_confirmation_without_search(monkeypatch):
@@ -91,6 +92,42 @@ def test_rag_confirmation_runs_one_batch_search_and_hides_payload(monkeypatch):
     answer = result["messages"][-1].content
     assert "结果一" in answer and "事实二" in answer
     assert '"title"' not in answer
+
+
+def test_explicit_web_request_skips_rag_fallback_confirmation(monkeypatch):
+    from agents.intent_funnel import analyze_intents
+    from agents.workflow import _knowledge_workflow
+
+    context = PersonaAgentContext(
+        persona_id="persona-a", workspace_id="local-default", knowledge_space_ids=("space-a",),
+        conversation_id="thread-a", persona_name="Ames", persona_type="character",
+    )
+    monkeypatch.setattr(
+        "agents.workflow.request_confirmation",
+        lambda action: (_ for _ in ()).throw(AssertionError("explicit web must not confirm")),
+    )
+    calls = []
+    run = _knowledge_workflow(
+        lambda query, ctx: {"status": "insufficient", "answer": "", "evidence": []},
+        lambda ctx, sql: {},
+        web_search_executor=lambda query, ctx: calls.append(query) or [
+            {"title": "结果", "content": "薇欧拉资料", "url": "https://example.test"}
+        ],
+    )
+    intent = analyze_intents("直接搜薇欧拉")
+
+    result = run(
+        {
+            "worker_request": "直接搜薇欧拉",
+            "worker_call_id": "call-1",
+            "messages": [],
+            "intent_decision": intent.to_state(),
+        },
+        SimpleNamespace(context=context),
+    )
+
+    assert calls == ["直接搜薇欧拉"]
+    assert "薇欧拉资料" in result["messages"][-1].content
 
 
 def test_internal_tool_payload_is_removed_from_final_answer():
@@ -158,6 +195,30 @@ def test_confirmed_search_prefers_keyless_batch_tool(monkeypatch):
 
     assert called == ["search"]
     assert result[0]["title"] == "search"
+
+
+def test_confirmed_search_uses_configured_key_provider_without_tool_runtime(monkeypatch):
+    from langchain_core.documents import Document
+    from agents.workflow import _default_web_search_executor
+
+    monkeypatch.setattr(
+        "agents.workflow.tool_specs",
+        lambda: [SimpleNamespace(name="web_search", specialist="web")],
+    )
+    monkeypatch.setattr(
+        "agents.workflow.web_search_documents",
+        lambda query, recent=True: [
+            Document(page_content="weather result", metadata={"title": "Tavily", "source": "https://example.com"})
+        ],
+    )
+    context = PersonaAgentContext(
+        persona_id="persona-a", workspace_id="local-default", knowledge_space_ids=("space-a",),
+        conversation_id="thread-a", persona_name="Ames", persona_type="character",
+    )
+
+    result = _default_web_search_executor("今天潍坊天气", context)
+
+    assert result == [{"content": "weather result", "title": "Tavily", "source": "https://example.com"}]
 
 
 def test_real_graph_pauses_before_rag_fallback_search():
@@ -686,7 +747,8 @@ def test_web_search_returns_guidance_when_no_key_configured(monkeypatch):
     )
     result = web.web_search.func("测试", None)
     text = str(result)
-    assert "web-research" in text
+    assert "API key" in text
+    assert "web-research" not in text
     assert "未配置" in text
 
 
@@ -1003,3 +1065,34 @@ def test_stream_query_emits_stage_token_and_result():
     assert "stage" in kinds
     assert "token" in kinds
     assert "result" in kinds
+
+
+def test_knowledge_search_forwards_public_rag_steps():
+    from agents.tools.knowledge import run_persona_knowledge_search
+
+    seen = []
+
+    class FakeRagService:
+        def query(self, request, on_step=None):
+            del request
+            if on_step:
+                on_step("retrieve", {"documents": [1, 2, 3]})
+            return RagResult.empty("none")
+
+    context = PersonaAgentContext(
+        persona_id="persona-a",
+        workspace_id="local-default",
+        knowledge_space_ids=("space-a",),
+        conversation_id="thread-a",
+        persona_name="Alpha",
+        persona_type="character",
+    )
+
+    run_persona_knowledge_search(
+        "facts",
+        context,
+        FakeRagService(),
+        on_step=lambda node, state: seen.append((node, state)),
+    )
+
+    assert seen == [("retrieve", {"documents": [1, 2, 3]})]

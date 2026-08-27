@@ -67,6 +67,24 @@ def upgrade_voice_asset_schema(engine: Engine) -> None:
             )
 
 
+def upgrade_document_job_schema(engine: Engine) -> None:
+    """Add semantic-index metadata to existing supported databases."""
+    inspector = inspect(engine)
+    if "document_jobs" not in inspector.get_table_names():
+        return
+    additions = {
+        "document_type": "VARCHAR(32) NULL",
+        "chunking_preset": "VARCHAR(32) NULL",
+        "chunker_version": "VARCHAR(64) NULL",
+        "index_version": "VARCHAR(64) NULL",
+    }
+    existing = {column["name"] for column in inspector.get_columns("document_jobs")}
+    with engine.begin() as connection:
+        for name, definition in additions.items():
+            if name not in existing:
+                connection.execute(text(f"ALTER TABLE document_jobs ADD COLUMN {name} {definition}"))
+
+
 def get_session(request: Request) -> Generator[Session, None, None]:
     session_factory: sessionmaker[Session] = request.app.state.session_factory
     with session_factory() as session:

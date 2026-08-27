@@ -13,8 +13,8 @@ from desktop.server_manager import ServerManager
 from settings import Settings
 
 
-_STEP_ORDER = ("docker", "containers", "milvus", "attu", "service", "gpt_sovits")
-_STEP_WEIGHTS = {"docker": 0.15, "containers": 0.38, "milvus": 0.62, "attu": 0.80, "service": 0.93, "gpt_sovits": 0.97}
+_STEP_ORDER = ("docker", "containers", "milvus", "attu", "service", "reranker", "gpt_sovits")
+_STEP_WEIGHTS = {"docker": 0.15, "containers": 0.38, "milvus": 0.62, "attu": 0.80, "service": 0.90, "reranker": 0.95, "gpt_sovits": 0.98}
 
 
 class LauncherApi:
@@ -47,6 +47,17 @@ class LauncherApi:
             "service": {"label": "本地服务", "state": "pending", "detail": "准备中"},
             "gpt_sovits": {"label": "GPT-SoVITS", "state": "pending", "detail": "准备中"},
         }
+        try:
+            from ingestion.local_reranker.resources import LocalRerankerResourceManager
+
+            reranker_status = LocalRerankerResourceManager(self.project_root).status()
+            if reranker_status.get("installed") and reranker_status.get("ready"):
+                service_index = list(self._steps).index("service") + 1
+                items = list(self._steps.items())
+                items.insert(service_index, ("reranker", {"label": "Reranker", "state": "pending", "detail": "准备中"}))
+                self._steps = dict(items)
+        except Exception:
+            pass
 
     def bind_window(self, window) -> None:
         self._window = window
@@ -188,6 +199,8 @@ class LauncherApi:
             return 100
         base = 0.0
         for key in _STEP_ORDER:
+            if key not in self._steps:
+                continue
             weight = _STEP_WEIGHTS[key]
             state = self._steps[key]["state"]
             if state == "ok":
@@ -354,6 +367,7 @@ class LauncherApi:
                 raise RuntimeError("本地服务健康检查未通过，请稍后重试")
             self._register_shutdown_callback()
             self._set_step("service", "ok", "服务已就绪")
+            self._start_reranker_if_needed()
             self._start_gpt_sovits_if_needed()
             self._start_result = {"ok": True, "url": self.server.url}
         except Exception as exc:
@@ -361,6 +375,27 @@ class LauncherApi:
             self._start_result = {"ok": False, "error": str(exc)}
         finally:
             self._start_done = True
+
+    def _start_reranker_if_needed(self) -> None:
+        """Warm the managed reranker only when its local resources exist."""
+
+        if "reranker" not in self._steps:
+            return
+        try:
+            from ingestion.local_reranker.client import warm_managed_reranker
+            from ingestion.local_reranker.resources import LocalRerankerResourceManager
+
+            status = LocalRerankerResourceManager(self.project_root).status()
+            if not status.get("installed") or not status.get("ready"):
+                self._steps.pop("reranker", None)
+                return
+            self._set_step("reranker", "running", "正在预热 Reranker 精排模型…")
+            if warm_managed_reranker(self.settings):
+                self._set_step("reranker", "ok", "Reranker 已在后台就绪")
+            else:
+                self._set_step("reranker", "ok", "Reranker 预热失败（查询将使用 RRF）")
+        except Exception:
+            self._set_step("reranker", "ok", "Reranker 暂不可用（查询将使用 RRF）")
 
     def _start_gpt_sovits_if_needed(self) -> None:
         """Start the GPT-SoVITS API service from the launch page when the

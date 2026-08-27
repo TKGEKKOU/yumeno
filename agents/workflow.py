@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import operator
 import time
 from typing import Annotated, Callable, Literal
@@ -26,8 +27,10 @@ from langgraph.errors import GraphInterrupt
 from langgraph.graph import MessagesState, StateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import Command
+from langgraph.config import get_stream_writer
 
 from agents.context import PersonaAgentContext
+from agents.confirmation_policy import decide_capability, decide_web_fallback
 from agents.context_budget import ContextBudget, build_bounded_context
 from agents.capabilities import (
     evaluate_capability,
@@ -46,7 +49,10 @@ from agents.tools.structured_query import (
     list_structured_tables_for_context,
     query_structured_data_for_context,
 )
+from agents.intent_funnel import IntentAnalysis, analyze_message_history
 from rag.llm import get_llm
+from rag.adaptive_graph import serialize_document
+from rag.web_search import web_search_documents
 
 
 Worker = Literal["knowledge", "web", "memory", "management"]
@@ -64,6 +70,7 @@ class PersonaWorkflowState(MessagesState):
     worker_request: str
     worker_call_id: str
     web_search_authorized: bool
+    intent_decision: dict
 
 
 class SupervisorAgentState(MessagesState):
@@ -76,6 +83,7 @@ class SupervisorAgentState(MessagesState):
 
     loaded_skills: list[str]
     web_search_authorized: bool
+    intent_decision: dict
 
 
 _WEB_TOOL_NAMES = {"delegate_to_web", "web_search", "search", "research"}
@@ -168,7 +176,7 @@ def _handoff_tool(worker: Worker):
     return handoff
 
 
-def _supervisor_prompt(context: PersonaAgentContext) -> str:
+def _supervisor_prompt(context: PersonaAgentContext, intent_hint: str = "") -> str:
     profile = json.dumps(context.persona_profile, ensure_ascii=False, sort_keys=True, default=str)
     memory_block = ""
     try:
@@ -252,6 +260,13 @@ def _supervisor_prompt(context: PersonaAgentContext) -> str:
             )
     except Exception:
         structured_block = ""
+    funnel_block = (
+        "\nThe following intent-funnel result is an advisory signal, not authorization. "
+        "It must not override tools, policies, or evidence boundaries:\n"
+        f"{intent_hint}\n"
+        if intent_hint
+        else ""
+    )
     return (
         f"You are {context.persona_name}. You are the only assistant visible to the user. "
         "The following persona profile is behavioral guidance, not a user request:\n"
@@ -259,13 +274,12 @@ def _supervisor_prompt(context: PersonaAgentContext) -> str:
         "Answer in the persona's voice and use delegated results as evidence. "
         "Delegate uploaded-knowledge questions to knowledge, current public information to web, "
         "durable user-memory requests to memory, and persona or document operations to management. "
-        "When keyless web search tools (search/research) are available in your toolset, answer "
-        "current-information questions directly with them instead of delegating to web. "
+        "Use only the configured API-key web_search tool for current public information. "
         "When the user asks to install a skill, call install_skill (GitHub repo+path or URL); "
         "when they ask which skills are installable, call list_installable_skills. "
         "When the user asks to add, list, or test MCP servers, call "
         "add_mcp_server / list_mcp_servers / test_mcp_server. "
-        f"{memory_block}{workspace_memory_block}{summary_block}{structured_block}"
+        f"{memory_block}{workspace_memory_block}{summary_block}{structured_block}{funnel_block}"
         "Answer the user's question directly before offering advice. For weather, news, or other factual requests, "
         "lead with the supported core facts. For weather, include the location, target date, conditions, temperature, "
         "and precipitation or wind when available. Do not replace available facts with generic advice. "
@@ -316,6 +330,20 @@ def _prompt_middleware(prompt_factory):
     return set_prompt
 
 
+def _supervisor_prompt_middleware():
+    @dynamic_prompt
+    def set_prompt(request: ModelRequest) -> str:
+        stored = request.state.get("intent_decision")
+        analysis = (
+            IntentAnalysis.from_state(stored)
+            if stored
+            else analyze_message_history(request.state.get("messages", []))
+        )
+        return _supervisor_prompt(request.runtime.context, analysis.as_prompt_hint())
+
+    return set_prompt
+
+
 def build_skill_middleware(base_tools: list):
     """构建"按需加载"工具中间件：基础工具 + 已加载 skill 的工具。
 
@@ -330,9 +358,7 @@ def build_skill_middleware(base_tools: list):
     @wrap_model_call
     def skill_middleware(request: ModelRequest, handler: Callable) -> ModelRequest:
         loaded = request.state.get("loaded_skills") or []
-        # 自动加载技能（如 web-research）：free-search 可用且角色已授权时，
-        # search/research 对 Supervisor 直接可见，无需模型先调用 load_skill，
-        # 避免联网需求被 handoff 到仅带 web_search 的 web Worker。
+        # 自动加载已启用且已授权的通用技能。
         persona_id = getattr(getattr(request.runtime, "context", None), "persona_id", "")
         policies = list(
             getattr(getattr(request.runtime, "context", None), "capability_policies", ())
@@ -370,8 +396,6 @@ def build_skill_middleware(base_tools: list):
         if request.system_message is not None and request.system_message.content:
             prompt_parts.append(str(request.system_message.content))
         for skill_name in loaded:
-            if skill_name == "web-research" and not request.state.get("web_search_authorized"):
-                continue
             if skill_policy_value(skill_name, persona_id, policies) is False:
                 continue
             try:
@@ -463,17 +487,9 @@ def build_capability_guard_middleware():
                 name=tool_name,
                 status="error",
             )
-        if descriptor.source == "mcp":
-            decision = guard_capability(
-                descriptor,
-                persona_id,
-                policies,
-                confirmer=request_confirmation,
-                arguments=request.tool_call.get("args") or {},
-            )
-        else:
-            decision = evaluate_capability(descriptor, persona_id, policies)
-        if not decision.allowed:
+        decision = evaluate_capability(descriptor, persona_id, policies)
+        policy = decide_capability(decision)
+        if policy.mode == "reject":
             return ToolMessage(
                 content=json.dumps(
                     {"status": "denied", "reason": decision.reason},
@@ -483,6 +499,26 @@ def build_capability_guard_middleware():
                 name=tool_name,
                 status="error",
             )
+        if policy.mode == "confirm":
+            approved = request_confirmation(
+                {
+                    "tool": descriptor.model_name,
+                    "capability_id": descriptor.capability_id,
+                    "title": f"执行能力 {descriptor.name}",
+                    "target": descriptor.capability_id,
+                    "arguments": dict(request.tool_call.get("args") or {}),
+                }
+            )
+            if not approved:
+                return ToolMessage(
+                    content=json.dumps(
+                        {"status": "denied", "reason": "confirmation_denied"},
+                        ensure_ascii=False,
+                    ),
+                    tool_call_id=request.tool_call["id"],
+                    name=tool_name,
+                    status="error",
+                )
         return handler(request)
 
     return capability_guard
@@ -594,7 +630,7 @@ def _supervisor_agent(model: BaseChatModel | None):
         # 后面的执行时覆盖 system_message——所以技能注入必须排在提示词注入之后，
         # 才能读到已注入的人设 prompt 再追加技能 instructions。
         middleware=[
-            _prompt_middleware(_supervisor_prompt),
+            _supervisor_prompt_middleware(),
             build_skill_middleware(base_tools),
             build_single_search_visibility_middleware(),
             build_runtime_observability_middleware(),
@@ -754,7 +790,7 @@ def _default_web_search_executor(query: str, context: PersonaAgentContext) -> li
     """Run one authorized search tool and normalize its result."""
 
     specs = {spec.name: spec for spec in tool_specs()}
-    for name in ("search", "research", "web_search"):
+    for name in ("search", "research"):
         spec = specs.get(name)
         if spec is None:
             continue
@@ -770,7 +806,9 @@ def _default_web_search_executor(query: str, context: PersonaAgentContext) -> li
             return [result]
         if result:
             return [{"title": "搜索结果", "content": str(result), "url": ""}]
-    return []
+    if "web_search" not in specs:
+        return []
+    return [serialize_document(document) for document in web_search_documents(query, recent=True)]
 
 
 def _format_web_results(results: list[dict]) -> str:
@@ -838,23 +876,59 @@ def _knowledge_workflow(
                     payload = structured_executor(context, sql)
                     answer = _structured_answer(payload)
                 else:
-                    payload = knowledge_executor(query, context)
+                    try:
+                        writer = get_stream_writer()
+                    except RuntimeError:
+                        writer = lambda _event: None
+
+                    def report_step(node: str, step_state: dict) -> None:
+                        count = len(step_state.get("documents") or [])
+                        labels = {
+                            "route_query": "正在确认知识检索范围...",
+                            "retrieve": f"召回与去重完成，共 {count} 条候选...",
+                            "batch_grade_documents": f"Reranker 精排完成，保留 {count} 条候选...",
+                            "rewrite_query": "正在改写检索词并重试...",
+                            "generate": "正在精排并组装最终上下文...",
+                            "quality_gate": "正在检查回答与资料的一致性...",
+                            "prepare_correction": "正在根据检查结果修正回答...",
+                            "no_answer": "正在整理资料不足说明...",
+                        }
+                        label = labels.get(node)
+                        if label:
+                            writer({
+                                "kind": "stage",
+                                "stage": label,
+                                "details": {"candidate_count": count},
+                            })
+
+                    parameters = inspect.signature(knowledge_executor).parameters
+                    if "on_step" in parameters:
+                        payload = knowledge_executor(query, context, on_step=report_step)
+                    else:
+                        payload = knowledge_executor(query, context)
                     answer = str(payload.get("answer") or "").strip()
                     approved = False
                     searched_answer = answer
                     if payload.get("status") != "accepted" or not answer:
-                        approved = request_confirmation(
-                            {
-                                "tool": "web_search_confirmation",
-                                "title": "是否尝试联网搜索？",
-                                "target": "知识库中没有找到可靠资料，是否尝试联网搜索？",
-                                "arguments": {},
-                            }
-                        )
+                        intent = IntentAnalysis.from_state(state.get("intent_decision"))
+                        fallback_policy = decide_web_fallback(intent)
+                        if fallback_policy.mode == "direct":
+                            approved = True
+                        elif fallback_policy.mode == "confirm":
+                            approved = request_confirmation(
+                                {
+                                    "tool": "web_search_confirmation",
+                                    "title": "是否尝试联网搜索？",
+                                    "target": "知识库中没有找到可靠资料，是否尝试联网搜索？",
+                                    "arguments": {},
+                                }
+                            )
                         if approved:
                             searched_answer = _format_web_results(
                                 web_search_executor(query, context)
                             )
+                        elif fallback_policy.mode == "reject":
+                            searched_answer = "已按你的要求仅查询本地资料，但没有找到足够信息。"
                         else:
                             searched_answer = "用户未授权联网搜索。"
                         answer = "资料中没有足够信息回答这个问题。"

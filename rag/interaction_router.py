@@ -3,21 +3,10 @@ from typing import Literal
 from langchain_core.prompts import ChatPromptTemplate
 
 from rag.llm import invoke_llm
+from agents.intent_funnel import analyze_intents
 
 
 InteractionMode = Literal["conversation", "capability", "knowledge", "web"]
-
-# 路由信号分四类，按"成本从低到高"依次匹配：
-# 关键词命中直接返回（零 LLM 调用）；都不命中才走 LLM 兜底分类（classify_ambiguous）。
-# 这种"规则优先、LLM 兜底"的分层路由把高频简单意图的延迟与成本降到最低。
-CAPABILITY_SIGNALS = ("tool", "工具", "能力", "能调用", "会调用", "可以调用")
-LOCAL_SIGNALS = ("资料", "文档", "知识库", "上传", "报告", "根据内容", "根据设定")
-CONVERSATION_SIGNALS = (
-    "你好", "您好", "嗨", "在吗", "早上好", "晚上好", "谢谢", "再见",
-    "你是谁", "介绍自己", "你喜欢", "你讨厌", "你觉得", "你想", "你今天",
-    "陪我", "聊聊", "讲个笑话", "心情",
-)
-REALTIME_SIGNALS = ("天气", "新闻", "当前价格", "汇率", "最新政策", "实时", "today", "weather", "news")
 
 ROUTER_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -44,14 +33,15 @@ def classify_ambiguous(question: str) -> Literal["conversation", "knowledge"]:
 
 
 def route_interaction(question: str, enable_web_search: bool) -> InteractionMode:
-    # 路由优先级：能力询问 > 本地资料（knowledge）> 闲聊 > 实时信息（需联网开关）> LLM 兜底。
-    normalized = (question or "").strip().lower()
-    if any(signal in normalized for signal in CAPABILITY_SIGNALS):
-        return "capability"
-    if any(signal in normalized for signal in LOCAL_SIGNALS):
-        return "knowledge"
-    if any(signal in normalized for signal in CONVERSATION_SIGNALS):
-        return "conversation"
-    if enable_web_search and any(signal in normalized for signal in REALTIME_SIGNALS):
+    # 与 Agent 入口共用同一个确定性漏斗：先处理否定与多意图，再按 RAG
+    # 可执行模式选路；复杂歧义仍交给现有 LLM 二分类兜底。
+    analysis = analyze_intents(question)
+    if analysis.primary == "web" and enable_web_search:
         return "web"
+    if analysis.primary in {"management", "memory", "knowledge"}:
+        return "knowledge"
+    if analysis.primary == "capability":
+        return "capability"
+    if analysis.primary == "conversation":
+        return "conversation"
     return classify_ambiguous(question)

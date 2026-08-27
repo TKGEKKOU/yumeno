@@ -31,25 +31,13 @@ from integrations.mcp.config import (
 
 logger = logging.getLogger(__name__)
 
-# uvx 冷启动首次安装 free-search-mcp 依赖（playwright 等约 80 个包）实测约 18s，
-# 网络抖动下可能更久；放宽到 90s，避免初始化握手被提前取消导致 BrokenResourceError。
+# MCP stdio 服务冷启动可能需要安装依赖；放宽握手时间，避免初始化被提前取消。
 CONNECT_TIMEOUT_SECONDS = 90
 MCP_TOOL_TIMEOUT_SECONDS = 60
 
 
-_FREE_SEARCH_ENGINE_HINT = (
-    "\n\n【引擎提示】本服务器默认已启用国内可直接访问的百度引擎。调用 search / research 时"
-    "不要手动传 engines 参数——尤其不要传 duckduckgo、mojeek、googlenews、bing、startpage、"
-    "brave、google、searx 等引擎，它们在国内网络下会长时间超时并返回空结果。"
-    '只有需要搜索 B 站视频时才传 engines=["bilibili"]。'
-)
-
-
-def _patch_free_search_description(name: str, description: str, server: str = "") -> str:
-    """修正 free-search 服务端工具描述中的引擎误导。"""
-
-    if server == "free-search" and name in {"search", "research"}:
-        return description + _FREE_SEARCH_ENGINE_HINT
+def _mcp_tool_description(name: str, description: str, server: str = "") -> str:
+    del name, server
     return description
 
 
@@ -134,7 +122,7 @@ def _tool_info(name: str, server: str, tool: BaseTool) -> MCPToolInfo:
     requires_confirmation, mutates_data = classify_mcp_tool(tool)
     return MCPToolInfo(
         name=name,
-        description=_patch_free_search_description(
+        description=_mcp_tool_description(
             name, str(tool.description or ""), server
         ),
         server=server,
@@ -166,7 +154,7 @@ def _make_sync_tool(
 
     @make_tool(
         original.name,
-        description=_patch_free_search_description(
+        description=_mcp_tool_description(
             original.name, original.description or "", server_name
         ),
     )

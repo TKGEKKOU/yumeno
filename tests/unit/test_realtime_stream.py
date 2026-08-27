@@ -34,6 +34,28 @@ class FakeGraph:
         return SimpleNamespace(values=self._state, interrupts=self._interrupts)
 
 
+def test_explicit_web_query_authorizes_key_search_without_loading_free_skill():
+    captured = {}
+
+    class CapturingGraph(FakeGraph):
+        def stream(self, state, *args, **kwargs):
+            captured.update(state)
+            return iter(())
+
+    service = PersonaAgentService(checkpointer=object())
+    service._workflow = CapturingGraph([], {"messages": [AIMessage(content="done")]})
+
+    events = list(service.stream_query("搜索今天潍坊天气", _context()))
+
+    assert captured["loaded_skills"] == []
+    assert captured["web_search_authorized"] is True
+    assert captured["intent_decision"]["primary"] == "web"
+    assert events[0] == {
+        "kind": "stage",
+        "stage": "已识别为联网查询，正在准备搜索...",
+    }
+
+
 def test_stream_query_yields_only_supervisor_tokens_and_result():
     graph = FakeGraph(
         chunks=[
@@ -64,14 +86,47 @@ def test_stream_query_yields_only_supervisor_tokens_and_result():
     service._workflow = graph
 
     events = list(service.stream_query("普通问题", _context()))
+    assert events[0] == {"kind": "stage", "stage": "正在判断请求类型..."}
     tokens = [event["text"] for event in events if event["kind"] == "token"]
     assert tokens == ["第一句。", "第二句。"]
     assert [event["stage"] for event in events if event["kind"] == "stage"] == [
+        "正在判断请求类型...",
         "联网agent · 正在搜索…"
     ]
     result = events[-1]["result"]
     assert result.status == "completed"
     assert result.answer == "第一句。第二句。"
+
+
+def test_stream_query_forwards_custom_rag_stages():
+    graph = FakeGraph(
+        chunks=[
+            (("knowledge_worker:x",), "custom", {"kind": "stage", "stage": "正在召回候选内容..."}),
+        ],
+        state={"messages": [AIMessage(content="完成")], "active_worker": None, "loaded_skills": []},
+    )
+    service = PersonaAgentService(checkpointer=object())
+    service._workflow = graph
+
+    events = list(service.stream_query("问题", _context()))
+
+    assert {"kind": "stage", "stage": "正在召回候选内容..."} in events
+
+
+def test_stream_query_converts_non_provider_execution_error_to_visible_result():
+    class FailingGraph(FakeGraph):
+        def stream(self, *args, **kwargs):
+            raise TimeoutError("graph execution timed out")
+
+    service = PersonaAgentService(checkpointer=object())
+    service._workflow = FailingGraph([], {"messages": []})
+
+    events = list(service.stream_query("问题", _context()))
+
+    assert events[0]["kind"] == "stage"
+    assert events[-1]["kind"] == "result"
+    assert events[-1]["result"].status == "degraded"
+    assert "超时" in events[-1]["result"].answer
 
 
 def test_stream_query_hides_dsml_protocol_split_across_tokens():

@@ -70,6 +70,19 @@ def test_get_and_update_persona_profile(client):
     assert client.get(f"/api/personas/{persona['id']}").json()["name"] == "Beta"
 
 
+def test_persona_rag_configuration_round_trip_and_validation(client):
+    persona = client.post("/api/personas", json={"name": "Configured"}).json()
+    updated = client.patch(
+        f"/api/personas/{persona['id']}",
+        json={"profile": {"rag": {"profile": "custom", "retrieval_k": 16, "rerank_k": 6, "final_context_k": 5, "evidence_token_budget": 3000, "allow_neighbors": False}}},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["profile"]["rag"]["retrieval_k"] == 16
+    assert updated.json()["profile"]["rag"]["profile"] == "custom"
+    invalid = client.patch(f"/api/personas/{persona['id']}", json={"profile": {"rag": {"profile": "custom", "retrieval_k": 3, "rerank_k": 8}}})
+    assert invalid.status_code == 422
+
+
 def test_persona_capability_overrides_round_trip(client):
     persona = client.post("/api/personas", json={"name": "Capability"}).json()
     url = f"/api/personas/{persona['id']}/capabilities"

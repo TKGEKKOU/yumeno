@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Iterable
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
 
 @dataclass(frozen=True)
@@ -75,6 +75,27 @@ def _conversation_blocks(messages: list[BaseMessage]) -> list[list[BaseMessage]]
     return blocks
 
 
+def _drop_orphan_tool_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+    pending: set[str] = set()
+    valid: list[BaseMessage] = []
+    for message in messages:
+        if isinstance(message, AIMessage):
+            pending.update(
+                str(call.get("id"))
+                for call in (message.tool_calls or [])
+                if call.get("id")
+            )
+            valid.append(message)
+            continue
+        if isinstance(message, ToolMessage):
+            call_id = str(message.tool_call_id or "")
+            if call_id not in pending:
+                continue
+            pending.discard(call_id)
+        valid.append(message)
+    return valid
+
+
 def build_bounded_context(
     messages: Iterable[BaseMessage],
     budget: ContextBudget | None = None,
@@ -106,7 +127,9 @@ def build_bounded_context(
         break
 
     kept_blocks = list(reversed(kept_reversed))
-    kept = system_messages + [message for block in kept_blocks for message in block]
+    kept = _drop_orphan_tool_messages(
+        system_messages + [message for block in kept_blocks for message in block]
+    )
     tokens_after = estimate_messages_tokens(kept)
     return BoundedContext(
         messages=tuple(kept),
