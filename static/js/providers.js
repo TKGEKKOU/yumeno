@@ -86,6 +86,9 @@ function renderProvidersByCategory(category) {
   gridEl.querySelectorAll(".provider-toggle input").forEach(toggle => {
     toggle.addEventListener("change", (e) => handleToggleChange(e.target.dataset.providerId, e.target.checked));
   });
+  
+  // 为每个卡片设置拖拽功能
+  gridEl.querySelectorAll(".provider-card").forEach(card => setupCardDrag(card));
 }
 
 async function handleToggleChange(providerId, enabled) {
