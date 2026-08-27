@@ -12,7 +12,7 @@ async def test_llm_provider(api_key: str, base_url: str, model: str) -> Dict[str
             response = await client.post(
                 f"{base_url.rstrip('/')}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {api_key}",
+                    "Authorization": (f"Bearer {api_key}" if api_key else ""),
                     "Content-Type": "application/json",
                 },
                 json={
@@ -36,7 +36,7 @@ async def test_embedding_provider(api_key: str, base_url: str, model: str) -> Di
             response = await client.post(
                 f"{base_url.rstrip('/')}/embeddings",
                 headers={
-                    "Authorization": f"Bearer {api_key}",
+                    "Authorization": (f"Bearer {api_key}" if api_key else ""),
                     "Content-Type": "application/json",
                 },
                 json={
@@ -96,7 +96,7 @@ async def test_reranker_provider(api_key: str, base_url: str, model: str) -> Dic
             response = await client.post(
                 f"{base_url.rstrip('/')}/rerank",
                 headers={
-                    "Authorization": f"Bearer {api_key}",
+                    "Authorization": (f"Bearer {api_key}" if api_key else ""),
                     "Content-Type": "application/json",
                 },
                 json={
