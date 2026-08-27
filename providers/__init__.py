@@ -1,4 +1,4 @@
-"""
+﻿"""
 YUMENO Provider System - 完整提供商配置
 支持 LLM、Embedding、Reranker、STT、TTS、WebSearch
 """
@@ -41,7 +41,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="OpenAI 兼容 API",
         default_base_url="https://api.openai.com/v1",
-        default_model="gpt-4o-mini",
+        default_model="gpt-4o",
         supports_streaming=True,
         icon="bot"
     ),
@@ -51,7 +51,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="DeepSeek Responses",
         default_base_url="https://api.deepseek.com",
-        default_model="deepseek-chat",
+        default_model="deepseek-reasoner",
         supports_streaming=True,
         icon="brain"
     ),
@@ -61,7 +61,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="智谱 GLM 系列模型",
         default_base_url="https://open.bigmodel.cn/api/paas/v4",
-        default_model="glm-5.3-flash",
+        default_model="glm-4-plus",
         supports_streaming=True,
         icon="zap"
     ),
@@ -71,7 +71,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="阿里云通义千问大模型",
         default_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        default_model="qwen-plus",
+        default_model="qwen-max",
         supports_streaming=True,
         icon="cloud"
     ),
@@ -81,7 +81,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="Google Gemini 模型",
         default_base_url="https://generativelanguage.googleapis.com/v1beta",
-        default_model="gemini-1.5-flash",
+        default_model="gemini-2.0-flash-exp",
         supports_streaming=True,
         icon="sparkles"
     ),
@@ -91,7 +91,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="Claude 系列模型",
         default_base_url="https://api.anthropic.com",
-        default_model="claude-3-5-sonnet-20241022",
+        default_model="claude-3-7-sonnet-20250219",
         supports_streaming=True,
         icon="message-square"
     ),
@@ -101,7 +101,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="Moonshot Kimi 长文本模型",
         default_base_url="https://api.moonshot.cn/v1",
-        default_model="moonshot-v1-8k",
+        default_model="moonshot-v1-32k",
         supports_streaming=True,
         icon="moon"
     ),
@@ -111,7 +111,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="Moonshot AI",
         default_base_url="https://api.moonshot.cn/v1",
-        default_model="moonshot-v1-8k",
+        default_model="moonshot-v1-32k",
         supports_streaming=True,
         icon="moon-star"
     ),
@@ -121,7 +121,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="MiniMax 大模型",
         default_base_url="https://api.minimax.chat/v1",
-        default_model="abab6.5s-chat",
+        default_model="abab6.5g-chat",
         supports_streaming=True,
         icon="maximize"
     ),
@@ -131,7 +131,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="MiniMax 令牌计费",
         default_base_url="https://api.minimax.chat/v1",
-        default_model="abab6.5s-chat",
+        default_model="abab6.5g-chat",
         supports_streaming=True,
         icon="coins"
     ),
@@ -171,7 +171,7 @@ LLM_PROVIDERS = {
         type=ProviderType.LLM,
         description="本地部署的 Ollama 服务",
         default_base_url="http://127.0.0.1:11434",
-        default_model="qwen2.5:7b",
+        default_model="qwen2.5:14b",
         requires_api_key=False,
         supports_streaming=True,
         icon="hard-drive"
@@ -186,7 +186,7 @@ EMBEDDING_PROVIDERS = {
         type=ProviderType.EMBEDDING,
         description="OpenAI 官方向量模型",
         default_base_url="https://api.openai.com/v1",
-        default_model="text-embedding-3-small",
+        default_model="text-embedding-3-large",
         icon="align-justify"
     ),
     "gemini_embedding": ProviderMetadata(

@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 window.PL = window.PL || { modules: {} };
 
@@ -65,7 +65,6 @@ function renderProvidersByCategory(category) {
     const statusClass = provider.is_configured ? 'is-configured' : 'is-unconfigured';
     return `<article class="provider-card ${activeClass}" data-provider-id="${provider.id}">
       <div class="provider-card-header">
-        <span class="drag-handle" title="拖动排序"><i data-lucide="grip-vertical"></i></span>
         <h3 class="provider-name">${escapeHtml(provider.name)}</h3>
         <label class="provider-toggle" onclick="event.stopPropagation()">
           <input type="checkbox" ${provider.is_active ? 'checked' : ''} ${!provider.is_configured ? 'disabled' : ''} data-provider-id="${provider.id}">
@@ -88,7 +87,6 @@ function renderProvidersByCategory(category) {
   });
   
   // 为每个卡片设置拖拽功能
-  gridEl.querySelectorAll(".provider-card").forEach(card => setupCardDrag(card));
 }
 
 async function handleToggleChange(providerId, enabled) {
@@ -294,119 +292,15 @@ window.PL.modules.providers = {
   onShow: () => { if (providersData.length === 0) loadProviders(); }
 };
 
-let draggedCard = null;
-let dragStartX = 0;
-let dragStartY = 0;
-let isDragging = false;
-let longPressTimer = null;
-
-function setupCardDrag(card) {
-  const dragHandle = card.querySelector(".drag-handle");
-  if (!dragHandle) return;
-  
-  // 鼠标拖拽
-  dragHandle.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    startDrag(card);
-  });
-  
-  // 触摸拖拽
-  dragHandle.addEventListener("touchstart", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    startDrag(card);
-  });
+);
 }
 
-function startDrag(card) {
-  isDragging = true;
-  draggedCard = card;
-  card.classList.add("dragging");
-  card.setAttribute("draggable", "true");
-  
-  // 立即触发拖拽
-  card.addEventListener("dragstart", handleDragStart);
-  card.addEventListener("dragend", handleDragEnd);
-  
-  // 为所有其他卡片添加 drop 事件
-  document.querySelectorAll(".provider-card").forEach(c => {
-    if (c !== card) {
-      c.addEventListener("dragover", handleDragOver);
-      c.addEventListener("dragleave", handleDragLeave);
-      c.addEventListener("drop", handleDrop);
-    }
-  });
-}
+e.dataTransfer.dropEffect = "move";
 
-function handleDragStart(e) {
-  e.dataTransfer.effectAllowed = "move";
-  e.dataTransfer.setData("text/html", this.innerHTML);
-}
-
-function handleDragOver(e) {
-  if (e.preventDefault) {
-    e.preventDefault();
-  }
-  e.dataTransfer.dropEffect = "move";
-  this.classList.add("drag-over");
-  return false;
-}
-
-function handleDragLeave(e) {
-  this.classList.remove("drag-over");
-}
-
-function handleDrop(e) {
-  if (e.stopPropagation) {
-    e.stopPropagation();
-  }
-  e.preventDefault();
+e.preventDefault();
   
-  if (draggedCard !== this) {
-    // 交换位置
-    const draggedIndex = Array.from(this.parentNode.children).indexOf(draggedCard);
-    const targetIndex = Array.from(this.parentNode.children).indexOf(this);
-    
-    if (draggedIndex < targetIndex) {
-      this.parentNode.insertBefore(draggedCard, this.nextSibling);
-    } else {
-      this.parentNode.insertBefore(draggedCard, this);
-    }
-    
-    // 保存新的排序
-    saveProviderOrder();
-  }
+);
   
-  this.classList.remove("drag-over");
-  return false;
-}
-
-function handleDragEnd(e) {
-  this.classList.remove("dragging");
-  this.setAttribute("draggable", "false");
-  isDragging = false;
-  
-  // 移除所有拖拽样式
-  document.querySelectorAll(".provider-card").forEach(card => {
-    card.classList.remove("drag-over", "dragging");
-    card.removeEventListener("dragover", handleDragOver);
-    card.removeEventListener("dragleave", handleDragLeave);
-    card.removeEventListener("drop", handleDrop);
-  });
-  
-  draggedCard = null;
-}
-
-function saveProviderOrder() {
-  const grid = document.getElementById("providers-grid");
-  const order = Array.from(grid.children).map(card => card.dataset.providerId);
-  
-  // 保存到 localStorage
-  const orderKey = `provider_order_${currentCategory}`;
-  localStorage.setItem(orderKey, JSON.stringify(order));
-}
-
 function loadProviderOrder() {
   const orderKey = `provider_order_${currentCategory}`;
   const savedOrder = localStorage.getItem(orderKey);
