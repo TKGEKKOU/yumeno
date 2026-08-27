@@ -145,6 +145,15 @@ async def test_web_search_provider(provider_id: str, api_key: str, base_url: str
                 if response.status_code == 200:
                     return {"success": True, "message": "搜索成功"}
                 return {"success": False, "message": f"HTTP {response.status_code}"}
+        elif provider_id == "freesearch":
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"{base_url.rstrip('/')}/search",
+                    params={"q": "test"},
+                )
+                if response.status_code == 200:
+                    return {"success": True, "message": "搜索成功"}
+                return {"success": False, "message": f"HTTP {response.status_code}"}
         else:
             return {"success": True, "message": "自定义搜索配置已保存"}
     except Exception as e:

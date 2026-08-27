@@ -165,6 +165,21 @@ def _handoff_tool(worker: Worker):
                     ]
                 }
             )
+        # 发送状态通知
+        try:
+            writer = get_stream_writer()
+            stage_names = {
+                "knowledge": "正在检索知识库",
+                "web": "正在联网搜索",
+                "memory": "正在查询记忆",
+                "management": "正在管理文件",
+                "conversation": "正在对话处理",
+                "voice_clone": "正在克隆语音",
+                "config": "正在修改配置",
+            }
+            writer({"kind": "stage", "stage": stage_names.get(worker, f"正在调用 {worker}")})
+        except RuntimeError:
+            pass
         return Command(
             graph=Command.PARENT,
             goto=f"{worker}_worker",
@@ -297,6 +312,9 @@ def _supervisor_prompt(context: PersonaAgentContext, intent_hint: str = "") -> s
 
 def _worker_prompt(worker: Worker, context: PersonaAgentContext) -> str:
     duties = {
+        "conversation": "Handle general conversational interactions and provide thoughtful responses based on persona profile and context.",
+        "voice_clone": "Manage voice cloning workflows including material analysis, training coordination, and voice profile binding.",
+        "config": "Inspect and modify system configuration settings after user confirmation.",
         "knowledge": (
             "Retrieve only the active persona's uploaded knowledge. For aggregations, filters, "
             "sorting, or calculations over uploaded CSV/XLSX data, list structured tables first "
@@ -719,6 +737,21 @@ def _knowledge_specialist_result(messages: list) -> dict:
 
 def _finalize_worker(worker: Worker):
     def finalize(state: PersonaWorkflowState) -> dict:
+        # 发送完成状态通知
+        try:
+            writer = get_stream_writer()
+            complete_names = {
+                "knowledge": "知识检索完成",
+                "web": "联网搜索完成",
+                "memory": "记忆查询完成",
+                "management": "文件管理完成",
+                "conversation": "对话处理完成",
+                "voice_clone": "语音克隆完成",
+                "config": "配置修改完成",
+            }
+            writer({"kind": "stage", "stage": complete_names.get(worker, f"{worker} 完成")})
+        except RuntimeError:
+            pass
         messages = state.get("messages", [])
         if worker == "knowledge":
             specialist_result = _knowledge_specialist_result(messages)
@@ -1004,7 +1037,7 @@ def build_persona_workflow(
         ),
     )
     builder.add_edge("knowledge_worker", END)
-    for worker in ("web", "memory", "management"):
+    for worker in ("web", "memory", "management", "conversation", "voice_clone", "config"):
         worker_node = f"{worker}_worker"
         finalize_node = f"finalize_{worker}"
         builder.add_node(worker_node, _worker_agent(worker, model))
