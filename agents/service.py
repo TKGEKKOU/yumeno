@@ -11,7 +11,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command
 
 from agents.context import PersonaAgentContext
-from agents.intent_funnel import analyze_intents
+from agents.intent_funnel import IntentAnalysis, analyze_intents, analyze_message_history
 from agents.observability import RunRecorder
 from agents import registry as tool_registry
 from agents.registry import capability_summary, specialist_for_tool, tool_specs
@@ -21,6 +21,21 @@ from rag.llm import LLM_UNAVAILABLE_MESSAGE, get_llm, is_transient_provider_erro
 
 
 logger = logging.getLogger(__name__)
+
+# HTTP/API 仍使用旧的四值 specialist，避免打断 resume 契约。
+# 图内 Worker 名称在对外返回前映射到该集合。
+_PUBLIC_SPECIALIST_BY_WORKER = {
+    "knowledge": "conversation",
+    "memory": "memory",
+    "document": "management",
+    "profile": "management",
+    "voice_clone": "management",
+    "config": "management",
+    "web": "web",
+    "management": "management",
+    "conversation": "conversation",
+}
+_WEB_CONFIRMATION_TOOLS = {"web_search", "web_search_confirmation"}
 
 EXECUTION_DEGRADED_MESSAGE = "请求处理超时或暂时失败，请稍后重试。"
 
@@ -60,6 +75,8 @@ def _sanitize_answer(text: str) -> str:
         if isinstance(parsed, (dict, list)):
             return ""
     if value.startswith("# Search:") or value.startswith("# Research:"):
+        return ""
+    if "KEY FACTS:" in value and "SOURCES:" in value:
         return ""
     return value
 
@@ -111,34 +128,19 @@ class _VisibleTextStream:
         return visible
 
 
-CAPABILITY_QUESTION_SIGNALS = (
-    "tool",
-    "工具",
-    "有哪些能力",
-    "有什么能力",
-    "你会什么",
-    "会调用什么",
-    "会调用哪些",
-    "能调用什么",
-    "能调用哪些",
-    "可以调用什么",
-    "可以调用哪些",
-)
-
-
 _STAGE_BY_NODE = {
-    "persona_supervisor": "正在思考…",
+    "persona_supervisor": "正在组织回复…",
     "knowledge_worker": "知识检索 · 正在搜索资料和网络信息…",
     "memory_worker": "记忆管理 · 正在读写角色记忆…",
     "document_worker": "文档管理 · 正在处理知识文档…",
     "profile_worker": "档案管理 · 正在更新角色档案…",
-    "voice_clone_worker": "声音克隆 · 正在处理音色训练…",
+    "voice_clone_worker": "声音克隆 · 正在准备素材上传…",
     "config_worker": "配置管理 · 正在修改系统设置…",
     "finalize_knowledge": "知识检索完成，整理结果中…",
     "finalize_memory": "记忆操作完成，整理结果中…",
     "finalize_document": "文档操作完成，整理结果中…",
     "finalize_profile": "档案操作完成，整理结果中…",
-    "finalize_voice_clone": "声音克隆完成，整理结果中…",
+    "finalize_voice_clone": "声音克隆会话已创建，等待素材上传…",
     "finalize_config": "配置修改完成，整理结果中…",
 }
 
@@ -152,14 +154,21 @@ def _stage_from_update(update: dict) -> str | None:
     return None
 
 
+_STAGE_ORDER = {
+    node: index
+    for index, node in enumerate(_STAGE_BY_NODE)
+}
+
+
 def _initial_stage(intent) -> str:
     labels = {
         "web": "已识别为联网查询，正在准备搜索...",
         "knowledge": "已识别为资料查询，正在准备检索...",
         "memory": "已识别为记忆请求，正在检查记忆...",
         "management": "已识别为管理请求，正在检查操作权限...",
+        "voice_clone": "已识别为声音克隆，正在准备会话...",
     }
-    return labels.get(intent.primary, "正在判断请求类型...")
+    return labels.get(intent.primary, "正在分析请求...")
 
 
 _CAPABILITY_SELF_INSPECTION_PATTERNS = (
@@ -169,24 +178,9 @@ _CAPABILITY_SELF_INSPECTION_PATTERNS = (
     re.compile(r"(?:有哪些|有什么).*(?:工具|能力|技能).*(?:可以|能)?(?:调用|使用)?$"),
 )
 
-_EXPLICIT_WEB_SEARCH_PATTERNS = (
-    re.compile(r"(?:搜索|搜一下|联网查|上网查|查网页|查网络)"),
-)
-_WEB_FRESHNESS_SIGNALS = ("今天", "现在", "最新", "当前", "最近")
-_EXTERNAL_FACT_OBJECTS = (
-    "天气", "新闻", "价格", "汇率", "股价", "赛事", "票价", "交通", "开放时间",
-)
-
-
 def is_capability_question(question: str) -> bool:
     normalized = question.strip().lower()
     return any(pattern.search(normalized) for pattern in _CAPABILITY_SELF_INSPECTION_PATTERNS)
-
-
-def is_explicit_web_search_question(question: str) -> bool:
-    """Compatibility wrapper around the shared intent decision."""
-
-    return analyze_intents(question).web_authorized
 
 
 def _latest_turn_messages(messages: list) -> list:
@@ -220,11 +214,19 @@ class PersonaAgentService:
         self,
         checkpointer: BaseCheckpointSaver,
         model: BaseChatModel | None = None,
+        runtime: Any | None = None,
     ) -> None:
         self.checkpointer = checkpointer
         self.model = model
+        # Runtime 是可选的适配层；旧调用方仍直接使用 query/stream_query/resume。
+        self.runtime = runtime
         self._workflow = None
         self._workflow_registry_revision = tool_registry.tool_registry_revision()
+
+    def attach_runtime(self, runtime: Any) -> None:
+        """在应用启动完成后注入 Runtime，避免构造期循环依赖。"""
+
+        self.runtime = runtime
 
     @staticmethod
     def thread_id(context: PersonaAgentContext, specialist: Specialist) -> str:
@@ -245,6 +247,29 @@ class PersonaAgentService:
 
     def _config(self, context: PersonaAgentContext) -> dict:
         return {"configurable": {"thread_id": self.thread_id(context, "conversation")}}
+
+    def _previous_intent(self, graph, context: PersonaAgentContext) -> IntentAnalysis | None:
+        """Restore the last turn's funnel result so elliptical follow-ups keep web policy."""
+        try:
+            snapshot = graph.get_state(self._config(context))
+        except Exception:
+            return None
+        values = getattr(snapshot, "values", None) or {}
+        stored = values.get("intent_decision")
+        if stored:
+            previous = IntentAnalysis.from_state(stored)
+            if previous.primary not in {None, "ui"}:
+                return previous
+        messages = list(values.get("messages") or [])
+        if not messages:
+            return None
+        previous = analyze_message_history(messages)
+        if previous.primary in {None, "ui"}:
+            return None
+        return previous
+
+    def _intent_for_question(self, graph, context: PersonaAgentContext, question: str) -> IntentAnalysis:
+        return analyze_intents(question, self._previous_intent(graph, context))
 
     def query(self, question: str, context: PersonaAgentContext) -> AgentTurnResult:
         graph = self._graph()
@@ -270,14 +295,13 @@ class PersonaAgentService:
             )
         try:
             initial_loaded_skills = []
-            intent = analyze_intents(question)
+            intent = self._intent_for_question(graph, context, question)
             result = graph.invoke(
                 {
                     "messages": [{"role": "user", "content": question}],
                     "active_worker": None,
                     "loaded_skills": initial_loaded_skills,
                     "intent_decision": intent.to_state(),
-                    "web_search_authorized": intent.web_authorized,
                     "worker_results": [],
                     "handoff_count": 0,
                 },
@@ -347,8 +371,9 @@ class PersonaAgentService:
         started = time.perf_counter()
         failed = False
         emitted_tokens = False
-        intent = analyze_intents(question)
+        intent = self._intent_for_question(graph, context, question)
         last_stage: str | None = _initial_stage(intent)
+        last_stage_node: str | None = None
         visible_stream = _VisibleTextStream()
         yield {"kind": "stage", "stage": last_stage}
         try:
@@ -359,7 +384,6 @@ class PersonaAgentService:
                     "active_worker": None,
                     "loaded_skills": initial_loaded_skills,
                     "intent_decision": intent.to_state(),
-                    "web_search_authorized": intent.web_authorized,
                     "worker_results": [],
                     "handoff_count": 0,
                 },
@@ -380,16 +404,24 @@ class PersonaAgentService:
                             emitted_tokens = True
                             yield {"kind": "token", "text": visible}
                 elif mode == "updates":
-                    stage = _stage_from_update(payload)
-                    if stage and stage != last_stage:
+                    stage_node = next((node for node in _STAGE_BY_NODE if node in str(payload)), None)
+                    stage = _STAGE_BY_NODE.get(stage_node) if stage_node else None
+                    if stage_node and stage and not emitted_tokens and (
+                        last_stage_node is None
+                        or _STAGE_ORDER[stage_node] >= _STAGE_ORDER[last_stage_node]
+                    ) and stage != last_stage:
+                        last_stage_node = stage_node
                         last_stage = stage
                         recorder.event(
                             "agent", "workflow_stage", stage, status="completed"
                         )
                         yield {"kind": "stage", "stage": stage}
                 elif mode == "custom" and isinstance(payload, dict):
+                    if payload.get("kind") == "clone_session":
+                        yield dict(payload)
+                        continue
                     stage = str(payload.get("stage") or "").strip()
-                    if payload.get("kind") == "stage" and stage and stage != last_stage:
+                    if payload.get("kind") == "stage" and stage and not emitted_tokens and stage != last_stage:
                         last_stage = stage
                         event = {"kind": "stage", "stage": stage}
                         if payload.get("details"):
@@ -424,19 +456,19 @@ class PersonaAgentService:
             return
         state = graph.get_state(config)
         state_values = state.values or {}
-        if not emitted_tokens:
-            for message in reversed(list(state_values.get("messages") or [])):
-                content = getattr(message, "content", None)
-                if isinstance(message, AIMessage) and content:
-                    fallback = _sanitize_answer(str(content))
-                    if fallback:
-                        recorder.mark_first_token()
-                        emitted_tokens = True
-                        yield {"kind": "token", "text": fallback}
-                    break
         result = self._result(
             state_values, time.perf_counter() - started, recorder=recorder
         )
+        if result.status == "pending_confirmation":
+            yield {
+                "kind": "result",
+                "result": replace(result, events=recorder.events(), metrics=recorder.metrics()),
+            }
+            return
+        if not emitted_tokens and result.answer:
+            recorder.mark_first_token()
+            emitted_tokens = True
+            yield {"kind": "token", "text": result.answer}
         yield {
             "kind": "result",
             "result": replace(result, events=recorder.events(), metrics=recorder.metrics()),
@@ -466,7 +498,7 @@ class PersonaAgentService:
             return
         failed = False
         emitted_tokens = False
-        last_stage: str | None = "正在判断请求类型..."
+        last_stage: str | None = "正在恢复确认..."
         visible_stream = _VisibleTextStream()
         yield {"kind": "stage", "stage": last_stage}
         try:
@@ -489,8 +521,9 @@ class PersonaAgentService:
                             emitted_tokens = True
                             yield {"kind": "token", "text": visible}
                 elif mode == "updates":
-                    stage = _stage_from_update(payload)
-                    if stage and stage != last_stage:
+                    stage_node = next((node for node in _STAGE_BY_NODE if node in str(payload)), None)
+                    stage = _STAGE_BY_NODE.get(stage_node) if stage_node else None
+                    if stage and not emitted_tokens and stage != last_stage:
                         last_stage = stage
                         recorder.event(
                             "agent", "workflow_stage", stage, status="completed"
@@ -498,7 +531,7 @@ class PersonaAgentService:
                         yield {"kind": "stage", "stage": stage}
                 elif mode == "custom" and isinstance(payload, dict):
                     stage = str(payload.get("stage") or "").strip()
-                    if payload.get("kind") == "stage" and stage and stage != last_stage:
+                    if payload.get("kind") == "stage" and stage and not emitted_tokens and stage != last_stage:
                         last_stage = stage
                         event = {"kind": "stage", "stage": stage}
                         if payload.get("details"):
@@ -533,19 +566,19 @@ class PersonaAgentService:
             return
         state = graph.get_state(config)
         state_values = state.values or {}
-        if not emitted_tokens:
-            for message in reversed(list(state_values.get("messages") or [])):
-                content = getattr(message, "content", None)
-                if isinstance(message, AIMessage) and content:
-                    fallback = _sanitize_answer(str(content))
-                    if fallback:
-                        recorder.mark_first_token()
-                        emitted_tokens = True
-                        yield {"kind": "token", "text": fallback}
-                    break
         result = self._result(
             state_values, time.perf_counter() - started, recorder=recorder
         )
+        if result.status == "pending_confirmation":
+            yield {
+                "kind": "result",
+                "result": replace(result, events=recorder.events(), metrics=recorder.metrics()),
+            }
+            return
+        if not emitted_tokens and result.answer:
+            recorder.mark_first_token()
+            emitted_tokens = True
+            yield {"kind": "token", "text": result.answer}
         yield {
             "kind": "result",
             "result": replace(result, events=recorder.events(), metrics=recorder.metrics()),
@@ -606,14 +639,25 @@ class PersonaAgentService:
         return self._result(result, time.perf_counter() - started, recorder=recorder)
 
     @staticmethod
+    def _public_specialist(name: str | None, action: dict | None = None) -> Specialist:
+        tool_name = str((action or {}).get("tool") or "")
+        if tool_name in _WEB_CONFIRMATION_TOOLS:
+            return "web"
+        mapped = _PUBLIC_SPECIALIST_BY_WORKER.get(str(name or ""))
+        if mapped in {"conversation", "web", "memory", "management"}:
+            return mapped  # type: ignore[return-value]
+        return "conversation"
+
+    @staticmethod
     def _specialist_for_state(state: dict, action: dict | None = None) -> Specialist:
         worker = state.get("active_worker")
-        if worker == "knowledge":
-            return "conversation"
-        if worker in {"web", "memory", "management"}:
-            return worker
+        if worker:
+            return PersonaAgentService._public_specialist(str(worker), action)
         if action:
-            return specialist_for_tool(str(action.get("tool", "")))
+            return PersonaAgentService._public_specialist(
+                specialist_for_tool(str(action.get("tool", ""))),
+                action,
+            )
         return "conversation"
 
     @staticmethod
@@ -712,4 +756,3 @@ class PersonaAgentService:
             return json.loads(content)
         except json.JSONDecodeError:
             return content
-

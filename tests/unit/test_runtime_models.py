@@ -41,7 +41,7 @@ def test_agent_run_and_result_have_safe_defaults():
 
     assert run.status is RunStatus.QUEUED
     assert run.created_at.tzinfo is not None
-    assert result.status is RunStatus.COMPLETED
+    assert result.status == "completed"
     assert result.answer == ""
     assert result.worker_results == []
     assert result.evidence == []

@@ -70,7 +70,10 @@ class AgentRun(BaseModel):
     workspace_id: str | None = None
     persona_id: str | None = None
     conversation_id: str | None = None
+    thread_id: str | None = None
+    active_worker: str | None = None
     specialist: str | None = None
+    pending_action: dict[str, Any] | None = None
     answer: str = ""
     worker_results: list[dict[str, Any]] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
@@ -79,6 +82,8 @@ class AgentRun(BaseModel):
     trace: list[dict[str, Any]] = Field(default_factory=list)
     requires_approval: bool = False
     error_code: str | None = None
+    error_message: str | None = None
+    result_json: dict[str, Any] | None = None
     created_at: datetime = Field(default_factory=_utc_now)
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -91,9 +96,10 @@ class AgentResult(BaseModel):
     model_config = ConfigDict(use_enum_values=False)
 
     run_id: str
-    status: RunStatus = RunStatus.COMPLETED
+    status: str = "completed"
     answer: str = ""
     specialist: str | None = None
+    pending_action: dict[str, Any] | None = None
     worker_results: list[dict[str, Any]] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     citations: list[dict[str, Any]] = Field(default_factory=list)

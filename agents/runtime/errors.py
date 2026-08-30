@@ -15,6 +15,14 @@ class RuntimeErrorCode(str, Enum):
     RUNTIME_FAILURE = "runtime_failure"
     STORAGE_ERROR = "storage_error"
     INVALID_REQUEST = "invalid_request"
+    CONFIRMATION_DENIED = "confirmation_denied"
+    CAPABILITY_DENIED = "capability_denied"
+    CONTRACT_INVALID = "contract_invalid"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    WORKER_TIMEOUT = "worker_timeout"
+    WORKER_FAILED = "worker_failed"
+    CHECKPOINT_UNAVAILABLE = "checkpoint_unavailable"
+    RUNTIME_FAILED = "runtime_failed"
 
 
 _PUBLIC_MESSAGES = {
@@ -27,6 +35,14 @@ _PUBLIC_MESSAGES = {
     RuntimeErrorCode.RUNTIME_FAILURE: "运行处理失败，请稍后重试。",
     RuntimeErrorCode.STORAGE_ERROR: "运行记录暂时不可用。",
     RuntimeErrorCode.INVALID_REQUEST: "请求参数无效。",
+    RuntimeErrorCode.CONFIRMATION_DENIED: "操作未获确认。",
+    RuntimeErrorCode.CAPABILITY_DENIED: "当前角色没有执行此操作的权限。",
+    RuntimeErrorCode.CONTRACT_INVALID: "运行结果格式无效。",
+    RuntimeErrorCode.PROVIDER_UNAVAILABLE: "模型服务暂时不可用，请稍后重试。",
+    RuntimeErrorCode.WORKER_TIMEOUT: "能力模块处理超时，请稍后重试。",
+    RuntimeErrorCode.WORKER_FAILED: "能力模块处理失败，请稍后重试。",
+    RuntimeErrorCode.CHECKPOINT_UNAVAILABLE: "运行恢复状态暂时不可用。",
+    RuntimeErrorCode.RUNTIME_FAILED: "运行处理失败，请稍后重试。",
 }
 
 
@@ -38,3 +54,12 @@ def public_error_message(code: RuntimeErrorCode | str) -> str:
     except (TypeError, ValueError):
         return "运行时操作失败。"
     return _PUBLIC_MESSAGES[normalized]
+
+
+class RuntimeOperationError(RuntimeError):
+    """可由 API 层转换为稳定错误响应的领域异常。"""
+
+    def __init__(self, code: RuntimeErrorCode, detail: str | None = None) -> None:
+        self.code = code.value
+        self.detail = detail
+        super().__init__(detail or public_error_message(code))
