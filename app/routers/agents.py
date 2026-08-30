@@ -92,12 +92,23 @@ async def stream_agent_query(
         content=payload.question,
     )
     key = f"{persona_id}:{payload.conversation_id}"
+    agent_runner = getattr(request.app.state, "agent_runtime", None) or request.app.state.agent_service
 
     async def generate():
         async for event in request.app.state.realtime_executions.run_stream(
             key,
-            lambda: request.app.state.agent_service.stream_query(payload.question, context),
+            lambda: agent_runner.stream_query(payload.question, context),
         ):
+            if event.get("kind") == "clone_session":
+                if event.get("action") == "request_voice_material":
+                    yield _sse({"kind": "upload_request", "purpose": "voice_material"})
+                elif event.get("action") == "voice_session_created":
+                    yield _sse({
+                        "kind": "upload_request",
+                        "purpose": "voice_material",
+                        "session_id": event["session_id"],
+                    })
+                continue
             if event.get("kind") == "result":
                 _finalize_agent_turn(request.app, context, event["result"])
             yield _sse(event)
@@ -120,16 +131,27 @@ async def stream_agent_resume(
     """SSE 流式恢复确认回合：stage / token / result / done 事件。"""
     context = context_for(request, session, persona_id, payload.conversation_id)
     key = f"{persona_id}:{payload.conversation_id}"
+    agent_runner = getattr(request.app.state, "agent_runtime", None) or request.app.state.agent_service
 
     async def generate():
         async for event in request.app.state.realtime_executions.run_stream(
             key,
-            lambda: request.app.state.agent_service.stream_resume(
+            lambda: agent_runner.stream_resume(
                 context,
                 payload.specialist,
                 payload.approved,
             ),
         ):
+            if event.get("kind") == "clone_session":
+                if event.get("action") == "request_voice_material":
+                    yield _sse({"kind": "upload_request", "purpose": "voice_material"})
+                elif event.get("action") == "voice_session_created":
+                    yield _sse({
+                        "kind": "upload_request",
+                        "purpose": "voice_material",
+                        "session_id": event["session_id"],
+                    })
+                continue
             if event.get("kind") == "result":
                 _finalize_agent_turn(request.app, context, event["result"])
             yield _sse(event)
@@ -159,9 +181,10 @@ async def query_agent(
         content=payload.question,
     )
     key = f"{persona_id}:{payload.conversation_id}"
+    agent_runner = getattr(request.app.state, "agent_runtime", None) or request.app.state.agent_service
     result = await request.app.state.realtime_executions.run(
         key,
-        lambda: request.app.state.agent_service.query(payload.question, context),
+        lambda: agent_runner.query(payload.question, context),
     )
     if result.status == "completed" and result.answer:
         try_persist_text_message(
@@ -190,9 +213,10 @@ async def resume_agent(
 ) -> AgentTurnResponse:
     context = context_for(request, session, persona_id, payload.conversation_id)
     key = f"{persona_id}:{payload.conversation_id}"
+    agent_runner = getattr(request.app.state, "agent_runtime", None) or request.app.state.agent_service
     result = await request.app.state.realtime_executions.run(
         key,
-        lambda: request.app.state.agent_service.resume(
+        lambda: agent_runner.resume(
             context,
             payload.specialist,
             payload.approved,

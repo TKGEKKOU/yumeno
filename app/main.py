@@ -12,6 +12,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from agents.checkpoint import create_sqlite_checkpointer
 from agents.context_factory import build_agent_runner
 from agents.service import PersonaAgentService
+from agents.runtime.approvals import ApprovalService
+from agents.runtime.runner import AgentRuntime
+from app.run_store import RunStore
 from app.database import (
     Base,
     build_engine,
@@ -36,6 +39,7 @@ from app.routers.personas import router as personas_router
 from app.routers.rag import router as rag_router
 from app.routers.reranker import router as reranker_router
 from app.routers.realtime import router as realtime_router
+from app.routers.runs import router as runs_router
 from app.routers.settings import router as settings_router
 from app.routers.skills import router as skills_router
 from app.routers.system import router as system_router
@@ -280,6 +284,12 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     else:
         # 无数据库（测试/演示）时退化为内存检查点，行为一致但重启即失。
         app.state.agent_service = PersonaAgentService(MemorySaver())
+    if initialize_database:
+        app.state.run_store = RunStore(app.state.session_factory)
+        app.state.agent_runtime = AgentRuntime(app.state.agent_service, app.state.run_store)
+        app.state.approval_service = ApprovalService(app.state.agent_runtime)
+        app.state.agent_service.attach_runtime(app.state.agent_runtime)
+
     # PersonaAgentService 是人设多 Agent（Supervisor + 领域 Worker）的应用层入口：
     # 对外只暴露 query / resume，内部由 LangGraph 图执行，thread_id = persona_id:conversation_id。
     app.state.event_bus = EventBus()
@@ -354,6 +364,7 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     app.include_router(rag_router)
     app.include_router(reranker_router)
     app.include_router(realtime_router)
+    app.include_router(runs_router)
     app.include_router(settings_router)
     app.include_router(system_router)
     app.include_router(tts_router)

@@ -384,18 +384,6 @@ class NapCatConversationClearPayload(BaseModel):
             raise ValueError("target_id must be a positive number")
         return value
 
-class QqOfficialConfigUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool | None = None
-    appid: str | None = None
-    secret: str | None = None
-    sandbox: bool | None = None
-    group_trigger: Literal["at", "prefix"] | None = None
-    prefix: str | None = None
-    default_persona_id: str | None = None
-
-
 class BilibiliConfigUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -417,3 +405,9 @@ class DockerSettingsPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     on_exit: Literal["keep", "pause", "remove"]
+
+
+class RunApprovalPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approved: bool
