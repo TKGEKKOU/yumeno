@@ -262,3 +262,60 @@ class DocumentJob(Base):
     chunking_preset: Mapped[str | None] = mapped_column(String(32), nullable=True)
     chunker_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     index_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class AgentRunRecord(Base):
+    """本地 Agent Runtime 运行摘要，与 LangGraph checkpoint 分开保存。"""
+
+    __tablename__ = "agent_runs"
+
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False, default="chat")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    persona_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    conversation_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    thread_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    active_worker: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    specialist: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pending_action_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    answer: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    worker_results_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    evidence_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    citations_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    uncertainties_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    trace_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AgentRunEventRecord(Base):
+    """AgentRun 的公开事件，sequence 在每个 run 内单调递增。"""
+
+    __tablename__ = "agent_run_events"
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_agent_run_event_run_sequence"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
+    duration_ms: Mapped[float | None] = mapped_column(nullable=True)
+    details_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

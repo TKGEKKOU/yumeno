@@ -19,6 +19,7 @@ from app.database import (
     upgrade_persona_schema,
     upgrade_voice_asset_schema,
     upgrade_document_job_schema,
+    upgrade_runtime_schema,
 )
 from app.routers.agents import router as agents_router
 from app.routers.asr import router as asr_router
@@ -56,8 +57,6 @@ from integrations.bilibili import BilibiliLiveManager
 from integrations.mcp.client import MCPManager
 from integrations.onebot11.router import ImMessageRouter
 from integrations.onebot11.ws_server import OneBotConnectionManager, router as onebot_ws_router
-from integrations.qq_official.config import qq_official_runtime_config
-from integrations.qq_official.gateway import QqOfficialGateway
 from persona.delete_service import PersonaDeletionService
 from realtime.execution import ConversationExecutionRegistry
 from voice.asr import build_asr_provider
@@ -140,7 +139,6 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         app.state.mcp_connect_task = asyncio.create_task(
             app.state.mcp_manager.connect_all(register=True)
         )
-        await app.state.qq_official.start()
         if initialize_database:
             app.state.embedding_warmup_task = asyncio.create_task(
                 asyncio.to_thread(warm_managed_embedding, settings)
@@ -152,7 +150,6 @@ def create_app(initialize_database: bool = True) -> FastAPI:
             app.state.asr_warmup_task = asyncio.create_task(warm_asr_worker())
             app.state.gpt_sovits_warmup_task = asyncio.create_task(warm_gpt_sovits())
         yield
-        await app.state.qq_official.stop()
         await app.state.bilibili.disconnect()
         mcp_manager = getattr(app.state, "mcp_manager", None)
         if mcp_manager is not None:
@@ -271,6 +268,7 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         upgrade_persona_schema(engine)
         upgrade_voice_asset_schema(engine)
         upgrade_document_job_schema(engine)
+        upgrade_runtime_schema(engine)
         with app.state.session_factory() as migration_session:
             migrate_voice_assets(migration_session)
         # 会话状态（对话历史、中断点、Worker 结果）持久化到本地 SQLite；
@@ -282,7 +280,7 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     else:
         # 无数据库（测试/演示）时退化为内存检查点，行为一致但重启即失。
         app.state.agent_service = PersonaAgentService(MemorySaver())
-    # PersonaAgentService 是人设多 Agent（supervisor + 四类 Worker）的应用层入口：
+    # PersonaAgentService 是人设多 Agent（Supervisor + 领域 Worker）的应用层入口：
     # 对外只暴露 query / resume，内部由 LangGraph 图执行，thread_id = persona_id:conversation_id。
     app.state.event_bus = EventBus()
 
@@ -329,10 +327,6 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     app.state.onebot = OneBotConnectionManager(
         lambda: onebot_runtime_config(settings.project_root)
     )
-    app.state.qq_official = QqOfficialGateway(
-        lambda: qq_official_runtime_config(settings.project_root),
-        app.state.event_bus,
-    )
     # IM 消息路由：OneBot（QQ）等外部渠道消息经 EventBus 广播到这里，统一转成
     # PersonaAgentService 的一轮对话；消息与 Agent 解耦，渠道扩展不触碰 Agent 逻辑。
     app.state.im_router = ImMessageRouter(
@@ -343,16 +337,6 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         tts_synthesis=app.state.tts_synthesis,
     )
     app.state.event_bus.subscribe(EVENT_MESSAGE, app.state.im_router.handle)
-    # QQ 官方机器人（WebSocket）与 OneBot 转发端共用同一套 IM 消息路由，
-    # 通过 platform 区分对话会话与默认角色，互不干扰。
-    app.state.im_router_qq_official = ImMessageRouter(
-        app.state.agent_service,
-        app.state.session_factory,
-        settings.project_root / "data" / "im_bindings.json",
-        settings.project_root / "data" / "integrations.json",
-        platform="qq_official",
-    )
-    app.state.event_bus.subscribe(EVENT_MESSAGE, app.state.im_router_qq_official.handle)
     app.include_router(agents_router)
     app.include_router(asr_router)
     app.include_router(onebot_ws_router)

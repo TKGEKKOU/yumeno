@@ -85,6 +85,14 @@ def upgrade_document_job_schema(engine: Engine) -> None:
                 connection.execute(text(f"ALTER TABLE document_jobs ADD COLUMN {name} {definition}"))
 
 
+def upgrade_runtime_schema(engine: Engine) -> None:
+    """为已有安装补齐 Agent Runtime 表；create_all 对已有表是幂等的。"""
+
+    from app.models import AgentRunEventRecord, AgentRunRecord
+
+    Base.metadata.create_all(engine, tables=[AgentRunRecord.__table__, AgentRunEventRecord.__table__])
+
+
 def get_session(request: Request) -> Generator[Session, None, None]:
     session_factory: sessionmaker[Session] = request.app.state.session_factory
     with session_factory() as session:
