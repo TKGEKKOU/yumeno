@@ -324,6 +324,16 @@ console.log("ok: chat view lifecycle hook");
     false,
     "a workflow descriptor without the final event worker is not a handoff",
   );
+  assert.strictEqual(
+    vm.runInContext("hasFormalRvcHandoff({ worker: 'config_worker', worker_results: [{ worker: 'rvc_worker' }] }, { worker: 'rvc_worker' })", sandbox),
+    false,
+    "historical nested RVC results must not activate RVC for config requests",
+  );
+  assert.strictEqual(
+    vm.runInContext("hasFormalRvcHandoff({ worker: 'rvc_worker' }, { worker: 'rvc_worker' })", sandbox),
+    true,
+    "the final direct RVC worker result remains a valid handoff",
+  );
   console.log("ok: RVC activation requires formal Agent handoff");
 })();
 

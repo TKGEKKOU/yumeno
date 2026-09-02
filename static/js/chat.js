@@ -436,6 +436,9 @@ function handleRealtimeEvent(event) {
     clearRealtimeSubmission();
     state.realtimeExecutionPending = false;
     state.realtimeTurnId = event.turn_id;
+    // workflow.update 可能先于最终结果到达；它只对当前 turn 有效。
+    // 新一轮请求必须丢弃旧的 RVC handoff，避免“检查配置”等请求复活旧工作区。
+    state.pendingRvcWorkflowEvent = null;
     state.realtimeCompletionEpoch = (state.realtimeCompletionEpoch || 0) + 1;
     state.realtimeStageEpoch = state.realtimeCompletionEpoch;
     const optimisticReply = state.pendingReplyNode?.isConnected ? state.pendingReplyNode : null;
@@ -1514,12 +1517,18 @@ function handleAgentResult(result) {
   // 某些 HTTP/SSE 时序会把 workflow 只放在前一个 workflow_update 中，
   // 最终 waiting_input 只带 answer/waiting_inputs。沿用同一轮已缓存的 Agent handoff，
   // 不能因此退化成普通“请上传”文本卡片。
-  const cachedRvc = state.pendingRvcWorkflowEvent;
+  const resourceSetup = findResourceSetup(result);
+  const resultWorker = String(result?.worker || result?.worker_name || "").trim().toLowerCase();
+  const activeRvcTurn = resultWorker === "rvc_worker"
+    || String(state.pendingInput?.worker || state.pendingInput?.specialist || "").trim().toLowerCase() === "rvc_worker";
+  const cachedRvc = activeRvcTurn ? state.pendingRvcWorkflowEvent : null;
   const cachedFlow = cachedRvc?.flow || cachedRvc?.event?.flow;
-  const resultFlow = result?.workflow || result?.flow || (cachedFlow?.worker === "rvc_worker" ? cachedFlow : null);
-  const handoffResult = resultFlow && cachedFlow && !result?.worker && !result?.result?.worker
+  // 缓存的 workflow 只能补全同一个仍在活动的 RVC 回合，不能作为新请求的路由依据。
+  const resultFlow = result?.workflow || result?.flow || (activeRvcTurn && cachedFlow?.worker === "rvc_worker" ? cachedFlow : null);
+  const handoffResult = resultFlow && cachedFlow && !result?.workflow && !result?.flow && resultWorker === "rvc_worker"
     ? { ...cachedRvc.event, ...result, worker: "rvc_worker" } : result;
-  const isRvcResult = Boolean(resultFlow && typeof resultFlow === "object" && hasFormalRvcHandoff(handoffResult, resultFlow));
+  // 配置资源结果与 RVC 业务 workflow 彻底隔离。
+  const isRvcResult = !resourceSetup && Boolean(resultFlow && typeof resultFlow === "object" && hasFormalRvcHandoff(handoffResult, resultFlow));
   // 正式 handoff 会接管原 loading assistant 气泡；后续结果必须写回同一节点，
   // 不能再 append 一个普通 assistant 气泡覆盖/分离内嵌工作区。
   const inlineNode = isRvcResult
@@ -1897,21 +1906,18 @@ function renderResourceSetupCard(node, resource) {
 
 function applyAgentContextResult(result) {
   const resultFlow = result?.workflow || result?.flow;
+  const resourceSetup = findResourceSetup(result);
   // 只有 Core Agent 返回的完整 workflow.worker 才能激活 RVC；
   // 顶层 worker/specialist 结果不能单独创建或恢复 RVC 工作区。
   const isRvcResult = Boolean(resultFlow && typeof resultFlow === "object" && hasFormalRvcHandoff(result, resultFlow));
-  const isIsolatedRvcResult = !isRvcResult && (
-    String(result?.worker || result?.worker_name || "").trim().toLowerCase() === "rvc_worker"
-  );
   const tasks = rvcTaskEntries(result);
-  const resourceSetup = findResourceSetup(result);
   if (resourceSetup) {
     const resourceNode = state.realtimeAnswerNode || state.pendingReplyNode || appendMessage("assistant", "正在处理资源配置…");
     if (resourceNode) renderResourceSetupCard(resourceNode, resourceSetup);
   }
   // RVC 只能由 Agent 返回的结构化 worker 合同激活。历史兼容 task 不能
   // 在顶部创建旧任务卡，也不能凭 task 字段把普通结果升级成 RVC。
-  if (!isRvcResult && !isIsolatedRvcResult) tasks.forEach((entry) => registerChatTask(entry));
+  if (!isRvcResult) tasks.forEach((entry) => registerChatTask(entry));
   const taskId = stableTaskId(result) || tasks[0]?.task_id || "";
   if (resultFlow && typeof resultFlow === "object") {
     if (isRvcResult) {
@@ -2617,16 +2623,15 @@ function isAgentRvcWorkflowDescriptor(event, flow) {
 function hasFormalRvcHandoff(event, flow) {
   const flowWorker = String(flow?.worker || flow?.worker_name || "").trim().toLowerCase();
   if (flowWorker !== "rvc_worker") return false;
-  // Worker 信息可能被 Supervisor 包在 result/worker_results/artifacts 中；递归检查
-  // 但仍要求 workflow.worker 明确来自 Agent handoff，禁止关键词直接激活。
-  const seen = new Set();
-  const containsWorker = (value) => {
-    if (!value || typeof value !== "object" || seen.has(value)) return false;
-    seen.add(value);
-    if ([value.worker, value.worker_name].some((item) => String(item || "").trim().toLowerCase() === "rvc_worker")) return true;
-    return Object.values(value).some(containsWorker);
-  };
-  return containsWorker(event);
+  // 只有最终 Agent 结果的直接 worker 字段才是正式交接凭据。
+  // 不能递归扫描 worker_results/artifacts：它们包含历史审计数据，
+  // 配置查询也可能携带旧的 RVC 结果，从而错误唤起“上传参考音频”卡片。
+  const directWorkers = [
+    event?.worker, event?.worker_name,
+    event?.result?.worker, event?.result?.worker_name,
+    event?.agent_result?.worker, event?.agent_result?.worker_name,
+  ];
+  return directWorkers.some((item) => String(item || "").trim().toLowerCase() === "rvc_worker");
 }
 function findRvcField(value, names, seen = new Set()) {
   if (!value || typeof value !== "object" || seen.has(value)) return null;
