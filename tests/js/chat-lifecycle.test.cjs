@@ -315,6 +315,11 @@ console.log("ok: chat view lifecycle hook");
     "RVC UI requires an explicit worker handoff in the final event",
   );
   assert.strictEqual(
+    vm.runInContext("hasFormalRvcHandoff({ type: 'workflow.update' }, { worker: 'rvc_worker' })", sandbox),
+    true,
+    "a structured workflow.update from Supervisor is a formal RVC handoff",
+  );
+  assert.strictEqual(
     vm.runInContext("hasFormalRvcHandoff({ worker: 'persona_supervisor' }, { worker: 'rvc_worker' })", sandbox),
     false,
     "an intermediate or mismatched worker must not activate RVC",

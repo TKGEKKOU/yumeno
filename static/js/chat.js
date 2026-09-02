@@ -460,6 +460,21 @@ function handleRealtimeEvent(event) {
   if (event.type === "agent.stage") {
     if (state.realtimeStageEpoch === "closed") return;
     state.realtimeStageEpoch = state.realtimeCompletionEpoch || 0;
+    // RVC handoff 后，专用工作区是唯一活动进度源；后续 Core/Worker 阶段
+    // 只作为调试信息保留（若用户开启思考内容），不能重新创建 spinner。
+    if (state.rvcInline?.node?.isConnected) {
+      const processList = state.realtimeAnswerNode?.querySelector(".agent-process-list");
+      processList?.querySelectorAll(".agent-process-item.is-active").forEach((item) => {
+        item.classList.remove("is-active");
+        item.classList.add("is-done");
+        const spinner = item.querySelector(".agent-process-spinner");
+        if (spinner) {
+          spinner.classList.remove("agent-process-spinner");
+          spinner.classList.add("agent-process-check");
+        }
+      });
+      return;
+    }
     if (!state.realtimeAnswerNode) state.realtimeAnswerNode = showReplyLoading();
     setReplyStage(state.realtimeAnswerNode, event.stage, event.details);
   } else if (event.type === "text.delta") {
@@ -1922,7 +1937,7 @@ function applyAgentContextResult(result) {
   if (resultFlow && typeof resultFlow === "object") {
     if (isRvcResult) {
       // RVC 的 workflow 只属于当前 assistant 气泡；绝不再写入顶部/右侧通用任务状态。
-      activateRvcWorkspaceFromAgent(handoffResult, resultFlow);
+      activateRvcWorkspaceFromAgent(result, resultFlow);
       state.pendingRvcWorkflowEvent = null;
     } else {
       setChatWorkflow(resultFlow, taskId || resultFlow.task_id);
@@ -2623,9 +2638,13 @@ function isAgentRvcWorkflowDescriptor(event, flow) {
 function hasFormalRvcHandoff(event, flow) {
   const flowWorker = String(flow?.worker || flow?.worker_name || "").trim().toLowerCase();
   if (flowWorker !== "rvc_worker") return false;
-  // 只有最终 Agent 结果的直接 worker 字段才是正式交接凭据。
-  // 不能递归扫描 worker_results/artifacts：它们包含历史审计数据，
-  // 配置查询也可能携带旧的 RVC 结果，从而错误唤起“上传参考音频”卡片。
+  // workflow.update 本身就是 Supervisor 发出的结构化交接凭据。
+  // 如果继续等待最终自然语言结果，通用 Agent 阶段会和 RVC 工作区同时呈现，
+  // 且慢任务会看起来像“两个流程都在转”。配置请求不会携带 rvc_worker flow，
+  // 因此不会因为历史 worker_results 被误唤起。
+  const eventType = String(event?.type || event?.kind || "").trim().toLowerCase();
+  if (eventType === "workflow.update" || eventType === "workflow_update") return true;
+  // 其它事件仍要求直接 worker 字段，禁止递归扫描 worker_results/artifacts。
   const directWorkers = [
     event?.worker, event?.worker_name,
     event?.result?.worker, event?.result?.worker_name,
