@@ -3131,7 +3131,7 @@ function rvcWorkspaceNode() {
   host.className = "rvc-inline-workspace";
   host.setAttribute("aria-label", "RVC 对话工作区");
   node.append(host);
-  state.rvcInline = { node, host, sessionId: null, source: null, state: { phase: "awaiting_source" }, models: null, taskId: null, task: null, result: null, pollTimer: null, generation: 0, cancelling: false, sourceConfirmed: false, configStep: 0, configAnswers: { index_id: undefined, pitch: undefined, mix_instrumental: undefined } };
+  state.rvcInline = { node, host, sessionId: null, source: null, state: { phase: "awaiting_source" }, models: null, taskId: null, task: null, result: null, pollTimer: null, generation: 0, cancelling: false, sourceConfirmed: false, configStep: 0, rvcResourceStatus: null, rvcResourcePollTimer: null, rvcResourcePolling: false, configAnswers: { index_id: undefined, pitch: undefined, mix_instrumental: undefined } };
   renderRvcInline();
   return node;
 }
@@ -3160,10 +3160,88 @@ function appendRvcCompletionPrompt(data) {
   data.completionPromptShown = true;
   appendMessage("assistant", "最终音频已经生成，请检查试听结果。本次 RVC 任务是否完成？如果需要重新开始、重新分离，或返回模型与参数配置，请直接告诉我。", undefined, []);
 }
+function rvcRuntimeReady(status) {
+  if (!status || status.installing) return false;
+  const missing = Array.isArray(status.missing) ? status.missing : [];
+  if (missing.some((item) => ["runtime", "hubert", "rmvpe", "cuda"].includes(String(item).toLowerCase()))) return false;
+  if (status.installed === true) return true;
+  const components = status.components || {};
+  return Boolean(components.runtime?.ready && components.hubert?.ready && components.rmvpe?.ready);
+}
+function rvcResourceStatusLabel(status) {
+  if (!status) return "正在检查 RVC 资源…";
+  const phaseLabels = { preparing: "准备运行环境", runtime: "创建 RVC Python 运行时", dependencies: "安装 RVC 推理依赖", verify: "验证推理环境", resources: "下载 Hubert / RMVPE", done: "RVC 基础运行时已就绪", failed: "RVC 下载失败", cancelled: "RVC 下载已取消" };
+  const phase = phaseLabels[String(status.phase || "").toLowerCase()] || status.detail || "正在准备 RVC 资源";
+  if (status.installing) return `${phase}${status.progress_percent != null ? ` · ${Math.round(Number(status.progress_percent) || 0)}%` : ""}`;
+  return status.error || phase;
+}
+function stopRvcResourcePoll(data = state.rvcInline) {
+  if (!data) return;
+  if (data.rvcResourcePollTimer) clearTimeout(data.rvcResourcePollTimer);
+  data.rvcResourcePollTimer = null;
+  data.rvcResourcePolling = false;
+}
+function pollRvcResourceStatus(data = state.rvcInline) {
+  if (!data || data.rvcResourcePolling) return;
+  data.rvcResourcePolling = true;
+  const tick = async () => {
+    data.rvcResourcePollTimer = null;
+    try { data.rvcResourceStatus = await chatRvcApi("/api/providers/rvc/status"); }
+    catch (error) { data.rvcResourceStatus = { ready: false, installed: false, phase: "failed", error: error?.message || String(error) }; }
+    if (state.rvcInline !== data) { stopRvcResourcePoll(data); return; }
+    data.rvcResourcePolling = false;
+    renderRvcInline();
+    if (data.rvcResourceStatus?.installing) {
+      data.rvcResourcePolling = true;
+      data.rvcResourcePollTimer = setTimeout(() => void tick(), 1000);
+    }
+  };
+  void tick();
+}
+function startRvcResourceInstall() {
+  const data = state.rvcInline; if (!data || data.rvcResourceStatus?.installing) return;
+  data.rvcResourceStatus = { ...(data.rvcResourceStatus || {}), installing: true, phase: "preparing", progress_percent: 0, error: "" };
+  renderRvcInline();
+  void chatRvcApi("/api/providers/rvc/install", { method: "POST" }).then((status) => {
+    if (state.rvcInline !== data) return;
+    data.rvcResourceStatus = status; renderRvcInline(); pollRvcResourceStatus(data);
+  }).catch((error) => {
+    if (state.rvcInline !== data) return;
+    data.rvcResourceStatus = { ready: false, installed: false, phase: "failed", installing: false, error: error?.message || String(error) }; renderRvcInline();
+  });
+}
+function cancelRvcResourceInstall() {
+  const data = state.rvcInline; if (!data) return;
+  stopRvcResourcePoll(data);
+  data.rvcResourceStatus = { ...(data.rvcResourceStatus || {}), installing: true, cancelling: true, phase: "cancelled", detail: "正在取消下载" };
+  renderRvcInline();
+  void chatRvcApi("/api/providers/rvc/install/cancel", { method: "DELETE" }).then((status) => {
+    if (state.rvcInline !== data) return;
+    data.rvcResourceStatus = status; renderRvcInline();
+    if (status?.installing) pollRvcResourceStatus(data);
+  }).catch((error) => {
+    if (state.rvcInline !== data) return;
+    data.rvcResourceStatus = { ...(data.rvcResourceStatus || {}), installing: false, cancelling: false, phase: "failed", error: error?.message || String(error) }; renderRvcInline();
+  });
+}
+function renderRvcResourceCard(box, status) {
+  const card = document.createElement("section"); card.className = "rvc-inline-resource-card";
+  const title = document.createElement("strong"); title.textContent = status?.installing ? "正在准备 RVC 运行环境" : (status?.error ? "RVC 运行环境准备失败" : "RVC 尚未完成配置");
+  const detail = document.createElement("p"); detail.textContent = status?.installing ? rvcResourceStatusLabel(status) : (status?.error || "首次使用需要下载推理运行时和基础资源。下载完成后即可继续当前对话。");
+  const progress = document.createElement("progress"); progress.max = 100; progress.value = Math.max(0, Math.min(100, Number(status?.progress_percent) || 0)); progress.className = "rvc-inline-progress";
+  const actions = document.createElement("div"); actions.className = "rvc-inline-resource-actions";
+  if (status?.installing) { const cancel = rvcButton(status?.cancelling ? "正在取消…" : "取消下载", () => cancelRvcResourceInstall()); cancel.disabled = Boolean(status?.cancelling); actions.append(cancel); }
+  else actions.append(rvcButton(status?.error ? "重试下载" : "开始下载 RVC 资源", () => startRvcResourceInstall(), true));
+  card.append(title, detail, progress, actions); box.append(card);
+}
 function renderRvcInline() {
   const data = state.rvcInline; const box = data?.host; if (!box) return;
   const session = rvcSessionPayload(data.state); const phase = rvcPhase(data); box.replaceChildren();
+  if (!data.rvcResourceStatus) { pollRvcResourceStatus(data); }
+  const resourceStatus = data.rvcResourceStatus;
+  if (phase !== "awaiting_source" && !resourceStatus?.installing) stopRvcResourcePoll(data);
   const stage = document.createElement("div"); stage.className = "rvc-inline-stage";
+  if (phase === "awaiting_source" && resourceStatus && !rvcRuntimeReady(resourceStatus)) renderRvcResourceCard(box, resourceStatus);
   const labels = { awaiting_source: "等待参考音频或视频", uploaded: "文件已上传，请确认是否处理", extracting: "正在准备音频", normalizing: "正在标准化 WAV", ready: "音频已准备，正在进入人声分离", separating: "正在分离 Vocals 与 Instrumental", separated: "分离完成，请逐项确认转换配置", failed: "处理失败", cancelled: "任务已中止" };
   stage.textContent = data.result ? "RVC 变声完成" : (rvcProgressLabel(data, phase) || labels[phase] || session.message || "等待 Agent 提供下一步");
   if (phase !== "awaiting_source" && !data.result) {

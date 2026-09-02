@@ -2760,3 +2760,10 @@ body:has(#chat-view:not(.is-hidden)) .page-shell { width: 100%; max-width: none;
 #chat-layout .composer textarea:focus { border-color: color-mix(in srgb, var(--primary) 28%, transparent); box-shadow: none; outline: none; }
 #chat-layout .rvc-inline-model-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 #chat-layout .rvc-inline-model-actions .rvc-inline-button { flex: 0 0 auto; }
+
+/* In-chat RVC runtime setup: same light cyan task language, no nested scrolling. */
+.rvc-inline-resource-card { display: grid; gap: 9px; margin: 4px 0 12px; padding: 14px 16px; border: 1px solid color-mix(in srgb,#39c5bb 34%,var(--line,#d9e2e7)); border-radius: 10px; background: color-mix(in srgb,#39c5bb 7%,transparent); }
+.rvc-inline-resource-card strong { color: #258f89; font-size: 13px; }
+.rvc-inline-resource-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.rvc-inline-resource-card .rvc-inline-progress { margin: 2px 0; }
+.rvc-inline-resource-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start; }
