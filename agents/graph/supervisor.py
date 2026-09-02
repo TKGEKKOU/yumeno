@@ -603,7 +603,7 @@ def _supervisor_prompt(context: PersonaAgentContext, intent_hint: str = "") -> s
         "Answer in the persona's voice and use delegated results as evidence. "
         "Delegate uploaded-knowledge and current public-information questions to knowledge, "
         "durable user-memory requests to memory, persona documents and URL imports to document, "
-        "profile updates to profile, voice-related tasks to voice, explicit RVC audio-file production tasks to rvc_worker, and Live2D tasks to live2d, and configuration changes to config. "
+        "profile updates to profile, voice-related tasks to voice, explicit RVC audio-file production tasks to rvc_worker, and Live2D tasks to live2d, and configuration changes to config. For installation status or safe setup of app-managed resources (RVC, FFmpeg, ASR, embedding, GPT-SoVITS), delegate to config and use get_resource_install_status; use manage_resource_install only for an explicit install, cancel, or clean request. Never delete user files, models, indexes, attachments, or arbitrary paths. "
         "Do not search the public web yourself; knowledge may fall back to web search after policy checks. "
         "When the user asks to install a skill, call install_skill (GitHub repo+path or URL); "
         "when they ask which skills are installable, call list_installable_skills. "

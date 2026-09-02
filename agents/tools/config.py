@@ -217,6 +217,73 @@ def apply_config_change(
     }
 
 
+def _resource_managers(runtime: ToolRuntime[PersonaAgentContext]) -> dict[str, Any]:
+    """Return only application-owned resource managers; never inspect arbitrary paths."""
+    context = getattr(runtime, "context", None)
+    app_state = getattr(getattr(context, "agent_runtime", None), "app_state", None)
+    if app_state is None:
+        request = getattr(runtime, "request", None)
+        app_state = getattr(getattr(request, "app", None), "state", None)
+    if app_state is None:
+        return {}
+    return {
+        "rvc": getattr(app_state, "rvc_resources", None),
+        "ffmpeg": getattr(app_state, "ffmpeg_resources", None),
+        "asr": getattr(app_state, "asr_resources", None),
+        "embedding": getattr(app_state, "embedding_resources", None),
+        "gpt_sovits": getattr(app_state, "gpt_sovits_install", None),
+    }
+
+
+@tool
+def get_resource_install_status(
+    resource: str,
+    runtime: ToolRuntime[PersonaAgentContext],
+) -> dict[str, Any]:
+    """查询应用内受管资源的安装状态。resource 支持 rvc、ffmpeg、asr、embedding、gpt_sovits。"""
+    key = str(resource or "").strip().lower().replace("-", "_")
+    manager = _resource_managers(runtime).get(key)
+    if manager is None or not hasattr(manager, "status"):
+        return {"status": "failed", "resource": key, "error": "不支持或不可用的受管资源"}
+    try:
+        return {"status": "ok", "resource": key, "install": manager.status()}
+    except Exception as exc:
+        return {"status": "failed", "resource": key, "error": str(exc)}
+
+
+@tool
+def manage_resource_install(
+    resource: str,
+    action: Literal["install", "cancel", "clean"],
+    runtime: ToolRuntime[PersonaAgentContext],
+) -> dict[str, Any]:
+    """启动、取消或清理应用自有资源；不得操作用户模型、附件或任意路径。"""
+    key = str(resource or "").strip().lower().replace("-", "_")
+    manager = _resource_managers(runtime).get(key)
+    if manager is None:
+        return {"status": "failed", "resource": key, "error": "不支持或不可用的受管资源"}
+    try:
+        if action == "install":
+            method = getattr(manager, "start_install", None) or getattr(manager, "install", None)
+            if method is None:
+                return {"status": "failed", "resource": key, "error": "该资源没有安装器"}
+            result = method()
+        elif action == "cancel":
+            method = getattr(manager, "cancel_install", None)
+            if method is None:
+                return {"status": "failed", "resource": key, "error": "该资源不支持取消"}
+            result = method()
+        else:
+            method = getattr(manager, "remove_managed", None) or getattr(manager, "remove_install", None) or getattr(manager, "remove", None)
+            if method is None:
+                return {"status": "failed", "resource": key, "error": "该资源不支持安全清理"}
+            result = method()
+        return {"status": "accepted", "resource": key, "action": action, "install": result if isinstance(result, dict) else None}
+    except Exception as exc:
+        logger.exception("resource action failed: %s/%s", key, action)
+        return {"status": "failed", "resource": key, "action": action, "error": str(exc)}
+
+
 def _validate_config_value(
     category: str,
     field: str,

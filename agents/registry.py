@@ -59,6 +59,8 @@ from agents.tools.config import (
     get_config_detail,
     request_config_change,
     apply_config_change,
+    get_resource_install_status,
+    manage_resource_install,
 )
 from agents.tools.extended import (
     import_knowledge_from_url,
@@ -204,6 +206,8 @@ _TOOL_SPECS = (
     ToolSpec("open_live2d_model_directory", "live2d", open_live2d_model_directory),
     ToolSpec("list_available_configs", "config", list_available_configs),
     ToolSpec("get_config_detail", "config", get_config_detail),
+    ToolSpec("get_resource_install_status", "config", get_resource_install_status),
+    ToolSpec("manage_resource_install", "config", manage_resource_install, True, True),
     ToolSpec("request_config_change", "config", request_config_change, True, False),
     ToolSpec("apply_config_change", "config", apply_config_change, False, True),
     ToolSpec("import_knowledge_from_url", "document", import_knowledge_from_url, True, True),
