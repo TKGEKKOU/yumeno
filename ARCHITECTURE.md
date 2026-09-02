@@ -65,7 +65,7 @@ stateDiagram-v2
     [*] --> Supervisor
     Supervisor --> Completed: 直接回答
     Supervisor --> KnowledgePlan: delegate_to_knowledge
-    Supervisor --> ToolWorker: delegate_to_memory/document/profile/voice/live2d/config
+    Supervisor --> ToolWorker: delegate_to_memory/document/profile/voice/live2d/config_worker
     KnowledgePlan --> KnowledgeRetrieve
     KnowledgeRetrieve --> KnowledgeFallback
     KnowledgeFallback --> FinalizeKnowledge
@@ -120,7 +120,7 @@ RAG / SQL / web 都是确定性管线，不是 Worker 自由总结。
 
 ### 受限工具 Worker
 
-`memory` / `document` / `profile` / `voice` / `live2d` / `config` 是 `create_agent` 子图：各自 LLM、各自受限工具、各自 prompt，经 `finalize_*` 回 Supervisor。Worker 之间不互相调用，继续由 Supervisor 编排。
+`memory` / `document` / `profile` / `voice` / `live2d` / `config_worker` 是 `create_agent` 子图：各自 LLM、各自受限工具、各自 prompt，经 `finalize_*` 回 Supervisor。Worker 之间不互相调用，继续由 Supervisor 编排。
 
 URL 导入文档属于 `document`，不属于 knowledge 检索子图。
 

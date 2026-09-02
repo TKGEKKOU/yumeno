@@ -38,6 +38,7 @@ _PUBLIC_SPECIALIST_BY_WORKER = {
     "live2d": "management",
     # 读取旧 checkpoint / 旧客户端状态时兼容旧 canonical 名称。
     "voice_clone": "management",
+    "config_worker": "management",
     "config": "management",
     "web": "web",
     "management": "management",

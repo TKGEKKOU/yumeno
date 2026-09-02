@@ -64,6 +64,10 @@ class IntentAnalysis:
     requires_model: bool = True
     explicit_web: bool = False
     web_authorized: bool = False
+    # Advisory metadata for Core Agent; never a final routing decision.
+    configuration_hint: bool = False
+    configuration_subject: str | None = None
+    requested_action: str | None = None
 
     def to_state(self) -> dict:
         return {
@@ -100,6 +104,9 @@ class IntentAnalysis:
             f"negated={negated}; inherited={str(self.inherited).lower()}; "
             f"explicit_web={str(self.explicit_web).lower()}; "
             f"web_authorized={str(self.web_authorized).lower()}; "
+            f"configuration_hint={str(self.configuration_hint).lower()}; "
+            f"configuration_subject={self.configuration_subject or 'none'}; "
+            f"requested_action={self.requested_action or 'none'}; "
             f"ui_command={self.ui_command or 'none'}"
             "</intent_funnel>"
         )
@@ -122,6 +129,16 @@ def analyze_intents(text: str, previous: IntentAnalysis | None = None) -> Intent
             return IntentAnalysis("ui", ("ui",), ui_command=command, requires_model=False)
 
     explicit_web = bool(_EXPLICIT_WEB_RE.search(normalized))
+    # Configuration is advisory context for the Core Agent, not a hard route.
+    config_action_map = (
+        ("status", ("检查", "查询", "查看", "是否配置", "配置状态", "缺什么", "依赖")),
+        ("install", ("安装", "下载", "补全", "更新", "升级")),
+        ("cancel", ("取消下载", "停止安装", "中止下载")),
+        ("clean", ("清理", "卸载", "删除缓存")),
+    )
+    configuration_hint = any(token in normalized for _, tokens in config_action_map for token in tokens)
+    requested_action = next((action for action, tokens in config_action_map if any(token in normalized for token in tokens)), None)
+    configuration_subject = next((subject for subject, tokens in (("rvc", ("rvc", "变声")), ("ffmpeg", ("ffmpeg",)), ("asr", ("asr", "语音识别")), ("embedding", ("embedding", "嵌入模型")), ("gpt_sovits", ("gpt-sovits", "gpt sovits"))) if any(token in normalized for token in tokens)), None)
     fresh_external = (
         any(signal in normalized for signal in _WEB_FRESHNESS_SIGNALS)
         and any(subject in normalized for subject in _EXTERNAL_FACT_OBJECTS)
@@ -168,6 +185,9 @@ def analyze_intents(text: str, previous: IntentAnalysis | None = None) -> Intent
             tuple(intent for intent in _PRIORITY if intent in negated),
             explicit_web=explicit_web,
             web_authorized=(explicit_web or fresh_external or requested_external),
+            configuration_hint=configuration_hint,
+            configuration_subject=configuration_subject,
+            requested_action=requested_action,
         )
     if previous and previous.primary not in {None, "ui"} and _ELLIPSIS_RE.fullmatch(normalized):
         return IntentAnalysis(
@@ -177,7 +197,7 @@ def analyze_intents(text: str, previous: IntentAnalysis | None = None) -> Intent
             inherited=True,
             web_authorized=previous.web_authorized,
         )
-    return IntentAnalysis(None, (), tuple(intent for intent in _PRIORITY if intent in negated))
+    return IntentAnalysis(None, (), tuple(intent for intent in _PRIORITY if intent in negated), configuration_hint=configuration_hint, configuration_subject=configuration_subject, requested_action=requested_action)
 
 
 def _message_text(message) -> str:

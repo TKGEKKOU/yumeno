@@ -68,7 +68,7 @@ from agents.tools.extended import (
 )
 
 
-_WORKER_COMPAT_ALIASES = {"rvc": "rvc_worker", "voice_clone": "voice"}
+_WORKER_COMPAT_ALIASES = {"rvc": "rvc_worker", "voice_clone": "voice", "config": "config_worker"}
 
 
 def _canonical_worker_name(value: str | None) -> str | None:
@@ -91,7 +91,7 @@ class ToolSpec:
     server: str = ""
 
 
-_WORKER_ORDER = ("knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config")
+_WORKER_ORDER = ("knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config_worker")
 
 _WORKER_DESCRIPTIONS = {
     "knowledge": "在当前角色知识空间中检索、查询结构化数据，并按策略补充公开信息。",
@@ -101,7 +101,7 @@ _WORKER_DESCRIPTIONS = {
     "voice": "统一管理音色、TTS、ASR、实时语音、Voice Studio、训练与 GPT-SoVITS。",
     "rvc_worker": "管理本地 RVC 音色转换资源，并提交和跟踪受管的音频变声任务。",
     "live2d": "统一管理 Live2D 模型、VTube Studio 连接和本地模型目录。",
-    "config": "读取系统配置，并在确认后应用配置变更。",
+    "config_worker": "查询、安装、更新、取消和安全清理应用受管资源；不执行具体功能任务。",
 }
 
 _WORKER_EXECUTION_DEFAULTS = {
@@ -112,7 +112,7 @@ _WORKER_EXECUTION_DEFAULTS = {
     "voice": (300.0, WorkerRetryPolicy(max_attempts=1)),
     "rvc_worker": (1800.0, WorkerRetryPolicy(max_attempts=1)),
     "live2d": (45.0, WorkerRetryPolicy(max_attempts=1)),
-    "config": (45.0, WorkerRetryPolicy(max_attempts=1)),
+    "config_worker": (45.0, WorkerRetryPolicy(max_attempts=1)),
 }
 
 _WORKER_INPUT_SCHEMA = {
@@ -204,12 +204,12 @@ _TOOL_SPECS = (
     ToolSpec("list_live2d_models", "live2d", list_live2d_models),
     ToolSpec("get_live2d_vts_config", "live2d", get_live2d_vts_config),
     ToolSpec("open_live2d_model_directory", "live2d", open_live2d_model_directory),
-    ToolSpec("list_available_configs", "config", list_available_configs),
-    ToolSpec("get_config_detail", "config", get_config_detail),
-    ToolSpec("get_resource_install_status", "config", get_resource_install_status),
-    ToolSpec("manage_resource_install", "config", manage_resource_install, True, True),
-    ToolSpec("request_config_change", "config", request_config_change, True, False),
-    ToolSpec("apply_config_change", "config", apply_config_change, False, True),
+    ToolSpec("list_available_configs", "config_worker", list_available_configs),
+    ToolSpec("get_config_detail", "config_worker", get_config_detail),
+    ToolSpec("get_resource_install_status", "config_worker", get_resource_install_status),
+    ToolSpec("manage_resource_install", "config_worker", manage_resource_install, True, True),
+    ToolSpec("request_config_change", "config_worker", request_config_change, True, False),
+    ToolSpec("apply_config_change", "config_worker", apply_config_change, False, True),
     ToolSpec("import_knowledge_from_url", "document", import_knowledge_from_url, True, True),
     ToolSpec("export_conversation", "profile", export_conversation),
 )
@@ -379,9 +379,3 @@ def capability_summary() -> str:
         summary += f"外部 MCP 工具（需先加载对应技能）：{mcp_tools}。"
     summary += "联网搜索使用 web_search；需在设置页配置 API key 后才可用。"
     return summary
-
-
-
-
-
-

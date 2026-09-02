@@ -13,7 +13,7 @@ def test_worker_manifests_are_derived_from_registered_tools():
         "voice",
         "rvc_worker",
         "live2d",
-        "config",
+        "config_worker",
     ]
 
     specs = tool_specs()

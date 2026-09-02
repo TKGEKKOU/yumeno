@@ -125,7 +125,7 @@ def _handoff_tool(worker: Worker):
                 "voice": "正在准备声音系统流程",
                 "rvc_worker": "正在准备 RVC 音频生产流程",
                 "live2d": "正在准备 Live2D 流程",
-                "config": "正在修改配置",
+                "config_worker": "正在处理系统配置",
             }
             writer({"kind": "stage", "stage": stage_names.get(worker, f"正在调用 {worker}")})
         except RuntimeError:
@@ -157,7 +157,7 @@ _TASK_TYPES_BY_WORKER = {
     "voice": {"voice_asset", "voice_clone", "legacy_request"},
     "rvc_worker": {"convert_audio_with_rvc", "mix_rvc_instrumental", "prepare_rvc_source", "separate_rvc_vocals", "cancel_rvc_task", "legacy_request"},
     "live2d": {"manage_live2d", "legacy_request"},
-    "config": {"update_config", "legacy_request"},
+    "config_worker": {"update_config", "resource_status", "resource_install", "legacy_request"},
 }
 
 
@@ -603,7 +603,7 @@ def _supervisor_prompt(context: PersonaAgentContext, intent_hint: str = "") -> s
         "Answer in the persona's voice and use delegated results as evidence. "
         "Delegate uploaded-knowledge and current public-information questions to knowledge, "
         "durable user-memory requests to memory, persona documents and URL imports to document, "
-        "profile updates to profile, voice-related tasks to voice, explicit RVC audio-file production tasks to rvc_worker, and Live2D tasks to live2d, and configuration changes to config. For installation status or safe setup of app-managed resources (RVC, FFmpeg, ASR, embedding, GPT-SoVITS), delegate to config and use get_resource_install_status; use manage_resource_install only for an explicit install, cancel, or clean request. Never delete user files, models, indexes, attachments, or arbitrary paths. "
+        "profile updates to profile, voice-related tasks to voice, explicit RVC audio-file production tasks to rvc_worker, and Live2D tasks to live2d, and configuration changes to config_worker. For installation status or safe setup of app-managed resources (RVC, FFmpeg, ASR, embedding, GPT-SoVITS), delegate to config_worker and use get_resource_install_status; use manage_resource_install only for an explicit install, cancel, or clean request. Never delete user files, models, indexes, attachments, or arbitrary paths. "
         "Do not search the public web yourself; knowledge may fall back to web search after policy checks. "
         "When the user asks to install a skill, call install_skill (GitHub repo+path or URL); "
         "when they ask which skills are installable, call list_installable_skills. "
@@ -826,7 +826,7 @@ def _finalize_worker(worker: Worker):
                 "voice": "声音任务已完成，等待后续操作…",
                 "rvc_worker": "RVC 音频生产任务已完成，整理结果中…",
                 "live2d": "Live2D 任务已完成，整理结果中…",
-                "config": "配置修改完成",
+                "config_worker": "配置处理完成",
             }
             writer({"kind": "stage", "stage": complete_names.get(worker, f"{worker} 完成")})
         except RuntimeError:
@@ -1042,4 +1042,3 @@ def _finalize_worker(worker: Worker):
         return updates
 
     return finalize
-

@@ -156,7 +156,7 @@ flowchart TD
   D -->|delegate_to_voice| V[voice Worker]
   D -->|delegate_to_rvc_worker| RV[rvc_worker Worker]
   D -->|delegate_to_live2d| L[live2d Worker]
-  D -->|delegate_to_config| C[config Worker]
+  D -->|delegate_to_config_worker| C[config_worker Worker]
   K --> FK[finalize_knowledge]
   M --> FM[finalize_memory]
   D --> FD[finalize_document]
@@ -164,7 +164,7 @@ flowchart TD
   V --> FV[finalize_voice]
   RV --> FRV[finalize_rvc_worker]
   L --> FL[finalize_live2d]
-  C --> FC[finalize_config]
+  C --> FC[finalize_config_worker]
   FK --> S
   FM --> S
   FD --> S

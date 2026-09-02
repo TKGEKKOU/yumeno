@@ -31,7 +31,7 @@ _DIRECT_STAGE_LABELS = {
     "voice": "已识别为声音系统请求，正在准备处理…",
     "rvc_worker": "正在分析请求…",
     "live2d": "已识别为 Live2D 请求，正在准备处理…",
-    "config": "已识别为配置请求，正在检查变更…",
+    "config_worker": "已识别为配置请求，正在检查资源…",
 }
 
 
@@ -162,5 +162,3 @@ def build_persona_workflow(
             },
         )
     return builder.compile(checkpointer=checkpointer, name="persona_workflow")
-
-

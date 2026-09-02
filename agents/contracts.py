@@ -91,7 +91,7 @@ class WorkerManifest:
 class SpecialistResult:
     """Worker 与 Supervisor 之间的稳定合同，避免依赖自然语言模板解析。"""
 
-    specialist: Literal["knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config"]
+    specialist: Literal["knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config_worker"]
     status: SpecialistStatus
     answer: str = ""
     evidence: tuple[dict[str, Any], ...] = ()

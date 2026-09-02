@@ -65,7 +65,7 @@ def test_shadow_architecture_modules_are_removed():
 
 
 def test_workers_are_the_single_runtime_set():
-    assert WORKERS == ("knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config")
+    assert WORKERS == ("knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config_worker")
     graph = build_persona_workflow(model=None, checkpointer=None)
     node_names = set(graph.get_graph().nodes)
     for worker in WORKERS:

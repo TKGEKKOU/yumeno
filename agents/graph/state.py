@@ -5,11 +5,11 @@ from typing import Any, Literal, NotRequired, TypedDict
 from langgraph.graph import MessagesState
 
 
-Worker = Literal["knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config"]
-WORKERS: tuple[Worker, ...] = ("knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config")
+Worker = Literal["knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config_worker"]
+WORKERS: tuple[Worker, ...] = ("knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config_worker")
 
 # 只用于读取旧 checkpoint / 旧客户端状态；新图和新合同永远使用 canonical 名称。
-LEGACY_WORKER_ALIASES = {"voice_clone": "voice", "rvc": "rvc_worker"}
+LEGACY_WORKER_ALIASES = {"voice_clone": "voice", "rvc": "rvc_worker", "config": "config_worker"}
 
 
 class DispatchRequest(TypedDict, total=False):
@@ -95,4 +95,3 @@ class SupervisorAgentState(MessagesState):
     task_type: NotRequired[str | None]
     input_refs: NotRequired[dict[str, Any]]
     selected_options: NotRequired[dict[str, Any]]
-

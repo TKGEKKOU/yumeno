@@ -5,7 +5,7 @@ from langchain.messages import HumanMessage, ToolMessage
 from agents.intent_funnel import IntentAnalysis
 from agents.graph.state import WORKERS, canonicalize_worker_name, worker_node_name
 
-_DIRECT_WORKER_INTENTS = {"memory", "document", "profile", "voice", "rvc", "rvc_worker", "live2d", "config", "management"}
+_DIRECT_WORKER_INTENTS = {"memory", "document", "profile", "voice", "rvc", "rvc_worker", "live2d", "config", "config_worker", "management"}
 
 
 def direct_worker_for_intent(intent: dict | None) -> str | None:

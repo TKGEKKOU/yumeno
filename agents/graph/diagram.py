@@ -18,7 +18,7 @@ _WORKER_NODES = {
     "voice": ("V", "voice Worker"),
     "rvc_worker": ("RV", "rvc_worker Worker"),
     "live2d": ("L", "live2d Worker"),
-    "config": ("C", "config Worker"),
+    "config_worker": ("C", "config_worker Worker"),
 }
 
 

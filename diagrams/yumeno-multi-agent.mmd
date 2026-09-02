@@ -1,0 +1,36 @@
+%% YUMENO 完整 Multi-Agent 父图
+%% 强意图由 intent_route 直达 Worker；其余交给 Supervisor
+flowchart TD
+  START([START]) --> R[intent_route]
+  R -->|模糊 / knowledge / web| S[persona_supervisor]
+  S -->|直接回答| END([父图 END])
+  S -->|需要执行| D[supervisor_dispatch]
+  D -->|收集必要输入| C[supervisor_collect]
+  C --> S
+  R -->|强意图| S
+  D -->|delegate_to_knowledge| K[knowledge 子图]
+  D -->|delegate_to_memory| M[memory Worker]
+  D -->|delegate_to_document| D[document Worker]
+  D -->|delegate_to_profile| P[profile Worker]
+  D -->|delegate_to_voice| V[voice Worker]
+  D -->|delegate_to_rvc_worker| RV[rvc_worker Worker]
+  D -->|delegate_to_live2d| L[live2d Worker]
+  D -->|delegate_to_config_worker| C[config_worker Worker]
+  K --> FK[finalize_knowledge]
+  M --> FM[finalize_memory]
+  D --> FD[finalize_document]
+  P --> FP[finalize_profile]
+  V --> FV[finalize_voice]
+  RV --> FRV[finalize_rvc_worker]
+  L --> FL[finalize_live2d]
+  C --> FC[finalize_config_worker]
+  FK --> S
+  FM --> S
+  FD --> S
+  FP --> S
+  FV --> S
+  FRV --> S
+  FL --> S
+  FC --> S
+  FRV --> RW[rvc_wait_boundary]
+  RW --> S

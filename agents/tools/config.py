@@ -244,11 +244,12 @@ def get_resource_install_status(
     key = str(resource or "").strip().lower().replace("-", "_")
     manager = _resource_managers(runtime).get(key)
     if manager is None or not hasattr(manager, "status"):
-        return {"status": "failed", "resource": key, "error": "不支持或不可用的受管资源"}
+        return {"status": "failed", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": "status", "error": "不支持或不可用的受管资源"}
     try:
-        return {"status": "ok", "resource": key, "install": manager.status()}
+        install = manager.status()
+        return {"status": "ok", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": "status", "install": install, "phase": (install or {}).get("phase") if isinstance(install, dict) else None, "progress_percent": (install or {}).get("progress_percent", (install or {}).get("progress", 0)) if isinstance(install, dict) else 0, "missing": (install or {}).get("missing", []) if isinstance(install, dict) else []}
     except Exception as exc:
-        return {"status": "failed", "resource": key, "error": str(exc)}
+        return {"status": "failed", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": "status", "error": str(exc)}
 
 
 @tool
@@ -278,10 +279,10 @@ def manage_resource_install(
             if method is None:
                 return {"status": "failed", "resource": key, "error": "该资源不支持安全清理"}
             result = method()
-        return {"status": "accepted", "resource": key, "action": action, "install": result if isinstance(result, dict) else None}
+        return {"status": "accepted", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": action, "install": result if isinstance(result, dict) else None, "phase": (result or {}).get("phase") if isinstance(result, dict) else "accepted", "progress_percent": (result or {}).get("progress_percent", (result or {}).get("progress", 0)) if isinstance(result, dict) else 0}
     except Exception as exc:
         logger.exception("resource action failed: %s/%s", key, action)
-        return {"status": "failed", "resource": key, "action": action, "error": str(exc)}
+        return {"status": "failed", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": action, "error": str(exc)}
 
 
 def _validate_config_value(
