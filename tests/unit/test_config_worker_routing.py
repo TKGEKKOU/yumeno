@@ -16,3 +16,11 @@ def test_configuration_is_advisory_not_rvc_feature_route():
     assert result.configuration_hint is True
     assert result.configuration_subject == "rvc"
     assert result.requested_action == "status"
+
+
+def test_configuration_advisory_metadata_survives_graph_state_round_trip():
+    result = analyze_intents("请检查 RVC 的配置状态")
+    restored = type(result).from_state(result.to_state())
+    assert restored.configuration_hint is True
+    assert restored.configuration_subject == "rvc"
+    assert restored.requested_action == "status"

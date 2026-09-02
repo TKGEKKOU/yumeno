@@ -79,6 +79,12 @@ class IntentAnalysis:
             "requires_model": self.requires_model,
             "explicit_web": self.explicit_web,
             "web_authorized": self.web_authorized,
+            # Keep advisory configuration metadata in the graph checkpoint.
+            # Without these fields the Core Agent only receives primary/candidates
+            # and may mistake “检查 RVC 配置” for an RVC production request.
+            "configuration_hint": self.configuration_hint,
+            "configuration_subject": self.configuration_subject,
+            "requested_action": self.requested_action,
         }
 
     @classmethod
@@ -93,6 +99,9 @@ class IntentAnalysis:
             requires_model=bool(value.get("requires_model", True)),
             explicit_web=bool(value.get("explicit_web")),
             web_authorized=bool(value.get("web_authorized")),
+            configuration_hint=bool(value.get("configuration_hint")),
+            configuration_subject=value.get("configuration_subject"),
+            requested_action=value.get("requested_action"),
         )
 
     def as_prompt_hint(self) -> str:
