@@ -250,6 +250,11 @@ class LauncherApi:
                 step["state"] = "fail"
                 step["detail"] = message
 
+    def _uses_embedded_milvus(self) -> bool:
+        """本地 milvus-lite 不需要 Docker/Compose 基础设施。"""
+        uri = str(self.settings.milvus_uri or "").strip().lower()
+        return not uri.startswith(("http://", "https://", "tcp://", "unix://"))
+
     def _milvus_port(self) -> int:
         try:
             if self.settings.milvus_uri.startswith("./"):
@@ -322,42 +327,48 @@ class LauncherApi:
 
     def _start_worker(self) -> None:
         try:
-            self._set_step("docker", "running", "正在启动 Docker 引擎…")
-            self.docker.ensure_ready()
-            self._set_step("docker", "ok", "Docker 引擎已就绪")
-            self._set_step("containers", "running", "正在准备环境…")
-            self._tick_step_detail("containers", self._compose_summary)
-            self.docker.compose_up()
-            self._set_step("containers", "ok", "容器已创建，正在启动服务…")
-            milvus_port = self._milvus_port()
-            self._set_step("milvus", "running", f"正在启动 Milvus（127.0.0.1:{milvus_port}）…")
-            if not self._wait_port(
-                milvus_port,
-                on_tick=lambda: self._set_step("milvus", "running", self._compose_summary()),
-            ):
-                raise RuntimeError("Milvus 启动超时，请检查 Docker 容器状态")
-            self._set_step("milvus", "ok", "Milvus 已连接")
-            self._set_step("attu", "running", "正在启动 Attu（127.0.0.1:17003）…")
-            attu_ready = self._wait_port(
-                17003,
-                timeout=25,
-                on_tick=lambda: self._set_step("attu", "running", self._compose_summary()),
-            )
-            if not attu_ready:
-                self._set_step("attu", "running", "Attu 启动异常，正在重试…")
-                try:
-                    self.docker._run([self.docker.docker, "compose", "restart", "attu"])
-                except Exception:
-                    pass
+            if self._uses_embedded_milvus():
+                # 默认配置使用 milvus-lite：它在 FastAPI 进程内打开本地文件，
+                # Desktop 不应因为 Docker/Attu 不可用而阻塞启动。
+                for key in ("docker", "containers", "milvus", "attu"):
+                    self._steps.pop(key, None)
+            else:
+                self._set_step("docker", "running", "正在启动 Docker 引擎…")
+                self.docker.ensure_ready()
+                self._set_step("docker", "ok", "Docker 引擎已就绪")
+                self._set_step("containers", "running", "正在准备环境…")
+                self._tick_step_detail("containers", self._compose_summary)
+                self.docker.compose_up()
+                self._set_step("containers", "ok", "容器已创建，正在启动服务…")
+                milvus_port = self._milvus_port()
+                self._set_step("milvus", "running", f"正在启动 Milvus（127.0.0.1:{milvus_port}）…")
+                if not self._wait_port(
+                    milvus_port,
+                    on_tick=lambda: self._set_step("milvus", "running", self._compose_summary()),
+                ):
+                    raise RuntimeError("Milvus 启动超时，请检查 Docker 容器状态")
+                self._set_step("milvus", "ok", "Milvus 已连接")
+                self._set_step("attu", "running", "正在启动 Attu（127.0.0.1:17003）…")
                 attu_ready = self._wait_port(
                     17003,
-                    timeout=40,
+                    timeout=25,
                     on_tick=lambda: self._set_step("attu", "running", self._compose_summary()),
                 )
-            if attu_ready:
-                self._set_step("attu", "ok", "Attu 已就绪")
-            else:
-                self._set_step("attu", "ok", "Attu 未就绪（不影响主服务）")
+                if not attu_ready:
+                    self._set_step("attu", "running", "Attu 启动异常，正在重试…")
+                    try:
+                        self.docker._run([self.docker.docker, "compose", "restart", "attu"])
+                    except Exception:
+                        pass
+                    attu_ready = self._wait_port(
+                        17003,
+                        timeout=40,
+                        on_tick=lambda: self._set_step("attu", "running", self._compose_summary()),
+                    )
+                if attu_ready:
+                    self._set_step("attu", "ok", "Attu 已就绪")
+                else:
+                    self._set_step("attu", "ok", "Attu 未就绪（不影响主服务）")
             if self.server.is_running():
                 self._set_step("service", "running", "检测到本地服务，正在校验…")
             else:

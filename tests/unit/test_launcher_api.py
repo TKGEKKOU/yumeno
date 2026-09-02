@@ -26,10 +26,12 @@ class FakeDocker:
         return type("R", (), {"returncode": 0, "stdout": "abc\n"})()
 
     def ensure_ready(self):
-        pass
+        self.actions.append("ensure_ready")
+        if not self.ready:
+            raise RuntimeError("Docker unavailable")
 
     def compose_up(self):
-        pass
+        self.actions.append("compose_up")
 
     def compose_stop(self):
         self.actions.append("stop")
@@ -150,6 +152,28 @@ def test_running_detail_refresh_does_not_reset_elapsed(tmp_path: Path):
     assert api._step_started["containers"] == first
     api._set_step("containers", "ok", "容器已创建")
     assert "containers" not in api._step_started
+
+
+def test_start_skips_docker_for_embedded_milvus(tmp_path: Path):
+    """默认 milvus-lite 启动 Desktop 时不应依赖 Docker/Compose。"""
+    server = FakeServer(False)
+    server.settings.milvus_uri = "./data/milvus_local.db"
+    docker = FakeDocker(False)
+    api = LauncherApi(tmp_path, docker, server)
+    api._wait_http = lambda timeout=15: True
+
+    result = api.start()
+    assert result["ok"] is True
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not api.progress()["done"]:
+        time.sleep(0.02)
+
+    progress = api.progress()
+    assert progress["done"] is True
+    assert progress["ok"] is True
+    assert server.started is True
+    assert docker.actions == []
+    assert {step["key"] for step in progress["steps"]}.isdisjoint({"docker", "containers", "milvus", "attu"})
 
 
 def test_start_boots_server_and_registers_shutdown_callback(tmp_path: Path):
