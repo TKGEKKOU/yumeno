@@ -52,3 +52,6 @@ CONOUT$
 .chat_extract.txt
 .tmp_*
 logs/
+
+# JavaScript dependencies (install with npm ci)
+node_modules/
