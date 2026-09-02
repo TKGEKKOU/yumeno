@@ -1,5 +1,7 @@
 # YUMENO 项目优化总结
 
+> 现行架构以 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [diagrams/](diagrams/) 为准。`agents/security.py`、`agents/worker_registry.py`、`agents/monitoring.py` 均已删除或从未接入生产图。下文若与现行文档冲突，以现行文档为准。
+
 ## 🎯 优化目标
 
 > "设计最符合项目要求的 LangGraph 多 agent 架构，让我好写简历。重点是 RAG + Multi-Agent 架构，其次是 skill、tool、MCP。"
@@ -95,19 +97,19 @@
 
 #### 设计文档
 
-创建了 gents/security.py，包含：
+未接线的 `agents/security.py` 已删除。原先计划包含：
 - 工具级权限验证装饰器
 - 输入验证和清洗（路径遍历、SQL 注入、长度限制）
 - 速率限制机制
 - 审计日志记录
 
-**注意**：装饰器实现需要适配 LangChain 实际 API，当前作为设计参考。
+这些设计没有接入生产图。现行权限边界是 `agents/registry.py` + `agents/graph/middleware.py` + `agents/sql_security.py` + 服务端 `PersonaAgentContext`。
 
 ### 3. 可扩展性设计
 
 #### 动态 Worker 注册机制
 
-创建了 gents/worker_registry.py：
+不存在 `agents/worker_registry.py`。下面是已废弃的热加载设想：
 
 `python
 # 定义 Worker 规格
@@ -122,11 +124,11 @@ email_worker = WorkerSpec(
 # 注册（运行时）
 register_worker(email_worker)
 
-# 自动生效，无需修改核心代码
+# 已废弃：父图不会因为 register_worker 自动改变拓扑
 `
 
 **优势**：
-- 运行时添加/移除 Worker
+- （已废弃）运行时添加/移除 Worker
 - 符合开闭原则
 - 便于插件化扩展
 
@@ -265,19 +267,19 @@ health = global_monitor.get_health_status()
 Python, FastAPI, LangChain, LangGraph, Milvus, SQLite, Vue.js, WebSocket
 
 ### 项目描述
-基于 LangGraph 设计的生产级多智能体系统，采用 Supervisor + 6 Worker 架构，实现知识检索、记忆管理、语音克隆等功能。强调安全性（工具权限隔离 + HITL 审批）、可扩展性（动态 Worker 注册 + MCP 集成）和可观测性（分布式追踪 + 健康检查）。
+基于 LangGraph 的角色化多智能体系统：Supervisor 负责策略和最终表达，knowledge 走 Planner + 确定性 RAG/SQL/联网管线，其余领域 Worker 使用受限工具并经合同回传。强调权限隔离、HITL、checkpoint 恢复。
 
 ### 核心亮点
 
-1. **多智能体架构**：基于 LangGraph 设计 1 Supervisor + 6 Worker 分工协作系统，通过 Command.PARENT 机制实现子图通信，使用 MemorySaver 持久化会话状态；LLM 只做策略决策，工具执行交给确定性代码
+1. **多智能体架构**：LangGraph Supervisor 编排 knowledge 子图与 5 个受限工具 Worker；knowledge 走 Planner + 确定性管线，全部经 finalize 合同回 Supervisor
 
-2. **安全机制**：实现工具级权限验证，29 个工具按最小权限原则分配到 6 个 Worker；14 个敏感操作采用 HITL 二次审批流程；集成输入验证、速率限制、审计日志等多层防护
+2. **安全机制**：工具按 specialist 隔离；写操作和策略化联网走 HITL；SQL 校验与服务端作用域注入。没有装饰器二次鉴权，也没有独立速率限制/审计模块。
 
-3. **可扩展性**：设计动态 Worker 注册机制，支持运行时添加/移除 Worker；集成 MCP 协议和技能系统，可动态加载外部工具和自定义能力
+3. **可扩展性**：新领域必须改 WORKERS 和父图；真正的动态扩展面是 MCP 和技能系统
 
 4. **RAG 优化**：基于 Milvus 向量数据库实现多提供商 Embedding 和 Reranker；设计质量门禁机制（相似度过滤 + 上下文限制）；knowledge_worker 返回结构化证据合同，包含引用、不确定性和置信度
 
-5. **可观测性**：实现分布式追踪系统记录完整调用链；设计 Metrics 收集器统计调用次数、成功率、响应时间；提供健康检查接口监控 Worker 状态
+5. **可观测性**：请求级 RunRecorder 记录 stage、handoff、TTFT 和 token，并推给前端过程气泡
 
 ---
 
@@ -317,15 +319,15 @@ A: 我采用了多层安全防护：
 
 3. **输入验证**：防止路径遍历、SQL 注入、内容过长等攻击
 
-4. **速率限制**：防止 API 滥用，如语音训练限制 3 次/天
+4. **意图硬门禁**：搜索工具只认 intent_decision.web_authorized
 
-5. **审计日志**：所有工具调用可追溯，记录谁、何时、做了什么、结果如何
+5. **请求级事件**：本轮 stage / handoff / 失败进入 RunRecorder，不是独立审计集群
 
 ---
 
 **Q: 系统如何扩展新功能？**
 
-A: 我设计了动态 Worker 注册机制，非常容易扩展：
+A: 扩展领域必须显式改图，不能热加载：
 
 `python
 # 1. 定义工具
@@ -349,7 +351,7 @@ email_worker = WorkerSpec(
 # 4. 注册 Worker
 register_worker(email_worker)
 
-# 下次构建图时自动包含，无需修改核心代码
+# 还必须改 WORKERS、handoff 和 build_persona_workflow
 `
 
 同时集成了 MCP 协议，可以动态加载 GitHub、Slack 等外部工具。实现了技能系统，用户可以安装自定义技能。
@@ -375,9 +377,9 @@ A: 我实现了完整的可观测性系统：
 ### 核心代码
 - gents/workflow.py - LangGraph 主图（1045+ 行）
 - gents/registry.py - 工具注册表（215 行）
-- gents/worker_registry.py - 动态 Worker 注册（新增）
-- gents/security.py - 安全机制设计（新增）
-- gents/monitoring.py - 监控模块（新增）
+- （已删除）agents/worker_registry.py
+- （已删除）agents/security.py
+- （已删除）agents/monitoring.py
 - gents/tools/ - 工具实现目录
 
 ### 文档

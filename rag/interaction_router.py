@@ -45,3 +45,17 @@ def route_interaction(question: str, enable_web_search: bool) -> InteractionMode
     if analysis.primary == "conversation":
         return "conversation"
     return classify_ambiguous(question)
+
+
+def route_interaction_for_tests(question: str, enable_web_search: bool) -> InteractionMode:
+    """测试入口：不访问真实 LLM，模糊问题按知识路由。"""
+    analysis = analyze_intents(question)
+    if analysis.primary == "web" and enable_web_search:
+        return "web"
+    if analysis.primary in {"management", "memory", "knowledge"}:
+        return "knowledge"
+    if analysis.primary == "capability":
+        return "capability"
+    if analysis.primary == "conversation":
+        return "conversation"
+    return "knowledge"

@@ -1,18 +1,22 @@
 """Adaptive/Corrective RAG 状态机。
 
-主路径为路由 -> 检索 -> 批量证据评分 -> 生成 -> 质量门；证据不足时按上限执行
+主路径为路由 -> 检索 -> Reranker 精排 -> 生成 -> 质量门；证据不足时按上限执行
 查询改写、联网回退或答案纠错，超过边界后返回保守的无答案结果。
 """
 
+import inspect
+import logging
 import time
 from typing import Any, Callable
+
+from langchain_core.documents import Document
 
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 from typing_extensions import TypedDict
 
 from settings import Settings
-from rag.contracts import RagQueryContext
+from rag.contracts import RagErrorCode, RagQueryContext, public_rag_error_message
 from rag.generate import format_documents, generate_answer
 from rag.graders import grade_answer_quality, grade_retrieved_documents
 from rag.query_rewriter import rewrite_query
@@ -27,10 +31,12 @@ from rag.context_assembler import assemble_context
 from rag.web_search import web_search_documents
 from ingestion.embeddings import get_embedding_model
 from ingestion.local_reranker.client import get_managed_reranker
+from rag.reranker_runtime import build_reranker
 from ingestion.milvus_store import KnowledgeSpaceScope, MilvusRagStore
 
 
 settings = Settings.load()
+logger = logging.getLogger(__name__)
 
 # Qwen3-Reranker scores are probabilities for the yes/no relevance decision.
 # A batch whose best score is below this floor is treated as unrelated evidence.
@@ -47,10 +53,10 @@ RERANK_RELEVANCE_THRESHOLD = 0.1
 #                                           └──────────────┘        web_search / no_answer
 #
 # 设计要点：
-# 1. 证据先"批量化评分"再生成：一次 LLM 调用对全部候选片段打标（相关/不相关 +
-#    confidence），避免逐片段调用放大成本，同时滤掉仅有词面重合的干扰片段。
+# 1. 证据先经过 Reranker 精排再生成：按相关性分数截断候选，并在 Reranker
+#    不可用时确定性降级且降低置信度，避免把降级结果当成高质量证据。
 # 2. 生成结果统一过"质量门"：只有 grounded（事实接地点）与 useful（解决问题）
-#    同时为真才放行；confidence 达到阈值时跳过 LLM 门检，直接按高置信通过。
+#    同时为真才放行；Reranker 分数不代替答案级事实校验。
 # 3. 纠错回路有硬边界：rewrite_count / generation_retry_count / web 兜底都受
 #    配置限制，模型无法制造无限循环；最终兜底是保守的 no_answer。
 # 4. trace 只记录可公开的摘要（节点名、片段数、置信度、是否有答案），不落 prompt。
@@ -84,7 +90,17 @@ class AdaptiveRagState(TypedDict, total=False):
     available_tools: tuple[str, ...]
     interaction_mode: str
     force_knowledge: bool
+    prefetched_web_documents: tuple[dict, ...] | None
     irrelevant_after_rerank: bool
+    runtime_settings: Settings
+    error_code: str
+    error_message: str
+
+
+def _runtime_settings(state: dict) -> Settings:
+    """返回本次请求的 Settings；旧的直接节点调用保留模块默认值。"""
+    value = state.get("runtime_settings")
+    return value if isinstance(value, Settings) else settings
 
 
 def _complete(
@@ -101,6 +117,7 @@ def _complete(
             "document_count": len(completed.get("documents") or []),
             "confidence": completed.get("confidence"),
             "has_answer": bool(completed.get("answer")),
+            "error_code": completed.get("error_code"),
             "ts": time.perf_counter(),
         }
     )
@@ -112,9 +129,13 @@ def route_query_node(state: AdaptiveRagState) -> AdaptiveRagState:
     # Agent 的 knowledge Worker 已经完成意图路由时可强制走知识链，避免在 RAG
     # 内部再次把同一问题误分到闲聊分支。
     decision = (
-        "knowledge"
-        if state.get("force_knowledge", False)
-        else route_interaction(state["question"], bool(state.get("allow_web_fallback", False)))
+        "web"
+        if state.get("prefetched_web_documents") is not None
+        else (
+            "knowledge"
+            if state.get("force_knowledge", False)
+            else route_interaction(state["question"], bool(state.get("allow_web_fallback", False)))
+        )
     )
     datasource = "web_search" if decision == "web" else "vectorstore"
     return _complete(state, "route_query", datasource=datasource, interaction_mode=decision)
@@ -146,16 +167,45 @@ def capability_node(state: AdaptiveRagState) -> AdaptiveRagState:
 def retrieve_node(state: AdaptiveRagState) -> AdaptiveRagState:
     query = state.get("query") or state["question"]
     retrieval_config = resolve_retrieval_config(state.get("retrieval_config"))
-    documents = build_retriever(state["context"], k=retrieval_config.retrieval_k).invoke(query)
+    runtime_settings = _runtime_settings(state)
     try:
-        embedder = get_embedding_model(settings)
+        retriever_parameters = inspect.signature(build_retriever).parameters
+        if "settings" in retriever_parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in retriever_parameters.values()
+        ):
+            retriever = build_retriever(
+                state["context"], k=retrieval_config.retrieval_k, settings=runtime_settings
+            )
+        else:
+            # 兼容测试替身和旧的外部注入器；正式实现支持请求级 Settings。
+            retriever = build_retriever(state["context"], k=retrieval_config.retrieval_k)
+        documents = retriever.invoke(query)
+        try:
+            embedder = get_embedding_model(runtime_settings)
+        except Exception:
+            # Embedding 只用于近重复去重；主检索已经成功时允许确定性降级。
+            embedder = None
+        dedup = deduplicate_candidates(
+            [Candidate(document, index, "rrf") for index, document in enumerate(documents)],
+            embedder=embedder,
+        )
+        documents = [item.document for item in dedup.candidates]
     except Exception:
-        embedder = None
-    dedup = deduplicate_candidates(
-        [Candidate(document, index, "rrf") for index, document in enumerate(documents)],
-        embedder=embedder,
-    )
-    documents = [item.document for item in dedup.candidates]
+        logger.exception("RAG retrieval failed")
+        return _complete(
+            state,
+            "retrieve",
+            query=query,
+            documents=[],
+            confidence=0.0,
+            grounded=False,
+            useful=False,
+            error_code=RagErrorCode.FAILED_RETRIEVAL.value,
+            error_message=public_rag_error_message(RagErrorCode.FAILED_RETRIEVAL),
+            missing_points=[],
+            needs_quality_check=False,
+        )
     return _complete(
         state,
         "retrieve",
@@ -170,20 +220,32 @@ def retrieve_node(state: AdaptiveRagState) -> AdaptiveRagState:
     )
 
 
-# 批量证据评分：对全部候选片段一次打分（相关/不相关 + 整体置信度），
-# 只保留 relevant_ids 指向的片段；confidence 低于阈值时置 needs_quality_check，
-# 让质量门在生成后做 LLM 级校验（高置信则跳过，省一次 LLM 调用）。
+def _get_runtime_reranker(settings):
+    """按 Provider 配置选择本地或远程 Reranker。
+
+    保留本地工厂在本模块中的调用点，兼容现有测试替身和旧扩展；
+    百炼等远程适配由统一 runtime 工厂负责。
+    """
+    provider = getattr(settings, "reranker_provider", "local_rerank") or "local_rerank"
+    if provider == "local_rerank":
+        return get_managed_reranker(
+            str(settings.project_root.resolve()), settings.reranker_model, settings.reranker_device
+        )
+    return build_reranker(settings)
+
+
+# 候选精排：由本地 Reranker 对召回候选评分并截断；不可用时使用确定性的
+# RRF 顺序并将置信度置零，强制进入后续质量门，避免降级路径绕过校验。
 def batch_grade_documents_node(state: AdaptiveRagState) -> AdaptiveRagState:
     documents = state.get("documents", [])
     retrieval_config = resolve_retrieval_config(state.get("retrieval_config"))
+    runtime_settings = _runtime_settings(state)
     candidates = [Candidate(document, index, "rrf") for index, document in enumerate(documents)]
     try:
-        reranker = get_managed_reranker(
-            str(settings.project_root.resolve()), settings.reranker_model, settings.reranker_device
-        )
+        reranker = _get_runtime_reranker(runtime_settings)
     except Exception:
         reranker = None
-    ranked = rerank_candidates(state["question"], candidates, reranker, retrieval_config.rerank_k)
+    ranked = rerank_candidates(state.get("query") or state["question"], candidates, reranker, retrieval_config.rerank_k)
     scores = [float(item.score) for item in ranked]
     fallback = any(item.fallback for item in ranked)
     explicitly_irrelevant = bool(ranked) and not fallback and max(scores) < RERANK_RELEVANCE_THRESHOLD
@@ -195,7 +257,7 @@ def batch_grade_documents_node(state: AdaptiveRagState) -> AdaptiveRagState:
         documents=filtered,
         confidence=confidence,
         confidence_reason="Reranker 精排结果" if scores else "没有候选内容",
-        needs_quality_check=confidence < settings.confidence_threshold,
+        needs_quality_check=confidence < runtime_settings.confidence_threshold,
         rerank_scores=scores,
         reranker_fallback=fallback,
         irrelevant_after_rerank=explicitly_irrelevant,
@@ -210,11 +272,18 @@ def decide_after_batch_grade(
     max_rewrite_count: int | None = None,
     enable_web_fallback: bool | None = None,
 ) -> str:
-    rewrite_limit = settings.max_rewrite_count if max_rewrite_count is None else max_rewrite_count
+    if state.get("error_code"):
+        return "no_answer"
+    runtime_settings = _runtime_settings(state)
+    rewrite_limit = runtime_settings.max_rewrite_count if max_rewrite_count is None else max_rewrite_count
     web_enabled = bool(state.get("allow_web_fallback", False)) if enable_web_fallback is None else enable_web_fallback
     # 回退顺序固定为：有效本地证据 -> 有界改写 -> 一次联网 -> 保守拒答。
     if state.get("documents"):
         return "generate"
+    # 联网证据已经是本轮最后一级来源，不能再把无关结果改写后重复搜索；
+    # 直接失败关闭，保持“证据不足不回答”的合同。
+    if state.get("used_web_search"):
+        return "no_answer"
     if state.get("irrelevant_after_rerank"):
         return "no_answer"
     if int(state.get("rewrite_count", 0)) < rewrite_limit:
@@ -241,11 +310,55 @@ def rewrite_query_node(state: AdaptiveRagState) -> AdaptiveRagState:
 
 # 联网兜底：仅在 allow_web_fallback 且本轮尚未用过时触发（见 decide_* 路由），
 # 结果同样要过批量评分与质量门，不因其来源是网络而降低校验标准。
+def _documents_from_web_payloads(payloads: tuple[dict, ...]) -> list[Document]:
+    documents: list[Document] = []
+    for index, item in enumerate(payloads):
+        if isinstance(item, Document):
+            documents.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or item.get("snippet") or "").strip()
+        if not content:
+            continue
+        metadata = {
+            key: value
+            for key, value in item.items()
+            if key not in {"content", "snippet"} and value is not None
+        }
+        metadata.setdefault("filename", f"web_result_{index + 1}")
+        metadata.setdefault("source", metadata.get("url", ""))
+        documents.append(Document(page_content=content, metadata=metadata))
+    return documents
+
+
 def web_search_node(state: AdaptiveRagState) -> AdaptiveRagState:
-    documents = web_search_documents(
-        state.get("query") or state["question"],
-        recent=state.get("datasource") == "web_search",
-    )
+    prefetched = state.get("prefetched_web_documents")
+    try:
+        documents = (
+            _documents_from_web_payloads(tuple(prefetched or ()))
+            if prefetched is not None
+            else web_search_documents(
+                state.get("query") or state["question"],
+                recent=state.get("datasource") == "web_search",
+                settings=_runtime_settings(state),
+            )
+        )
+    except Exception:
+        logger.exception("RAG web retrieval failed")
+        return _complete(
+            state,
+            "web_search",
+            documents=[],
+            used_web_search=True,
+            confidence=0.0,
+            grounded=False,
+            useful=False,
+            error_code=RagErrorCode.FAILED_RETRIEVAL.value,
+            error_message=public_rag_error_message(RagErrorCode.FAILED_RETRIEVAL),
+            missing_points=[],
+            needs_quality_check=False,
+        )
     return _complete(
         state,
         "web_search",
@@ -258,43 +371,58 @@ def web_search_node(state: AdaptiveRagState) -> AdaptiveRagState:
 
 
 def decide_after_web_search(state: dict) -> str:
-    return "generate" if state.get("documents") else "no_answer"
+    return "batch_grade_documents" if state.get("documents") else "no_answer"
 
 
 # 生成节点：结合证据与上一轮质量门的纠错反馈生成答案；
 # 只接收可操作的 missing_points / unsupported_claims，不携带隐藏推理。
 def generate_node(state: AdaptiveRagState) -> AdaptiveRagState:
-    retrieval_config = resolve_retrieval_config(state.get("retrieval_config"))
-    candidates = [Candidate(document, index, "rrf") for index, document in enumerate(state.get("documents", []))]
-    scores = list(state.get("rerank_scores") or [])
-    if len(scores) == len(candidates):
-        ranked = [
-            RankedCandidate(candidate, float(score), index, bool(state.get("reranker_fallback")))
-            for index, (candidate, score) in enumerate(zip(candidates, scores))
-        ]
-    else:
-        ranked = rerank_candidates(state["question"], candidates, None, retrieval_config.rerank_k)
+    try:
+        retrieval_config = resolve_retrieval_config(state.get("retrieval_config"))
+        candidates = [Candidate(document, index, "rrf") for index, document in enumerate(state.get("documents", []))]
+        scores = list(state.get("rerank_scores") or [])
+        if len(scores) == len(candidates):
+            ranked = [
+                RankedCandidate(candidate, float(score), index, bool(state.get("reranker_fallback")))
+                for index, (candidate, score) in enumerate(zip(candidates, scores))
+            ]
+        else:
+            ranked = rerank_candidates(state.get("query") or state["question"], candidates, None, retrieval_config.rerank_k)
 
-    context = state["context"]
-    def load_neighbors(chunk_ids: list[str]) -> list:
-        store = MilvusRagStore(settings)
-        documents = []
-        for knowledge_space_id in context.knowledge_space_ids:
-            documents.extend(store.load_chunks(KnowledgeSpaceScope(context.workspace_id, knowledge_space_id), chunk_ids))
-        return documents
+        context = state["context"]
+        runtime_settings = _runtime_settings(state)
+        def load_neighbors(chunk_ids: list[str]) -> list:
+            store = MilvusRagStore(runtime_settings)
+            documents = []
+            for knowledge_space_id in context.knowledge_space_ids:
+                documents.extend(store.load_chunks(KnowledgeSpaceScope(context.workspace_id, knowledge_space_id), chunk_ids))
+            return documents
 
-    assembly = assemble_context(
-        state["question"], ranked, retrieval_config,
-        neighbor_loader=load_neighbors if retrieval_config.allow_neighbors else None,
-    )
-    answer = generate_answer(
-        state["question"],
-        assembly.documents,
-        previous_answer=state.get("previous_answer", ""),
-        correction_feedback=state.get("correction_feedback", ""),
-        persona_name=state.get("persona_name", "角色"),
-        persona_profile=state.get("persona_profile") or {},
-    )
+        assembly = assemble_context(
+            state["question"], ranked, retrieval_config,
+            neighbor_loader=load_neighbors if retrieval_config.allow_neighbors else None,
+        )
+        answer = generate_answer(
+            state["question"],
+            assembly.documents,
+            previous_answer=state.get("previous_answer", ""),
+            correction_feedback=state.get("correction_feedback", ""),
+            persona_name=state.get("persona_name", "角色"),
+            persona_profile=state.get("persona_profile") or {},
+        )
+    except Exception:
+        logger.exception("RAG answer generation failed")
+        return _complete(
+            state,
+            "generate",
+            answer="",
+            grounded=False,
+            useful=False,
+            error_code=RagErrorCode.FAILED_GENERATION.value,
+            error_message=public_rag_error_message(RagErrorCode.FAILED_GENERATION),
+            missing_points=[],
+            needs_quality_check=False,
+        )
     return _complete(
         state,
         "generate",
@@ -311,31 +439,35 @@ def generate_node(state: AdaptiveRagState) -> AdaptiveRagState:
 
 
 def decide_after_generation(state: dict) -> str:
-    # 所有生成结果都经过门禁；高置信度时门禁节点只做本地检查。
-    return "quality_gate"
+    # 生成异常直接失败关闭；正常结果必须进入答案级质量门。
+    return "no_answer" if state.get("error_code") else "quality_gate"
 
 
-# 质量门：高置信度（≥ confidence_threshold）且有证据时直接放行（省 LLM 调用）；
-# 否则调用 LLM 检查 grounded/useful，并让模型给出 correction_action，
-# 该动作仍受外层计数器与 web 开关约束（见 decide_quality）。
+# 质量门：所有知识答案都必须做答案级 grounding/usefulness 检查。
+# Reranker 分数只表示候选相关性，不能证明最终答案中的每个事实都被证据支持。
+# 纠错动作仍受外层计数器与联网开关约束（见 decide_quality）。
 def quality_gate_node(state: AdaptiveRagState) -> AdaptiveRagState:
-    documents = state.get("documents", [])
-    answer = (state.get("answer") or "").strip()
-    if float(state.get("confidence") or 0.0) >= settings.confidence_threshold and documents and answer:
+    try:
+        documents = state.get("documents", [])
+        answer = (state.get("answer") or "").strip()
+        score = grade_answer_quality(
+            state["question"],
+            format_documents(documents),
+            answer,
+        )
+    except Exception:
+        logger.exception("RAG quality gate failed")
         return _complete(
             state,
             "quality_gate",
-            grounded=True,
-            useful=True,
+            grounded=False,
+            useful=False,
+            error_code=RagErrorCode.FAILED_QUALITY_GATE.value,
+            error_message=public_rag_error_message(RagErrorCode.FAILED_QUALITY_GATE),
             missing_points=[],
             unsupported_claims=[],
             correction_action="no_answer",
         )
-    score = grade_answer_quality(
-        state["question"],
-        format_documents(documents),
-        answer,
-    )
     return _complete(
         state,
         "quality_gate",
@@ -356,8 +488,11 @@ def decide_quality(
     max_rewrite_count: int | None = None,
     enable_web_fallback: bool | None = None,
 ) -> str:
-    generation_limit = settings.max_generation_retry if max_generation_retry is None else max_generation_retry
-    rewrite_limit = settings.max_rewrite_count if max_rewrite_count is None else max_rewrite_count
+    if state.get("error_code"):
+        return "no_answer"
+    runtime_settings = _runtime_settings(state)
+    generation_limit = runtime_settings.max_generation_retry if max_generation_retry is None else max_generation_retry
+    rewrite_limit = runtime_settings.max_rewrite_count if max_rewrite_count is None else max_rewrite_count
     web_enabled = bool(state.get("allow_web_fallback", False)) if enable_web_fallback is None else enable_web_fallback
     # 只有“事实接地”和“解决问题”同时通过才能结束；评分器建议的纠错动作
     # 仍受本地计数器和联网开关约束，模型不能制造无限循环。
@@ -392,6 +527,18 @@ def prepare_correction_node(state: AdaptiveRagState) -> AdaptiveRagState:
 
 
 def no_answer_node(state: AdaptiveRagState) -> AdaptiveRagState:
+    error_code = state.get("error_code")
+    if error_code:
+        reason = state.get("error_message") or public_rag_error_message(error_code)
+        return _complete(
+            state,
+            "no_answer",
+            answer="",
+            no_answer_reason=reason,
+            grounded=False,
+            useful=False,
+            missing_points=list(state.get("missing_points") or []),
+        )
     reason = (
         "Web search and local knowledge did not provide enough evidence."
         if state.get("used_web_search")
@@ -405,6 +552,8 @@ def no_answer_node(state: AdaptiveRagState) -> AdaptiveRagState:
         grounded=False,
         useful=False,
         missing_points=[reason],
+        error_code=RagErrorCode.INSUFFICIENT.value,
+        error_message=public_rag_error_message(RagErrorCode.INSUFFICIENT),
     )
 
 
@@ -446,8 +595,16 @@ def build_graph():
         {"generate": "generate", "rewrite_query": "rewrite_query", "web_search": "web_search", "no_answer": "no_answer"},
     )
     workflow.add_edge("rewrite_query", "retrieve")
-    workflow.add_conditional_edges("web_search", decide_after_web_search, {"generate": "generate", "no_answer": "no_answer"})
-    workflow.add_conditional_edges("generate", decide_after_generation, {"quality_gate": "quality_gate", "useful": END})
+    workflow.add_conditional_edges(
+        "web_search",
+        decide_after_web_search,
+        {"batch_grade_documents": "batch_grade_documents", "no_answer": "no_answer"},
+    )
+    workflow.add_conditional_edges(
+        "generate",
+        decide_after_generation,
+        {"quality_gate": "quality_gate", "useful": END, "no_answer": "no_answer"},
+    )
     workflow.add_conditional_edges(
         "quality_gate",
         decide_quality,
@@ -462,9 +619,14 @@ graph = build_graph()
 
 
 def serialize_document(document: Any) -> dict:
+    metadata = dict(getattr(document, "metadata", {}) or {})
+    metadata.setdefault(
+        "evidence_role",
+        "supporting_neighbor" if metadata.get("supporting_neighbor") else "primary",
+    )
     return {
         "content": (getattr(document, "page_content", "") or "")[:800],
-        **dict(getattr(document, "metadata", {}) or {}),
+        **metadata,
     }
 
 
@@ -485,20 +647,29 @@ def run_adaptive(request: RagRequest, on_step: Callable | None = None) -> RagRes
         "available_tools": request.available_tools,
         "interaction_mode": "knowledge",
         "force_knowledge": request.force_knowledge,
+        "prefetched_web_documents": request.prefetched_web_documents,
+        "runtime_settings": request.settings or settings,
     }
-    if on_step is None:
-        state = graph.invoke(initial_state)
-    else:
-        # 流式执行：每完成一个节点就回调一次节点名（从追加的 trace 推导），
-        # 用于评测过程实时展示，不改变最终状态。
-        state = {}
-        previous_trace_length = 0
-        for chunk in graph.stream(initial_state, stream_mode="values"):
-            state = chunk
-            trace = chunk.get("trace") or []
-            if len(trace) > previous_trace_length:
-                on_step(trace[-1]["node"], chunk)
-                previous_trace_length = len(trace)
+    try:
+        if on_step is None:
+            state = graph.invoke(initial_state)
+        else:
+            # 流式执行：每完成一个节点就回调一次节点名（从追加的 trace 推导），
+            # 用于评测过程实时展示，不改变最终状态。
+            state = {}
+            previous_trace_length = 0
+            for chunk in graph.stream(initial_state, stream_mode="values"):
+                state = chunk
+                trace = chunk.get("trace") or []
+                if len(trace) > previous_trace_length:
+                    on_step(trace[-1]["node"], chunk)
+                    previous_trace_length = len(trace)
+    except Exception:
+        logger.exception("RAG pipeline execution failed")
+        return RagResult.failed(
+            RagErrorCode.DEPENDENCY_UNAVAILABLE,
+            interaction_mode="knowledge",
+        )
     documents = state.get("documents") or []
     return RagResult(
         answer_draft=state.get("answer", ""),
@@ -510,4 +681,6 @@ def run_adaptive(request: RagRequest, on_step: Callable | None = None) -> RagRes
         useful=bool(state.get("useful", False)),
         missing_points=tuple(state.get("missing_points", [])),
         interaction_mode=state.get("interaction_mode", "knowledge"),
+        error_code=state.get("error_code"),
+        error_message=state.get("error_message"),
     )

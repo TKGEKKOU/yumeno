@@ -1,5 +1,5 @@
 "use strict";
-window.PL.modules.voice = { init: initVoiceStudio };
+window.PL.modules.voice = { init: initVoiceStudio, onShow: resumeChatVoiceCloneSession };
 
   const VOICE_FLOW_ORDER = ["video", "audio", "segments", "train"];
 const VOICE_PHASE_STEP = {
@@ -53,7 +53,26 @@ function initVoiceStudio() {
   bindVoiceStudioEvents();
   loadVoiceTrainLibrary();
   checkVoiceResources();
-  resumeVoiceSession();
+}
+
+
+function resumeChatVoiceCloneSession() {
+  const chatSessionId = window.PL?.chat?.voiceCloneSessionId;
+  if (chatSessionId) {
+    voiceSessionId = chatSessionId;
+    void loadVoiceSession();
+    return;
+  }
+  void resumeVoiceSession();
+}
+
+function resumeChatVoiceCloneSession() {
+  if (window.PL?.chat?.voiceCloneSessionId) {
+    voiceSessionId = window.PL.chat.voiceCloneSessionId;
+    void loadVoiceSession();
+    return;
+  }
+  void resumeVoiceSession();
 }
 
 function bindVoiceStudioEvents() {
@@ -69,6 +88,7 @@ function bindVoiceStudioEvents() {
   bindSafe("voice-train-enter", "click", () => selectVoiceStep("train"));
   bindSafe("voice-train-start", "click", startVoiceTraining);
   bindSafe("voice-train-to-manage", "click", () => { if (window.switchView) window.switchView("manage"); });
+
   document.querySelectorAll("[data-flow-step]").forEach((node) => {
     node.addEventListener("click", () => selectVoiceStep(node.dataset.flowStep));
     node.addEventListener("keydown", (event) => {

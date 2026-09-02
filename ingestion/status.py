@@ -214,7 +214,11 @@ def get_system_status() -> dict:
             client.close()
 
     try:
-        milvus_port = urlsplit(settings.milvus_uri).port or 19530
+        milvus_port = (
+            0
+            if settings.milvus_uri.startswith("./")
+            else urlsplit(settings.milvus_uri).port or 19530
+        )
     except ValueError:
         milvus_port = 19530
     ports = {

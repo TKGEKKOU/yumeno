@@ -77,7 +77,7 @@ export interface WorkbenchSnapshot {
   grants: { servers: McpServer[] };
   resources?: {
     live2dModels: Live2dModel[];
-    voiceAssets: Array<{ id: string; name: string; status: string; reference_language?: string }>;
+    voiceAssets: Array<{ id: string; name: string; status: string; engine?: string; reference_language?: string }>;
   };
 }
 
@@ -110,4 +110,76 @@ export interface RoleGraphEdge {
 export interface RoleGraph {
   nodes: RoleGraphNode[];
   edges: RoleGraphEdge[];
+}
+export type PersonaVersionStatus = "draft" | "published" | "superseded" | "archived" | string;
+
+export interface PersonaRuntimeSnapshot {
+  schema_version: number;
+  name: string;
+  persona_type: string;
+  profile: Record<string, unknown>;
+  knowledge_space_id: string;
+  document_ids: string[];
+  capability_overrides: Record<string, boolean>;
+  mcp_server_names: string[];
+}
+
+export interface PersonaVersionSummary {
+  id: string;
+  persona_id: string;
+  version_number: number;
+  status: PersonaVersionStatus;
+  label: string;
+  note: string;
+  created_at: string;
+  published_at?: string | null;
+}
+
+export interface PersonaVersion extends PersonaVersionSummary {
+  snapshot: PersonaRuntimeSnapshot;
+}
+
+export interface PersonaVersionMutationResponse {
+  version: PersonaVersion;
+  persona?: PersonaSummary;
+  rollback?: boolean;
+}
+
+export interface KnowledgeSpaceReport {
+  knowledge_space_id?: string;
+  total_documents?: number;
+  status_counts?: Record<string, number>;
+  indexed_count?: number;
+  failed_count?: number;
+  in_progress_count?: number;
+  ready_count?: number;
+  document_type_counts?: Record<string, number>;
+  chunking_preset_counts?: Record<string, number>;
+  chunker_version_counts?: Record<string, number>;
+  index_version_counts?: Record<string, number>;
+  latest_updated_at?: string | null;
+  latest_indexed_at?: string | null;
+  // 兼容其他后端或旧版缓存返回的字段，避免质量面板因字段演进而失效。
+  status?: string;
+  state?: string;
+  generated_at?: string | null;
+  updated_at?: string | null;
+  summary?: string;
+  indexed_documents?: number;
+  processing_documents?: number;
+  failed_documents?: number;
+  chunk_count?: number;
+  chunks?: number;
+  [key: string]: unknown;
+}
+
+export interface KnowledgeEvaluationSummary {
+  id?: string;
+  status?: string;
+  created_at?: string | null;
+  completed_at?: string | null;
+  summary?: string;
+  score?: number | null;
+  metrics?: Record<string, unknown>;
+  [key: string]: unknown;
 }

@@ -9,6 +9,7 @@ const nodes = {
     setAttribute: () => {},
     disabled: false,
   },
+  "chat-attachment": { disabled: false },
   question: { value: "second message" },
   "question-form": { classList: { toggle: () => {} } },
   "confirm-action": {},

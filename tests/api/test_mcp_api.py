@@ -42,13 +42,11 @@ def mcp_client(client, tmp_path):
     manager.unregister_all()
 
 
-def test_mcp_api_preloads_free_search_global(client, mcp_client):
+def test_mcp_api_starts_without_builtin_servers(client, mcp_client):
     response = client.get("/api/mcp/servers")
     assert response.status_code == 200
     servers = response.json()
-    assert [item["name"] for item in servers] == ["free-search"]
-    assert servers[0]["allowed_persona_ids"] == ["*"]
-    assert servers[0]["enabled"] is True
+    assert servers == []
 
 
 def test_mcp_api_create_list_delete(client, mcp_client):
@@ -66,7 +64,7 @@ def test_mcp_api_create_list_delete(client, mcp_client):
     assert created.json()["name"] == "demo"
 
     listed = client.get("/api/mcp/servers").json()
-    assert [item["name"] for item in listed] == ["free-search", "demo"]
+    assert [item["name"] for item in listed] == ["demo"]
     demo = next(item for item in listed if item["name"] == "demo")
     assert demo["status"]["status"] == "connected"
 
@@ -84,9 +82,7 @@ def test_mcp_api_create_list_delete(client, mcp_client):
 
     deleted = client.delete("/api/mcp/servers/demo")
     assert deleted.status_code == 204
-    assert [item["name"] for item in client.get("/api/mcp/servers").json()] == [
-        "free-search"
-    ]
+    assert client.get("/api/mcp/servers").json() == []
 
     missing = client.delete("/api/mcp/servers/nope")
     assert missing.status_code == 404

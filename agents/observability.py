@@ -19,10 +19,21 @@ PUBLIC_DETAIL_KEYS = frozenset(
         "reason",
         "error_code",
         "status",
+        "previous_status",
         "route",
         "query_rewritten",
         "corrected",
         "refused",
+        # Runtime task/step summaries may retain identifiers and lifecycle
+        # markers, but never free-form prompts, queries, or tool payloads.
+        "document_job_id",
+        "session_id",
+        "source_kind",
+        "operation",
+        "phase",
+        "task_id",
+        "step_id",
+        "step_key",
     }
 )
 

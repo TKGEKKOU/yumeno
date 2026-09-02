@@ -1,0 +1,49 @@
+const assert = require("assert");
+const fs = require("fs");
+
+const html = fs.readFileSync("static/views/chat.html", "utf8");
+const css = fs.readFileSync("static/styles.css", "utf8");
+const js = fs.readFileSync("static/js/chat.js", "utf8");
+const live2dJs = fs.readFileSync("static/live2d/live2d-panel.js", "utf8");
+
+assert.match(html, /<main class="chat-panel"[\s\S]*?<header class="chat-toolbar"/);
+assert.match(html, /<aside id="chat-files-sidebar"[\s\S]*?<main class="chat-panel"/);
+assert.match(html, /<main class="chat-panel"[\s\S]*?<aside id="chat-context-sidebar"/);
+assert.match(html, /id="chat-files-backdrop"/);
+assert.match(html, /id="chat-context-backdrop"/);
+assert.match(html, /class="chat-toolbar-actions"[\s\S]*id="chat-files-toggle"[\s\S]*id="chat-context-peek"[\s\S]*id="chat-settings-toggle"/);
+assert.strictEqual((html.match(/id="chat-context-peek"/g) || []).length, 1);
+assert.match(html, /id="chat-settings-sidebar"[\s\S]*?id="chat-settings-close"/);
+assert.match(html, /id="chat-settings-backdrop"/);
+assert.match(html, /id="chat-open-full-settings"/);
+assert.match(html, /id="chat-open-providers"/);
+assert.match(html, /id="chat-setting-llm-provider"/);
+assert.match(html, /id="chat-setting-llm-model"/);
+assert.match(html, /id="chat-setting-embedding"/);
+assert.match(html, /<div id="chat-log" class="chat-log selectable">\s*<div class="chat-empty-state" aria-hidden="true"><\/div>/);
+assert.doesNotMatch(html, /chat-empty-mark|chat-empty-prompts/);
+assert.doesNotMatch(js, /is-context-open/);
+// RVC 工作区只能由 Agent 返回的结构化 worker 元数据激活，不能由用户输入关键词直连。
+assert.doesNotMatch(js, /function isExplicitRvcRequest/);
+assert.doesNotMatch(js, /if \(isExplicitRvcRequest\(question\)\)/);
+assert.match(js, /function isAgentRvcWorkflowDescriptor\(event, flow\)/);
+assert.match(js, /worker === "rvc_worker"/);
+assert.match(js, /activateRvcWorkspaceFromAgent\(event, flow\)/);
+assert.doesNotMatch(css, /grid-template-columns:\s*240px/);
+assert.match(css, /#chat-layout\.chat-layout[\s\S]*?display:\s*block/);
+assert.match(css, /#chat-layout \.chat-files-sidebar[\s\S]*?position:\s*absolute/);
+assert.match(css, /#chat-layout \.chat-context-sidebar[\s\S]*?position:\s*absolute/);
+assert.match(css, /#chat-layout \.chat-settings-sidebar[\s\S]*?position:\s*absolute/);
+assert.match(css, /chat-settings-backdrop[\s\S]*?background:\s*transparent/);
+assert.match(js, /function setChatSettingsOpen/);
+assert.doesNotMatch(js, /function setChatSettingsOpen[\s\S]*?if \(state\.chatContextOpen\) setChatContextOpen\(false\)/);
+assert.doesNotMatch(js, /function setChatSettingsOpen[\s\S]*?if \(state\.chatAttachmentsOpen\) setChatAttachmentsDrawer\(false\)/);
+assert.doesNotMatch(js, /function setChatContextOpen[\s\S]*?if \(open && state\.chatAttachmentsOpen\) setChatAttachmentsDrawer\(false\)/);
+assert.match(css, /#chat-layout \.chat-toolbar-inner[\s\S]*?display:\s*flex/);
+assert.match(css, /#chat-layout:has\(\.chat-context-sidebar[^}]*\) \.chat-settings-sidebar \{ right:\s*366px/);
+assert.match(css, /\.chat-settings-scroll, \.chat-context-scroll[\s\S]*?overflow:\s*hidden/);
+assert.match(css, /chat-setting-row input\[type=\"checkbox\"\][\s\S]*?width:\s*42px[\s\S]*?height:\s*22px[\s\S]*?min-width:\s*42px[\s\S]*?min-height:\s*22px[\s\S]*?padding:\s*0/);
+assert.match(css, /#chat-layout \.composer[\s\S]*?box-shadow:\s*none/);
+assert.match(js, /switchView\?\.\(\"settings\"\)/);
+
+console.log("ok: chat structure keeps the center fixed and utility rails overlay it");

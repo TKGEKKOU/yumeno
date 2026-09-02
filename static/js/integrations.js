@@ -3,6 +3,7 @@ window.PL = window.PL || { modules: {} };
 window.PL.modules.integrations = { init: initIntegrations, onShow: attachLiveStage, releaseLiveStage };
 
 let biliSocket = null;
+let biliReconnectTimer = null;
 let liveStageHome = null;
 let biliPersona = null;
 let biliStatus = { state: "disconnected" };
@@ -294,10 +295,12 @@ async function postBili(path) {
 }
 
 function connectBilibiliEvents() {
+  clearTimeout(biliReconnectTimer);
   if (biliSocket && biliSocket.readyState < WebSocket.CLOSING) return;
   const scheme = location.protocol === "https:" ? "wss" : "ws";
-  biliSocket = new WebSocket(`${scheme}://${location.host}/api/integrations/bilibili/events/ws`);
-  biliSocket.addEventListener("message", (message) => {
+  const socket = new WebSocket(`${scheme}://${location.host}/api/integrations/bilibili/events/ws`);
+  biliSocket = socket;
+  socket.addEventListener("message", (message) => {
     let payload;
     try { payload = JSON.parse(message.data); } catch { return; }
     if (payload.type === "status") renderBilibiliStatus(payload.status);
@@ -318,7 +321,11 @@ function connectBilibiliEvents() {
     }
     if (payload.type === "error") setText("bili-error", payload.message);
   });
-  biliSocket.addEventListener("close", () => { biliSocket = null; setTimeout(connectBilibiliEvents, 1500); });
+  socket.addEventListener("close", () => {
+    if (biliSocket === socket) biliSocket = null;
+    clearTimeout(biliReconnectTimer);
+    biliReconnectTimer = setTimeout(connectBilibiliEvents, 1500);
+  });
 }
 
 function appendBiliEvent(event, eventState = "waiting") {

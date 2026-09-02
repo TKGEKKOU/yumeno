@@ -4,7 +4,7 @@
 
 ## Platform
 
-web（本地桌面应用：FastAPI 服务 + pywebview/WebView2 外壳，`http://127.0.0.1:17000`）
+web（本地优先：FastAPI 服务 + 浏览器工作台，`http://127.0.0.1:17000/static/index.html`；可选 pywebview 宿主窗口仅用于启动进度）
 
 ## Users
 

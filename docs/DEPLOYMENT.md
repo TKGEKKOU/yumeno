@@ -2,11 +2,14 @@
 
 > 根据你的使用场景，选择最适合的部署方式
 
+> **当前默认启动方式**：Windows 源码用户运行 `.\scripts\start.ps1` 即可启动 Web 工作台。
+> 默认使用本地 SQLite 与嵌入式 `milvus-lite`，不需要 Docker Desktop；只有远程 Milvus 或离线全栈方案才需要 Docker。
+
 ---
 
-## 📋 三种部署方案对比
+## 📋 三种可选扩展部署方案对比
 
-| 维度 | 云端版 | 标准版（推荐） | 离线版 |
+| 维度 | 云端版 | 标准版（扩展能力） | 离线版 |
 |------|--------|---------------|--------|
 | **体积** | 50MB | 500MB | 3GB |
 | **部署时间** | 5 分钟 | 15 分钟 | 30 分钟 |
@@ -29,7 +32,19 @@
 
 ### 安装步骤
 
-#### Windows
+#### Windows 源码启动（推荐）
+
+```powershell
+git clone https://github.com/TKGEKKOU/yumeno.git
+Set-Location yumeno
+.\scripts\start.ps1
+```
+
+脚本会创建或复用 `.venv`、安装核心依赖、生成 `.env`，并在服务启动后打开浏览器。
+不想自动打开浏览器时使用 `.\scripts\start.ps1 -NoBrowser`；需要额外的桌面进度窗口时使用
+`.\scripts\start.ps1 -Desktop`。`-Desktop` 是可选宿主窗口，不改变 Web 工作台入口。
+
+#### Windows 安装包
 ```bash
 # 1. 下载安装包
 https://github.com/TKGEKKOU/yumeno/releases/download/v0.2.0/YUMENO-Lite-Setup.exe
@@ -37,8 +52,8 @@ https://github.com/TKGEKKOU/yumeno/releases/download/v0.2.0/YUMENO-Lite-Setup.ex
 # 2. 运行安装向导（一键安装）
 
 # 3. 配置 API Key
-# 打开 http://127.0.0.1:17000/settings
-# 填入 OpenAI API Key 或 DashScope API Key
+# 打开 http://127.0.0.1:17000/static/index.html#providers
+# 在「提供商配置」填入 OpenAI API Key 或 DashScope API Key
 ```
 
 #### macOS/Linux
@@ -55,6 +70,9 @@ python main.py
 
 # 4. 访问 http://127.0.0.1:17000
 ```
+
+默认配置会使用 `milvus-lite`，因此不需要先启动 Docker。若 `.env` 配置为远程 Milvus，
+请先确保对应服务可访问，再运行 `python main.py`。
 
 ### 配置说明
 
@@ -83,7 +101,7 @@ OPENAI_API_KEY=sk-xxx
 
 ---
 
-## 🔧 方案 2：标准版（推荐）
+## 🔧 方案 2：标准版（扩展能力）
 
 ### 适用人群
 - 开发者、技术爱好者
@@ -119,7 +137,7 @@ python scripts/download_models.py --component gpt-sovits
 # 4. 下载 Reranker 模型
 python scripts/download_models.py --component reranker
 
-# 5. 启动服务
+# 5. 启动服务（默认使用 milvus-lite）
 python main.py
 ```
 
@@ -278,6 +296,10 @@ EMBEDDING_PROVIDER=local
 ---
 
 ## 🆘 常见问题
+
+### Q: `/api/runs` 是什么？
+A: 它是本机 Agent Runtime 的状态诊断与控制接口，用于查看运行状态、事件、取消运行和处理 HITL 审批。
+默认服务只绑定 `127.0.0.1`，不要将这些接口直接暴露到公网；公网部署需要另行增加认证、TLS、限流和审计。
 
 ### Q: 语音克隆需要什么配置？
 A: 标准版及以上，需要 GPT-SoVITS（350MB）。建议 8GB+ 内存。

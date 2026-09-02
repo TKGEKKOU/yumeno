@@ -12,6 +12,15 @@ from langchain.messages import HumanMessage
 _SIGNALS = {
     "management": ("修改角色", "删除角色", "角色设定", "上传资料", "删除资料"),
     "memory": ("记住", "记忆", "忘掉", "别记", "清空记忆"),
+    # canonical voice Worker：覆盖所有声音相关能力；保留“克隆”只是其中一组强信号。
+    # RVC 只处理用户明确要求的音频文件变声；角色语音、TTS 和一般音频请求仍走 voice/GPT-SoVITS。
+    # RVC 是受条件约束的专项意图，不能因为单独提到术语就触发。
+    "voice": (
+        "声音", "语音", "音色", "音频", "tts", "asr", "语音合成", "语音识别",
+        "实时语音", "语音克隆", "音色克隆", "克隆音色", "克隆声音", "声音克隆",
+        "训练音色", "音色训练", "gpt-sovits", "gpt sovits",
+    ),
+    "live2d": ("live2d", "live 2d", "vtube studio", "vts", "模型立绘", "虚拟形象"),
     "knowledge": ("资料", "文档", "知识库", "根据设定", "根据内容", "经历"),
     "web": ("天气", "新闻", "实时", "最新", "联网", "搜索网络", "汇率", "当前价格"),
     "capability": ("工具", "能力", "能调用", "会调用", "可以调用"),
@@ -20,7 +29,7 @@ _SIGNALS = {
         "介绍自己", "陪我", "聊聊", "心情", "讲个笑话", "你喜欢", "你讨厌",
     ),
 }
-_PRIORITY = ("management", "memory", "knowledge", "web", "capability", "conversation")
+_PRIORITY = ("management", "memory", "rvc_worker", "voice", "live2d", "knowledge", "web", "capability", "conversation")
 _NEGATORS = ("不要", "不用", "无需", "别", "不必", "不是", "不想", "禁止")
 _UI_COMMANDS = (
     (re.compile(r"^(?:请)?(?:打开|进入|切换到?)(?:系统)?设置(?:页|页面)?[。！!？?]*$"), "open_settings"),
@@ -35,6 +44,14 @@ _EXTERNAL_FACT_OBJECTS = (
     "天气", "新闻", "价格", "汇率", "股价", "赛事", "票价", "交通", "开放时间",
 )
 _EXTERNAL_LOOKUP_SIGNALS = ("查", "查询", "看看", "了解")
+_PROFILE_MUTATION_RE = re.compile(
+    r"(?:把|将)?(?:你的|自己的|我的)?(?:名字|名称|称呼|人设|设定|形象|资料)(?:改成|改为|换成|设为|设置为|更新为|改成|改为)(?:.+?)(?:吗|？|\?)?$"
+    r"|(?:我想给你改名|想给你改名|给你改名|帮你改名|给自己改名|改名字|更新设定|修改设定|调整设定|改写设定|更新人设|修改人设|调整人设|改写人设)"
+)
+_RENAME_RE = re.compile(r"改名成(?:.+?)$|(?:名字|名称|称呼)(?:改成|改为|换成|设为|设置为|更新为)(.+?)")
+_PROFILE_SET_RE = re.compile(r"(?:加上|补充|更新|修改|调整|改写)(?:一些)?(?:人设|设定|形象|资料)(?:[:：])?(.*)")
+_PROFILE_NEGATION_PREFIX_RE = re.compile(r"(?:不要|不用|无需|别|不必|不是|不想|禁止)[^，。！!？?；;]{0,10}$")
+
 
 
 @dataclass(frozen=True)
@@ -123,9 +140,27 @@ def analyze_intents(text: str, previous: IntentAnalysis | None = None) -> Intent
                 else:
                     found.add(intent)
     found -= negated
+    # 明确提出 RVC 处理动作时，由 Core Agent → Supervisor → rvc_worker 接管。
+    # 这里只提供确定性的意图提示，不绕过 Agent，也不在前端直接创建卡片。
+    rvc_named = "rvc" in normalized or ".pth" in normalized or "pth" in normalized
+    rvc_action = any(signal in normalized for signal in (
+        "变声", "变成", "转换音色", "音色转换", "生成变声",
+        "人声分离", "分离人声", "纯人声", "伴奏", "音频文件", "视频文件",
+        "mp3", "wav", "m4a", "flac", "ogg", "输入音频", "参考音频",
+    ))
+    explicit_rvc_signal = rvc_named and rvc_action
+    if "rvc_worker" not in negated and explicit_rvc_signal:
+        found.add("rvc_worker")
     if (explicit_web or fresh_external or requested_external) and "web" not in negated:
         found.add("web")
     candidates = tuple(intent for intent in _PRIORITY if intent in found)
+    has_profile_mutation = (
+        bool(_PROFILE_MUTATION_RE.search(normalized))
+        or bool(_RENAME_RE.search(normalized))
+        or bool(_PROFILE_SET_RE.search(normalized))
+    )
+    if has_profile_mutation and not _PROFILE_NEGATION_PREFIX_RE.search(normalized):
+        return IntentAnalysis("management", ("management",))
     if candidates:
         return IntentAnalysis(
             candidates[0],

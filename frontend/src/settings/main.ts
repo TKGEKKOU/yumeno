@@ -3,6 +3,7 @@ import RerankerSettingsApp from "./RerankerSettingsApp.vue";
 import ProvidersApp from "./ProvidersApp.vue";
 
 let app: VueApp<Element> | null = null;
+let providersApp: VueApp<Element> | null = null;
 
 export function mountRerankerSettingsApp(target: string | Element = "#reranker-settings-root") {
   if (app) return app;
@@ -19,10 +20,17 @@ export function destroyRerankerSettingsApp() {
   app = null;
 }
 
-export function mountProvidersApp(target: string | Element = '#providers-root') {
-  const element = typeof target === 'string' ? document.querySelector(target) : target;
-  if (!element) throw new Error('提供商配置挂载点不存在');
-  const providersApp = createApp(ProvidersApp);
+export function mountProvidersApp(target: string | Element = "#providers-root") {
+  if (providersApp) return providersApp;
+  const element = typeof target === "string" ? document.querySelector(target) : target;
+  if (!element) throw new Error("提供商配置挂载点不存在");
+  providersApp = createApp(ProvidersApp);
   providersApp.mount(element);
   return providersApp;
+}
+
+export function destroyProvidersApp() {
+  if (!providersApp) return;
+  providersApp.unmount();
+  providersApp = null;
 }

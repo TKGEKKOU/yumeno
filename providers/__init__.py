@@ -1,4 +1,4 @@
-﻿"""
+"""
 YUMENO Provider System - 完整提供商配置
 支持 LLM、Embedding、Reranker、STT、TTS、WebSearch
 """
@@ -13,9 +13,10 @@ class ProviderType(str, Enum):
     LLM = "llm"
     EMBEDDING = "embedding"
     RERANKER = "reranker"
-    STT = "stt"  # 语音转文字（原 ASR）
+    STT = "stt"  # 语音转文字
     TTS = "tts"
     WEB_SEARCH = "web_search"
+    VOICE_CONVERSION = "voice_conversion"  # 音色转换
 
 
 @dataclass
@@ -31,6 +32,8 @@ class ProviderMetadata:
     supports_streaming: bool = False
     icon: str = ""  # Lucide 图标名称
     custom_fields: dict[str, Any] = field(default_factory=dict)
+    mode: str = "api"  # api 或 local
+    resource_kind: str | None = None
 
 
 # ==================== LLM 提供商 ====================
@@ -74,26 +77,6 @@ LLM_PROVIDERS = {
         default_model="qwen-max",
         supports_streaming=True,
         icon="cloud"
-    ),
-    "gemini": ProviderMetadata(
-        id="gemini",
-        name="Google Gemini",
-        type=ProviderType.LLM,
-        description="Google Gemini 模型",
-        default_base_url="https://generativelanguage.googleapis.com/v1beta",
-        default_model="gemini-2.0-flash-exp",
-        supports_streaming=True,
-        icon="sparkles"
-    ),
-    "anthropic": ProviderMetadata(
-        id="anthropic",
-        name="Anthropic",
-        type=ProviderType.LLM,
-        description="Claude 系列模型",
-        default_base_url="https://api.anthropic.com",
-        default_model="claude-3-7-sonnet-20250219",
-        supports_streaming=True,
-        icon="message-square"
     ),
     "kimi": ProviderMetadata(
         id="kimi",
@@ -181,364 +164,131 @@ LLM_PROVIDERS = {
 # ==================== Embedding 提供商 ====================
 EMBEDDING_PROVIDERS = {
     "openai_embedding": ProviderMetadata(
-        id="openai_embedding",
-        name="OpenAI Embedding",
-        type=ProviderType.EMBEDDING,
-        description="OpenAI 官方向量模型",
-        default_base_url="https://api.openai.com/v1",
-        default_model="text-embedding-3-large",
-        icon="align-justify"
-    ),
-    "gemini_embedding": ProviderMetadata(
-        id="gemini_embedding",
-        name="Gemini Embedding",
-        type=ProviderType.EMBEDDING,
-        description="Google Gemini 向量模型",
-        default_base_url="https://generativelanguage.googleapis.com/v1beta",
-        default_model="text-embedding-004",
-        icon="sparkles"
+        id="openai_embedding", name="OpenAI Embedding", type=ProviderType.EMBEDDING,
+        description="OpenAI 兼容向量接口", default_base_url="https://api.openai.com/v1",
+        default_model="text-embedding-3-large", icon="align-justify"
     ),
     "nvidia_embedding": ProviderMetadata(
-        id="nvidia_embedding",
-        name="NVIDIA Embedding",
-        type=ProviderType.EMBEDDING,
-        description="NVIDIA NeMo Embedding",
-        default_base_url="https://integrate.api.nvidia.com/v1",
-        default_model="nvidia/nv-embed-v1",
-        icon="cpu"
-    ),
-    "ollama_embedding": ProviderMetadata(
-        id="ollama_embedding",
-        name="Ollama Embedding",
-        type=ProviderType.EMBEDDING,
-        description="Ollama 本地向量模型",
-        default_base_url="http://127.0.0.1:11434",
-        default_model="nomic-embed-text",
-        requires_api_key=False,
-        icon="hard-drive"
+        id="nvidia_embedding", name="NVIDIA Embedding", type=ProviderType.EMBEDDING,
+        description="NVIDIA 兼容向量接口", default_base_url="https://integrate.api.nvidia.com/v1",
+        default_model="nvidia/nv-embed-v1", icon="cpu"
     ),
     "dashscope_embedding": ProviderMetadata(
-        id="dashscope_embedding",
-        name="DashScope Embedding",
-        type=ProviderType.EMBEDDING,
-        description="阿里云百炼向量模型",
-        default_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        default_model="text-embedding-v3",
-        icon="cloud"
+        id="dashscope_embedding", name="DashScope Embedding", type=ProviderType.EMBEDDING,
+        description="阿里云百炼兼容向量接口", default_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        default_model="text-embedding-v3", icon="cloud"
     ),
-    "jina_embedding": ProviderMetadata(
-        id="jina_embedding",
-        name="Jina Embedding（本地）",
-        type=ProviderType.EMBEDDING,
-        description="本地管理的 Jina 向量模型",
-        default_base_url="",
-        default_model="Qwen/Qwen3-Embedding-0.6B",
-        requires_api_key=False,
-        icon="database"
+    "local_embedding": ProviderMetadata(
+        id="local_embedding", name="本地 Embedding", type=ProviderType.EMBEDDING,
+        description="受管本地向量模型，支持下载、设备选择和独立 Worker",
+        default_base_url="", default_model="Qwen/Qwen3-Embedding-0.6B",
+        requires_api_key=False, icon="hard-drive", mode="local", resource_kind="embedding"
     ),
 }
 
 # ==================== Reranker 提供商 ====================
 RERANKER_PROVIDERS = {
-    "vllm_rerank": ProviderMetadata(
-        id="vllm_rerank",
-        name="vLLM Rerank",
-        type=ProviderType.RERANKER,
-        description="vLLM 重排序服务",
-        default_base_url="http://127.0.0.1:8000/v1",
-        default_model="BAAI/bge-reranker-v2-m3",
-        icon="list-ordered"
-    ),
-    "jina_rerank": ProviderMetadata(
-        id="jina_rerank",
-        name="Jina AI Rerank",
-        type=ProviderType.RERANKER,
-        description="Jina AI 重排序 API",
-        default_base_url="https://api.jina.ai/v1",
-        default_model="jina-reranker-v2-base-multilingual",
-        icon="shuffle"
-    ),
-    "cohere_rerank": ProviderMetadata(
-        id="cohere_rerank",
-        name="Cohere Rerank",
-        type=ProviderType.RERANKER,
-        description="Cohere 重排序 API",
-        default_base_url="https://api.cohere.ai/v1",
-        default_model="rerank-multilingual-v3.0",
-        icon="layers"
-    ),
-    "ppio_rerank": ProviderMetadata(
-        id="ppio_rerank",
-        name="PPIO Rerank",
-        type=ProviderType.RERANKER,
-        description="PPIO 重排序服务",
-        default_base_url="https://api.ppio.cloud/v1",
-        default_model="ppio-rerank",
-        icon="network"
-    ),
-    "xinference_rerank": ProviderMetadata(
-        id="xinference_rerank",
-        name="Xinference Rerank",
-        type=ProviderType.RERANKER,
-        description="Xinference 重排序",
-        default_base_url="http://127.0.0.1:9997/v1",
-        default_model="bge-reranker-v2-m3",
-        requires_api_key=False,
-        icon="server"
-    ),
     "bailian_rerank": ProviderMetadata(
         id="bailian_rerank",
         name="百炼 Rerank",
         type=ProviderType.RERANKER,
-        description="阿里云百炼重排序",
+        description="阿里云百炼 Rerank API",
         default_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         default_model="gte-rerank",
         icon="cloud"
     ),
-    "nvidia_rerank": ProviderMetadata(
-        id="nvidia_rerank",
-        name="NVIDIA Rerank",
-        type=ProviderType.RERANKER,
-        description="NVIDIA NeMo Rerank",
-        default_base_url="https://integrate.api.nvidia.com/v1",
-        default_model="nvidia/nv-rerankqa-mistral-4b-v3",
-        icon="cpu"
-    ),
-    "tei_rerank": ProviderMetadata(
-        id="tei_rerank",
-        name="TEI Rerank",
-        type=ProviderType.RERANKER,
-        description="HuggingFace Text Embeddings Inference",
-        default_base_url="http://127.0.0.1:8080",
-        default_model="BAAI/bge-reranker-v2-m3",
-        requires_api_key=False,
-        icon="container"
-    ),
     "local_rerank": ProviderMetadata(
         id="local_rerank",
-        name="本地模型",
+        name="本地 Rerank",
         type=ProviderType.RERANKER,
-        description="自动管理的本地重排序模型",
+        description="受管本地重排序模型",
         default_base_url="",
         default_model="Qwen/Qwen3-Reranker-0.6B",
         requires_api_key=False,
-        icon="database"
+        icon="database",
+        mode="local",
+        resource_kind="reranker"
     ),
 }
-
 # ==================== STT 提供商 ====================
 STT_PROVIDERS = {
     "whisper_api": ProviderMetadata(
-        id="whisper_api",
-        name="Whisper(API)",
-        type=ProviderType.STT,
-        description="OpenAI Whisper API",
-        default_base_url="https://api.openai.com/v1",
-        default_model="whisper-1",
-        icon="mic"
+        id="whisper_api", name="Whisper STT(API)", type=ProviderType.STT,
+        description="OpenAI-compatible 语音转文字接口", default_base_url="https://api.openai.com/v1",
+        default_model="whisper-1", icon="mic"
     ),
     "mimo_stt": ProviderMetadata(
-        id="mimo_stt",
-        name="MiMo STT(API)",
-        type=ProviderType.STT,
-        description="MiMo 语音识别 API",
-        default_base_url="https://api.mimo.run/v1",
-        default_model="mimo-whisper-v1",
-        icon="audio-lines"
+        id="mimo_stt", name="MiMo STT(API)", type=ProviderType.STT,
+        description="MiMo 语音转文字接口", default_base_url="https://api.xiaomimimo.com/v1",
+        default_model="mimo-v2.5-asr", icon="audio-lines"
     ),
     "xinference_stt": ProviderMetadata(
-        id="xinference_stt",
-        name="Xinference STT",
-        type=ProviderType.STT,
-        description="Xinference 语音识别",
-        default_base_url="http://127.0.0.1:9997/v1",
-        default_model="whisper-large-v3",
-        requires_api_key=False,
-        icon="server"
+        id="xinference_stt", name="Xinference STT(API)", type=ProviderType.STT,
+        description="Xinference 语音转文字服务", default_base_url="http://127.0.0.1:9997/v1",
+        default_model="whisper-large-v3", requires_api_key=False, icon="server"
     ),
-    "whisper_local": ProviderMetadata(
-        id="whisper_local",
-        name="Whisper(Local)",
-        type=ProviderType.STT,
-        description="本地 Whisper 模型",
-        default_base_url="http://127.0.0.1:8002",
-        default_model="whisper-large-v3",
-        requires_api_key=False,
-        icon="hard-drive"
-    ),
-    "sensevoice_local": ProviderMetadata(
-        id="sensevoice_local",
-        name="SenseVoice(Local)",
-        type=ProviderType.STT,
-        description="本地 SenseVoice 识别",
-        default_base_url="http://127.0.0.1:8002",
-        default_model="sensevoice-small",
-        requires_api_key=False,
-        icon="database"
+    "local_stt": ProviderMetadata(
+        id="local_stt", name="本地 STT", type=ProviderType.STT,
+        description="受管本地 Qwen3 语音转文字模型",
+        default_base_url="", default_model="Qwen/Qwen3-ASR-0.6B",
+        requires_api_key=False, icon="hard-drive", mode="local", resource_kind="stt"
     ),
 }
 
 # ==================== TTS 提供商 ====================
+# 仅保留已经接入正式运行链路的实现；实验性供应商不在配置页制造
+# “看起来可用、实际不会被调用”的冗余选项。
 TTS_PROVIDERS = {
     "openai_tts": ProviderMetadata(
-        id="openai_tts",
-        name="OpenAI TTS(API)",
-        type=ProviderType.TTS,
-        description="OpenAI 官方 TTS",
-        default_base_url="https://api.openai.com/v1",
-        default_model="tts-1",
-        icon="volume-2"
+        id="openai_tts", name="OpenAI TTS(API)", type=ProviderType.TTS,
+        description="OpenAI-compatible 语音合成 API",
+        default_base_url="https://api.openai.com/v1", default_model="tts-1", icon="volume-2"
     ),
     "mimo_tts": ProviderMetadata(
-        id="mimo_tts",
-        name="MiMo TTS(API)",
-        type=ProviderType.TTS,
+        id="mimo_tts", name="MiMo TTS(API)", type=ProviderType.TTS,
         description="MiMo 语音合成 API",
-        default_base_url="https://api.mimo.run/v1",
-        default_model="mimo-tts-v1",
-        icon="speaker"
-    ),
-    "genie_tts": ProviderMetadata(
-        id="genie_tts",
-        name="Genie TTS",
-        type=ProviderType.TTS,
-        description="Genie 语音合成",
-        default_base_url="https://api.genie.chat/v1",
-        default_model="genie-tts-v1",
-        icon="wand-sparkles"
-    ),
-    "edge_tts": ProviderMetadata(
-        id="edge_tts",
-        name="Edge TTS",
-        type=ProviderType.TTS,
-        description="微软 Edge 浏览器 TTS（免费）",
-        default_base_url="",
-        default_model="zh-CN-XiaoxiaoNeural",
-        requires_api_key=False,
-        icon="globe"
-    ),
-    "fishaudio_tts": ProviderMetadata(
-        id="fishaudio_tts",
-        name="FishAudio TTS(API)",
-        type=ProviderType.TTS,
-        description="FishAudio 语音合成",
-        default_base_url="https://api.fish.audio/v1",
-        default_model="fishaudio-tts-v1",
-        icon="fish"
-    ),
-    "bailian_tts": ProviderMetadata(
-        id="bailian_tts",
-        name="阿里云百炼 TTS(API)",
-        type=ProviderType.TTS,
-        description="阿里云百炼语音合成",
-        default_base_url="https://dashscope.aliyuncs.com/api/v1/services/audio/tts",
-        default_model="sambert-zhichu-v1",
-        icon="cloud"
-    ),
-    "azure_tts": ProviderMetadata(
-        id="azure_tts",
-        name="Azure TTS",
-        type=ProviderType.TTS,
-        description="微软 Azure 语音服务",
-        default_base_url="https://{region}.tts.speech.microsoft.com",
-        default_model="zh-CN-XiaoxiaoNeural",
-        icon="cloud-upload"
-    ),
-    "minimax_tts": ProviderMetadata(
-        id="minimax_tts",
-        name="MiniMax TTS(API)",
-        type=ProviderType.TTS,
-        description="MiniMax 语音合成",
-        default_base_url="https://api.minimax.chat/v1",
-        default_model="speech-01",
-        icon="maximize"
-    ),
-    "volcengine_tts": ProviderMetadata(
-        id="volcengine_tts",
-        name="火山引擎 TTS(API)",
-        type=ProviderType.TTS,
-        description="字节跳动火山引擎 TTS",
-        default_base_url="https://openspeech.bytedance.com/api/v1",
-        default_model="zh_female_shuangkuaisisi_moon_bigtts",
-        icon="flame"
-    ),
-    "gemini_tts": ProviderMetadata(
-        id="gemini_tts",
-        name="Gemini TTS",
-        type=ProviderType.TTS,
-        description="Google Gemini 语音合成",
-        default_base_url="https://generativelanguage.googleapis.com/v1beta",
-        default_model="gemini-tts-v1",
-        icon="sparkles"
-    ),
-    "elevenlabs_tts": ProviderMetadata(
-        id="elevenlabs_tts",
-        name="ElevenLabs TTS(API)",
-        type=ProviderType.TTS,
-        description="高质量英文 TTS",
-        default_base_url="https://api.elevenlabs.io/v1",
-        default_model="eleven_multilingual_v2",
-        icon="headphones"
+        default_base_url="https://api.xiaomimimo.com/v1", default_model="mimo-v2.5-tts", icon="speaker"
     ),
     "gsv_tts_local": ProviderMetadata(
-        id="gsv_tts_local",
-        name="GSV TTS(Local)",
-        type=ProviderType.TTS,
-        description="本地 GPT-SoVITS",
-        default_base_url="http://127.0.0.1:9880",
-        default_model="local",
-        requires_api_key=False,
-        icon="hard-drive"
+        id="gsv_tts_local", name="GPT-SoVITS（本地）", type=ProviderType.TTS,
+        description="本地 GPT-SoVITS，支持角色 VoiceAsset 音色",
+        default_base_url="http://127.0.0.1:9880", default_model="local",
+        requires_api_key=False, icon="hard-drive", mode="local", resource_kind="tts"
     ),
-    "gsvi_tts_api": ProviderMetadata(
-        id="gsvi_tts_api",
-        name="GSVI TTS(API)",
-        type=ProviderType.TTS,
-        description="GPT-SoVITS API 服务",
-        default_base_url="",
-        default_model="gsvi-tts-v1",
-        icon="server"
+}
+
+# ==================== Voice Conversion 提供商 ====================
+VOICE_CONVERSION_PROVIDERS = {
+    "rvc": ProviderMetadata(
+        id="rvc", name="RVC（本地音色转换）", type=ProviderType.VOICE_CONVERSION,
+        description="将已有音频转换为目标音色；不直接根据文字生成语音",
+        default_base_url="", default_model="", requires_api_key=False,
+        icon="audio-lines", mode="local", resource_kind="rvc",
+    ),
+    "separator": ProviderMetadata(
+        id="separator", name="人声分离（HT-Demucs）", type=ProviderType.VOICE_CONVERSION,
+        description="将音频拆分为人声与伴奏，为声音工坊和数据集处理提供前处理能力",
+        default_base_url="", default_model="", requires_api_key=False,
+        icon="scissors", mode="local", resource_kind="separator",
     ),
 }
 
 # ==================== WebSearch 提供商 ====================
 WEB_SEARCH_PROVIDERS = {
     "tavily": ProviderMetadata(
-        id="tavily",
-        name="Tavily Search",
-        type=ProviderType.WEB_SEARCH,
-        description="AI 优化的搜索 API",
-        default_base_url="https://api.tavily.com",
-        default_model="tavily-search",
-        icon="search"
+        id="tavily", name="Tavily Search", type=ProviderType.WEB_SEARCH,
+        description="AI 优化的联网搜索 API", default_base_url="https://api.tavily.com",
+        default_model="tavily-search", icon="search"
     ),
-    "serper": ProviderMetadata(
-        id="serper",
-        name="Serper",
-        type=ProviderType.WEB_SEARCH,
-        description="Google 搜索 API",
-        default_base_url="https://google.serper.dev",
-        default_model="serper",
-        icon="globe"
-    ),    "freesearch": ProviderMetadata(
-        id="freesearch",
-        name="FreeSearch",
-        type=ProviderType.WEB_SEARCH,
-        description="免费联网搜索 API",
-        default_base_url="https://api.freesearch.io",
-        default_model="freesearch",
-        requires_api_key=False,
-        icon="search-check"
+    "bocha": ProviderMetadata(
+        id="bocha", name="Bocha Search", type=ProviderType.WEB_SEARCH,
+        description="博查联网搜索 API", default_base_url="https://api.bocha.cn/v1/web-search",
+        default_model="", icon="globe"
     ),
-
     "custom_search": ProviderMetadata(
-        id="custom_search",
-        name="自定义搜索 API",
-        type=ProviderType.WEB_SEARCH,
-        description="自定义搜索接口",
-        default_base_url="",
-        default_model="",
-        icon="settings"
+        id="custom_search", name="Custom Search", type=ProviderType.WEB_SEARCH,
+        description="兼容项目约定请求格式的自定义搜索接口", default_base_url="",
+        default_model="", icon="settings"
     ),
 }
 
@@ -550,7 +300,65 @@ ALL_PROVIDERS = {
     ProviderType.STT: STT_PROVIDERS,
     ProviderType.TTS: TTS_PROVIDERS,
     ProviderType.WEB_SEARCH: WEB_SEARCH_PROVIDERS,
+    ProviderType.VOICE_CONVERSION: VOICE_CONVERSION_PROVIDERS,
 }
+
+
+# 正式运行链路能力边界。配置页可以保存更多实验性 Provider，
+# 但只有下列项目会被当前 Agent/RAG/语音运行时真正消费。
+_RUNTIME_SUPPORT: dict[ProviderType, dict[str, str]] = {
+    ProviderType.LLM: {
+        "openai": "通过 ChatOpenAI 的 OpenAI-compatible Chat Completions 调用。",
+        "deepseek": "通过 OpenAI-compatible Chat Completions 调用。",
+        "zhipu": "通过 OpenAI-compatible Chat Completions 调用。",
+        "qwen": "通过 OpenAI-compatible Chat Completions 调用。",
+        "kimi": "通过 OpenAI-compatible Chat Completions 调用。",
+        "moonshot": "通过 OpenAI-compatible Chat Completions 调用。",
+        "minimax": "通过 OpenAI-compatible Chat Completions 调用。",
+        "minimax_token": "通过 OpenAI-compatible Chat Completions 调用。",
+        "xiaomi": "通过 OpenAI-compatible Chat Completions 调用。",
+        "xiaomi_token": "通过 OpenAI-compatible Chat Completions 调用。",
+        "openrouter": "通过 OpenAI-compatible Chat Completions 调用。",
+        "ollama": "通过本地 OpenAI-compatible Chat Completions 调用。",
+    },
+    ProviderType.EMBEDDING: {
+        "openai_embedding": "通过 OpenAIEmbeddings 调用 OpenAI-compatible Embeddings。",
+        "nvidia_embedding": "按 OpenAI-compatible Embeddings 接口调用。",
+        "dashscope_embedding": "按 OpenAI-compatible Embeddings 接口调用。",
+        "local_embedding": "使用项目内置 managed_local Embedding Worker。",
+    },
+    ProviderType.RERANKER: {
+        "local_rerank": "使用项目内置本地 Reranker Worker。",
+        "bailian_rerank": "通过阿里云百炼 Rerank API 正式调用。",
+    },
+    ProviderType.STT: {
+        "local_stt": "使用项目内置本地 STT Worker。",
+        "whisper_api": "通过 OpenAI Audio Transcriptions 接口正式调用。",
+        "xinference_stt": "通过 Xinference 的 OpenAI-compatible 音频转写接口正式调用。",
+        "mimo_stt": "通过 MiMo 的 OpenAI-compatible Audio Transcriptions 接口正式调用。",
+    },
+    ProviderType.TTS: {
+        "gsv_tts_local": "使用项目内置 GPT-SoVITS 服务。",
+        "openai_tts": "通过 OpenAI-compatible /audio/speech 接口生成 WAV。",
+        "mimo_tts": "通过 MiMo /chat/completions 音频接口生成 WAV。",
+    },
+    ProviderType.VOICE_CONVERSION: {
+        "rvc": "独立音频生产工具：将已有音频转换为目标音色并生成文件，不参与角色对话。",
+        "separator": "通过 YUMENO 人声分离任务管理器调用。",
+    },
+    ProviderType.WEB_SEARCH: {
+        "tavily": "由 RAG 联网搜索适配器直接调用。",
+        "bocha": "由 RAG 联网搜索适配器直接调用。",
+        "custom_search": "按项目约定的 Bocha-compatible POST 接口调用。",
+    },
+}
+
+
+def runtime_support(provider_type: ProviderType, provider_id: str) -> tuple[bool, str]:
+    note = _RUNTIME_SUPPORT.get(provider_type, {}).get(provider_id)
+    if note:
+        return True, note
+    return False, "可以保存和测试配置，但当前正式运行链路尚未接入，不会被 Agent/RAG/语音运行时自动使用。"
 
 
 def get_provider_metadata(provider_type: ProviderType, provider_id: str) -> ProviderMetadata | None:

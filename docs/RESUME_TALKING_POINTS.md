@@ -8,10 +8,10 @@
 ## 核心成果（可直接写入简历）
 
 ### 技术架构
-1. **基于 LangGraph 1.2.9 的 Supervisor + 6-Worker 多智能体架构**
-   - 实现知识/联网/记忆/管理四类专业 Worker，通过 Handoff 机制实现状态交接
-   - 集成 HITL（Human-in-the-loop）中断恢复，变更操作需人工批准
-   - 通过 LangGraph checkpoint 实现会话状态持久化和断点恢复
+1. **基于 LangGraph 的 Supervisor + 领域子图架构**
+   - Supervisor 负责策略和最终表达；knowledge 为 Planner + 确定性 RAG/SQL/联网管线
+   - memory / document / profile / voice_clone / config 为受限工具 Worker，全部经合同回 Supervisor
+   - 写操作和策略化联网走 HITL；checkpoint 持久化会话并支持中断恢复
 
 2. **自适应纠错式 RAG 流程（行业领先）**
    - 设计并实现查询改写 + 质量门 + 有界重试机制
@@ -70,7 +70,7 @@
 ### Q1: 你的多 Agent 架构和 AstrBot 有什么区别？
 **A**: 
 - **AstrBot** 是单 Agent + 工具集，适合多平台消息集成
-- **YUMENO** 是 Supervisor + 4 Worker 多智能体，每个 Worker 只能访问受限工具集（最小权限）
+- **YUMENO** 是 Supervisor 编排的领域子图：knowledge 是 Planner + 确定性 RAG/SQL/联网管线，其余 Worker 只能访问受限工具集
 - 我们通过 **LangGraph Handoff** 实现 Agent 间状态交接，变更操作需要 **HITL 中断恢复**
 - 核心差异：**我们专注知识密集场景的 RAG 质量和系统韧性**，有完整的评测体系
 

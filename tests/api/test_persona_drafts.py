@@ -181,3 +181,43 @@ def test_expert_draft_skips_candidate_identification(client, tmp_path, monkeypat
     draft = wait_for_draft(client, uploaded.json()["id"])
     assert draft["persona_type"] == "knowledge_expert"
     assert draft["candidates"] == []
+
+
+def test_confirm_persona_draft_uses_document_runtime_for_indexing(
+    client, db_session, tmp_path, monkeypatch
+):
+    from agents.runtime.runner import AgentRuntime
+    from app.run_store import RunStore
+
+    monkeypatch.setattr("ingestion.document_jobs.DATA_DIR", tmp_path)
+    monkeypatch.setattr(
+        "ingestion.document_jobs.convert_source",
+        lambda source, destination: "# Preview",
+    )
+    monkeypatch.setattr("ingestion.document_jobs.ingest_markdown_file", lambda path, scope, **kwargs: 1)
+    monkeypatch.setattr(
+        "app.routers.persona_drafts.analyze_materials",
+        lambda mode, previews, fallback: ("运行时角色", {"description": "runtime"}),
+    )
+    runtime = AgentRuntime(object(), RunStore(client.app.state.session_factory))
+    client.app.state.run_store = runtime.run_store
+    client.app.state.agent_runtime = runtime
+
+    uploaded = client.post(
+        "/api/persona-drafts/upload",
+        data={"mode": "expert"},
+        files=[("files", ("guide.txt", b"guide", "text/plain"))],
+    )
+    draft = wait_for_draft(client, uploaded.json()["id"])
+
+    confirmed = client.post(f"/api/persona-drafts/{draft['id']}/confirm")
+
+    assert confirmed.status_code == 200
+    job = confirmed.json()["documents"][0]
+    assert job["run_id"]
+    runtime_run = client.get(f"/api/runs/{job['run_id']}").json()["run"]
+    assert runtime_run["action"] == "document_index"
+    assert runtime_run["status"] == "completed"
+    assert [event["name"] for event in client.get(
+        f"/api/runs/{job['run_id']}/events"
+    ).json()["events"]] == ["task_started", "index_started", "task_completed"]

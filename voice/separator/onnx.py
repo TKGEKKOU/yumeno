@@ -91,10 +91,11 @@ class HtdemucsSeparator:
                 self._session = ort.InferenceSession(str(self.model_path), providers=self._providers)
         return self._session
 
-    def separate(
+    def separate_stems(
         self,
         input_wav: Path,
-        output_wav: Path,
+        vocals_wav: Path,
+        instrumental_wav: Path,
         progress: Callable[[int, int], None] | None = None,
     ) -> Path:
         """Extract the vocals stem from a 44.1 kHz stereo WAV and save it.
@@ -130,6 +131,20 @@ class HtdemucsSeparator:
         weight = np.maximum(weight, 1e-8)
         out /= weight
         vocals = out[SOURCES.index(SPECIALIST_STEM)]
-        Path(output_wav).parent.mkdir(parents=True, exist_ok=True)
-        _write_wav(Path(output_wav), vocals, rate)
-        return Path(output_wav)
+        instrumental = mix - vocals
+        Path(vocals_wav).parent.mkdir(parents=True, exist_ok=True)
+        _write_wav(Path(vocals_wav), vocals, rate)
+        _write_wav(Path(instrumental_wav), instrumental, rate)
+        return Path(vocals_wav)
+    def separate(
+        self,
+        input_wav: Path,
+        output_wav: Path,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> Path:
+        """Backward-compatible vocals-only API used by GPT-SoVITS."""
+        temporary = Path(output_wav).with_suffix(".instrumental.tmp.wav")
+        try:
+            return self.separate_stems(input_wav, output_wav, temporary, progress)
+        finally:
+            temporary.unlink(missing_ok=True)

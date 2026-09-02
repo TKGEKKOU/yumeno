@@ -28,11 +28,8 @@ def list_available_configs(
     
     return {
         "llm": {
-            "provider": settings.llm_provider,
-            "model": settings.llm_model,
-            "base_url": settings.llm_base_url,
-            "temperature": settings.llm_temperature,
-            "max_tokens": settings.llm_max_tokens
+            "model": settings.openai_model,
+            "base_url": settings.openai_base_url,
         },
         "embedding": {
             "provider": settings.embedding_provider,
@@ -41,18 +38,17 @@ def list_available_configs(
             "dimensions": settings.embedding_dimensions
         },
         "tts": {
-            "provider": settings.tts_provider,
-            "gpt_sovits_url": settings.gpt_sovits_base_url
+            "provider": "gpt_sovits",
         },
         "rag": {
             "pipeline": settings.rag_pipeline,
             "max_rewrite_count": settings.max_rewrite_count,
             "max_generation_retry": settings.max_generation_retry,
-            "confidence_threshold": settings.default_confidence_threshold
+            "confidence_threshold": settings.confidence_threshold
         },
         "security": {
             "max_upload_mb": settings.max_upload_mb,
-            "enable_web_search": settings.enable_web_search
+            "enable_web_search": settings.enable_web_fallback
         }
     }
 
@@ -101,7 +97,7 @@ def get_config_detail(
         "rag": {
             "description": "RAG 流程配置，影响检索质量和性能",
             "fields": {
-                "pipeline": "default(自适应纠错) / simple(检索直出)",
+                "pipeline": "default(自适应纠错；adaptive 为兼容别名；不支持 simple)",
                 "max_rewrite_count": "查询改写最大次数",
                 "max_generation_retry": "生成重试最大次数",
                 "confidence_threshold": "质量门阈值 (0.0-1.0)"
@@ -213,49 +209,12 @@ def apply_config_change(
     Returns:
         应用结果
     """
-    from settings import Settings
-    
-    try:
-        settings = Settings.load()
-        
-        # 设置新值
-        full_field = f"{category}_{field}"
-        if hasattr(settings, full_field):
-            setattr(settings, full_field, new_value)
-        elif hasattr(settings, field):
-            setattr(settings, field, new_value)
-        else:
-            return {
-                "status": "failed",
-                "reason": f"未知字段: {field}"
-            }
-        
-        # 保存配置
-        settings.save()
-        
-        logger.info(f"Applied config change: {category}.{field} = {new_value}")
-        
-        # 检查是否需要重启服务
-        restart_required = _check_restart_required(category, field)
-        
-        return {
-            "status": "applied",
-            "category": category,
-            "field": field,
-            "new_value": new_value,
-            "restart_required": restart_required,
-            "message": (
-                f"配置已更新。"
-                f"{'需要重启服务才能生效。' if restart_required else '立即生效。'}"
-            )
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to apply config change: {e}")
-        return {
-            "status": "failed",
-            "reason": str(e)
-        }
+    del category, field, new_value
+    logger.warning("Blocked in-process config mutation attempt from agent tool")
+    return {
+        "status": "failed",
+        "reason": "配置修改必须使用设置页持久化，Agent 不能直接写入运行时配置。"
+    }
 
 
 def _validate_config_value(

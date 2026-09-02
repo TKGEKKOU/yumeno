@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 from langchain.tools import ToolRuntime, tool
+from langgraph.config import get_stream_writer
 from langgraph.types import Command
 
 from agents.context import PersonaAgentContext
@@ -12,40 +13,46 @@ logger = logging.getLogger(__name__)
 
 @tool
 def start_voice_clone_session(
-    persona_id: str,
-    voice_description: str,
-    runtime: ToolRuntime[PersonaAgentContext]
+    runtime: ToolRuntime[PersonaAgentContext],
+    voice_description: str = "待上传素材后确认",
 ) -> dict[str, Any]:
     """
     为角色创建语音克隆会话。
     
     Args:
-        persona_id: 角色 ID
         voice_description: 音色描述，如"温柔的女声"、"成熟的男声"
     
     Returns:
         会话信息和下一步指引
     """
-    from voice.studio.service import create_session
-    
     # 验证角色权限
-    if runtime.context.persona_id != persona_id:
+    persona_id = runtime.context.persona_id
+    if not persona_id:
         return {
             "status": "denied",
-            "reason": "只能为当前角色创建语音克隆会话"
+            "reason": "未识别当前角色，无法创建语音克隆会话"
         }
     
     try:
-        session = create_session(persona_id)
-        logger.info(f"Created voice clone session {session.id} for persona {persona_id}")
+        manager = runtime.request.app.state.voice_studio
+        session = manager.create_session(origin="chat")
+        logger.info(f"Created voice clone session {session['session_id']} for persona {persona_id}")
+        try:
+            get_stream_writer()({
+                "kind": "clone_session",
+                "action": "voice_session_created",
+                "session_id": session["session_id"],
+            })
+        except RuntimeError:
+            pass
         
         return {
             "status": "created",
-            "session_id": session.id,
+            "session_id": session["session_id"],
             "next_step": "request_file_upload",
             "guidance": (
-                "请上传 10-30 秒的干净语音素材（支持视频/音频）。"
-                "要求：单人说话、无背景音乐、无明显噪音。"
+                "请直接点击输入框左侧的 + 上传视频或音频。"
+                "素材建议单人说话、无背景音乐和明显噪音。"
             )
         }
     except Exception as e:

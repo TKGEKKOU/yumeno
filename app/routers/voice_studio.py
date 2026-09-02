@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
+
 
 from app.routers.settings import require_local
 from voice.studio import VoiceStudioError
@@ -82,10 +84,22 @@ def _store_upload(request: Request, session_id: str, suffix: str, payload: bytes
     return target
 
 
+def _claim_chat_session(request: Request, session_id: str) -> dict:
+    if request.headers.get("X-YUMENO-Chat-Session") != "chat":
+        return {}
+    state = manager(request).session_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if state.get("origin") == "chat" and state.get("claimed_at") is None:
+        state["claimed_at"] = time.time()
+        manager(request)._update_meta(session_id, {"claimed_at": time.time()})
+    return state
+
+
 @router.post("/sessions", status_code=status.HTTP_201_CREATED)
 def create_session(request: Request, x_yumeno_request: str = Header(default="")):
     protected(request, x_yumeno_request)
-    return manager(request).create_session()
+    return manager(request).create_session(origin="chat")
 
 
 @router.get("/sessions")
@@ -116,6 +130,10 @@ async def upload_video(
     x_yumeno_request: str = Header(default=""),
 ):
     protected(request, x_yumeno_request)
+    _claim_chat_session(request, session_id)
+    current = manager(request).session_state(session_id)
+    if current and current.get("source_kind") and current.get("phase") not in {"idle", "failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="当前会话已有素材，请先重置或新建会话")
     video = (await _form_files(request, "video") or [None])[0]
     suffix, payload = _read_upload(video, MAX_VIDEO_BYTES, VIDEO_EXTENSIONS)
     target = _store_upload(request, session_id, suffix, payload)
@@ -129,6 +147,10 @@ async def upload_audio(
     x_yumeno_request: str = Header(default=""),
 ):
     protected(request, x_yumeno_request)
+    _claim_chat_session(request, session_id)
+    current = manager(request).session_state(session_id)
+    if current and current.get("source_kind") and current.get("phase") not in {"idle", "failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="当前会话已有素材，请先重置或新建会话")
     files = await _form_files(request)
     targets = [_store_upload(request, session_id, suffix, payload) for suffix, payload in _read_uploads(files, MAX_AUDIO_BYTES, AUDIO_EXTENSIONS)]
     return manager(request).upload_audio_files(session_id, targets)

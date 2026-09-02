@@ -30,16 +30,48 @@
     </div>
   </section>
 
-  <form id="settings-form" class="settings-form">
+  <form id="settings-form" class="settings-form is-hidden" aria-hidden="true">
     <div class="settings-content">
+      <nav class="settings-nav-rail" aria-label="设置分组">
+        <a href="#section-model" class="settings-nav-link" data-target="section-model"><i data-lucide="brain-circuit"></i>模型与联网</a>
+        <a href="#section-knowledge" class="settings-nav-link" data-target="section-knowledge"><i data-lucide="library"></i>知识与检索</a>
+        <a href="#section-voice" class="settings-nav-link" data-target="section-voice"><i data-lucide="audio-lines"></i>语音引擎</a>
+      </nav>
 
-      <div class="settings-group">
-        <!-- Embedding 本地模型 -->
-        <details class="panel settings-section" data-collapsible>
-          <summary class="settings-summary"><span class="settings-summary-title"><strong>Embedding 本地模型</strong><span class="settings-summary-meta">向量化 · 本地推理 · Qwen3-Embedding</span></span><span class="section-toggle-label">展开</span></summary>
-          <p class="settings-help">使用固定的本地模型 <code>Qwen3-Embedding-0.6B</code>（1024 维），从 ModelScope 下载，自动优先 GPU，不可用时回退 CPU。如需使用其他 Embedding 提供商，请前往<a href="#providers">提供商配置</a>。</p>
-          <div class="asr-resource-bar"><div><strong id="embedding-state">检查中</strong><p id="embedding-status" class="inline-status"></p><progress id="embedding-progress" class="is-hidden" max="100"></progress><p id="embedding-progress-detail" class="inline-status"></p></div><div class="asr-actions"><button id="open-embedding-directory" class="button button-secondary" type="button"><i data-lucide="folder-open"></i>打开目录</button><button id="remove-embedding" class="button button-danger" type="button">删除</button><button id="cancel-embedding" class="button button-secondary is-hidden" type="button">取消下载</button><button id="install-embedding" class="button button-primary" type="button">安装</button></div></div>
+      <section id="section-model" class="settings-group" aria-labelledby="section-model-title">
+        <h3 id="section-model-title" class="settings-group-title">模型与联网</h3>
+        <p class="settings-help provider-resource-notice">大语言模型和联网搜索统一在<a href="#providers">供应商配置</a>中管理、测试和全局应用；此处保留隐藏兼容表单以兼容旧脚本。</p>
+        <details class="panel settings-section provider-managed-resource" data-collapsible>
+          <summary class="settings-summary"><span class="settings-summary-title"><strong>OpenAI 兼容模型</strong><span class="settings-summary-meta">文本对话 · Chat Completions · 可替换供应商</span></span><span class="section-toggle-label">展开</span></summary>
+          <div class="settings-grid settings-grid-form">
+            <label class="field provider-field"><span>供应商</span><select id="llm-provider"><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="qwen">通义千问</option><option value="custom">自定义</option></select></label>
+            <label class="field key-field"><span>API Key</span><span class="secret-input"><input id="openai-api-key" type="text" autocomplete="off"><span class="secret-actions"><button id="toggle-openai-api-key" type="button" title="显示或隐藏 API Key" aria-label="显示或隐藏 API Key"><i data-lucide="eye"></i></button><button id="copy-openai-api-key" type="button" title="复制 API Key" aria-label="复制 API Key"><i data-lucide="copy"></i></button></span></span></label>
+            <label class="field base-url-field"><span>Base URL</span><input id="openai-base-url"></label>
+            <label class="field model-field"><span>模型</span><input id="openai-model"></label>
+          </div>
+          <div class="llm-probe-row"><div><strong>接口验证</strong><p>使用当前填写值发送一次最小文本请求，不保存配置，也不写入对话。</p></div><button id="test-llm-connection" class="button button-secondary" type="button"><i data-lucide="plug-zap"></i>测试连接</button></div>
+          <p id="llm-test-status" class="inline-status" role="status" aria-live="polite"></p>
+          <details class="settings-help"><summary>参数说明与示例</summary><p>当前调用格式为 OpenAI-compatible Chat Completions，只发送文本消息。可使用 <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a>、<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">DeepSeek</a>、<a href="https://bailian.console.aliyun.com/" target="_blank" rel="noopener">通义千问百炼</a>或其他兼容服务。</p><p>Base URL：OpenAI <code>https://api.openai.com/v1</code>；DeepSeek <code>https://api.deepseek.com</code>；通义千问 <code>https://dashscope.aliyuncs.com/compatible-mode/v1</code></p><p>模型名以供应商控制台为准；切换服务时建议先测试连接，再保存配置。</p></details>
         </details>
+
+        <details class="panel settings-section provider-managed-resource" data-collapsible>
+          <summary class="settings-summary"><span class="settings-summary-title"><strong>联网搜索（可选）</strong><span class="settings-summary-meta">可选 · 博查 / Tavily / 自定义</span></span><span class="section-toggle-label">展开</span></summary>
+          <label class="toggle-field settings-feature-toggle"><input id="web-search-enabled" type="checkbox"><span>启用联网搜索</span></label>
+          <div class="settings-grid one-column">
+            <label class="field provider-field"><span>服务</span><select id="web-search-provider"><option value="bocha">博查</option><option value="tavily">Tavily</option><option value="custom">自定义（博查兼容）</option></select></label>
+            <label class="field key-field"><span>API Key</span><span class="secret-input"><input id="web-search-api-key" type="text" autocomplete="off"><span class="secret-actions"><button id="toggle-web-search-api-key" type="button" title="显示或隐藏 API Key" aria-label="显示或隐藏 API Key"><i data-lucide="eye"></i></button><button id="copy-web-search-api-key" type="button" title="复制 API Key" aria-label="复制 API Key"><i data-lucide="copy"></i></button></span></span></label>
+            <label id="web-search-base-url-field" class="field base-url-field is-hidden"><span>接口地址</span><input id="web-search-base-url" type="url" placeholder="https://example.com/v1/web-search"></label>
+          </div>
+          <p id="web-search-warning" class="settings-warning is-hidden"></p>
+          <details class="settings-help"><summary>参数说明与示例</summary><div id="web-search-guide"></div><p>博查：从<a href="https://open.bocha.cn/" target="_blank" rel="noopener">博查开放平台</a>获取 API Key，接口地址由应用内置。</p><p>自定义接口必须使用 POST、Bearer 鉴权，并返回 <code>data.webPages.value</code>；每项应包含 <code>name</code>、<code>url</code>、<code>summary</code> 或 <code>snippet</code>。</p></details>
+        </details>
+
+      </section>
+
+      <section id="section-knowledge" class="settings-group" aria-labelledby="section-knowledge-title">
+        <h3 id="section-knowledge-title" class="settings-group-title">知识与检索</h3>
+        <p class="settings-help provider-resource-notice">Embedding、Reranker 等模型资源统一在<a href="#providers">供应商配置</a>中选择、下载、删除和应用。</p>
+        <div id="reranker-settings-root"></div>
 
         <!-- 文档切分参数 -->
         <details class="panel settings-section" data-collapsible open>
@@ -52,34 +84,20 @@
           <details class="settings-help"><summary>参数说明</summary><p>切分建议：普通资料使用 <code>1000 / 150</code>；短问答可使用 <code>600 / 100</code>。修改后需重新上传文档才能生效。</p></details>
         </details>
 
-        <!-- GPT-SoVITS -->
-        <details class="panel settings-section" data-collapsible>
-          <summary class="settings-summary"><span class="settings-summary-title"><strong>GPT-SoVITS 语音合成</strong><span class="settings-summary-meta">训练式专属音色 · 本地引擎</span></span><span class="section-toggle-label">展开</span></summary>
-          <p class="settings-help">本地 TTS 引擎，支持音色训练与推理。安装后可在声音工坊中训练专属音色。</p>
-          <div class="asr-resource-bar"><div class="tts-install-status"><strong id="gptsovits-state">检查中</strong><p id="gptsovits-status" class="inline-status"></p><progress id="gptsovits-progress" class="is-hidden" max="100"></progress><p id="gptsovits-progress-detail" class="inline-status"></p></div><div class="asr-actions"><button id="open-gptsovits-directory" class="button button-secondary" type="button"><i data-lucide="folder-open"></i>打开目录</button><button id="remove-gptsovits" class="button button-danger" type="button">删除</button><button id="cancel-gptsovits" class="button button-secondary is-hidden" type="button">取消下载</button><button id="install-gptsovits" class="button button-primary" type="button">安装</button></div></div>
-          <details class="settings-help"><summary>引擎设置（可选）</summary><div class="settings-grid settings-grid-four gptsovits-paths">
-            <label class="field"><span>整合包版本（v2Pro 预设）</span><select id="gptsovits-preset"><option value="20250604-nvidia50">v2Pro 20250604（nvidia50）· 约 8.8 GB</option><option value="20250604">v2Pro 20250604 · 约 8.2 GB</option><option value="20250531">v2Pro 20250531 · 约 8.1 GB</option><option value="custom">自定义下载地址</option></select></label>
-            <label class="field"><span>下载地址（自动匹配，可改）</span><input id="gptsovits-download-url" placeholder="https://.../gpt-sovits.7z"></label>
-            <label class="field"><span>安装目录</span><input id="gptsovits-install-dir" placeholder="自动检测或粘贴整合包目录"></label>
-            <button id="save-gptsovits-config" class="button button-secondary" type="button">保存路径</button>
-          </div><p id="gptsovits-preset-note" class="inline-status"></p><p id="gptsovits-config-status" class="inline-status"></p><div class="asr-resource-bar"><p id="gptsovits-service-info" class="inline-status"></p><div class="asr-actions"><button id="start-gptsovits-service" class="button button-secondary" type="button">启动服务</button><button id="stop-gptsovits-service" class="button button-secondary" type="button">停止服务</button></div></div></details>
-        </details>
+      </section>
 
-        <!-- 本地语音识别 -->
-        <details class="panel settings-section" data-collapsible>
-          <summary class="settings-summary"><span class="settings-summary-title"><strong>本地语音识别</strong><span class="settings-summary-meta">语音输入 · SenseVoice 本地模型</span></span><span class="section-toggle-label">展开</span></summary>
-          <p class="settings-help">本地 STT 引擎，使用 SenseVoice 模型。如需使用云端 STT 服务，请前往<a href="#providers">提供商配置</a>。</p>
-          <label class="toggle-field"><input id="asr-enabled" type="checkbox"><span>启用本地语音识别</span></label>
-          <div class="asr-resource-bar"><div><strong id="asr-state">检查中</strong><p id="asr-status" class="inline-status"></p><progress id="asr-progress" class="is-hidden" max="100"></progress><p id="asr-progress-detail" class="inline-status"></p></div><div class="asr-actions"><button id="open-asr-directory" class="button button-secondary" type="button"><i data-lucide="folder-open"></i>打开目录</button><button id="remove-asr" class="button button-danger" type="button">删除</button><button id="cancel-asr" class="button button-secondary is-hidden" type="button">取消下载</button><button id="install-asr" class="button button-primary" type="button">安装</button></div></div>
-          <details class="settings-help"><summary>高级路径设置（可选）</summary><div class="settings-grid settings-grid-four"><label class="field"><span>Python（可选）</span><input id="asr-python-path" placeholder="自动检测"></label><label class="field"><span>模型目录（可选）</span><input id="asr-model-path" placeholder="自动检测"></label><label class="field"><span>FFmpeg（可选）</span><input id="asr-ffmpeg-path" placeholder="自动检测"></label></div><div class="asr-actions"><button id="save-asr" class="button button-secondary" type="button">保存路径</button></div></details>
-        </details>
+      <section id="section-voice" class="settings-group" aria-labelledby="section-voice-title">
+        <h3 id="section-voice-title" class="settings-group-title">语音引擎</h3>
+        <p class="settings-help provider-resource-notice">本地 STT、GPT-SoVITS 与其它语音 Provider 统一在<a href="#providers">供应商配置</a>中管理。</p>
+        <p class="settings-help">STT、GPT-SoVITS、人声分离与 RVC 的本地资源、安装和服务状态已统一到<a href="#providers">供应商配置</a>；本页仅保留系统级运行偏好。</p>
+      </section>
 
-        <!-- 人声分离 -->
-        <details class="panel settings-section" data-collapsible>
-          <summary class="settings-summary"><span class="settings-summary-title"><strong>人声分离</strong><span class="settings-summary-meta">素材 → 干净人声 · UVR5 本地模型</span></span><span class="section-toggle-label">展开</span></summary>
-          <p class="settings-help">从视频/音频中提取干净人声，供声音工坊切片与训练音色使用。</p>
-          <div class="asr-resource-bar separator-resource-bar"><div class="tts-install-status"><strong id="separator-state">检查中</strong><p id="separator-status" class="inline-status"></p><progress id="separator-progress" class="is-hidden" max="100"></progress><p id="separator-progress-detail" class="inline-status"></p></div><div class="asr-actions"><button id="open-separator-directory" class="button button-secondary" type="button"><i data-lucide="folder-open"></i>打开目录</button><button id="remove-separator" class="button button-danger" type="button">删除</button><button id="cancel-separator" class="button button-secondary is-hidden" type="button">取消下载</button><button id="install-separator" class="button button-primary" type="button">安装</button></div></div>
-        </details>
+      <!-- 旧脚本/插件兼容锚点：资源管理已迁移到供应商页，以下节点不呈现给用户。 -->
+      <div class="is-hidden" aria-hidden="true">
+        <span>Qwen3-Embedding-0.6B · ModelScope</span><input id="embedding-device"><span id="embedding-state"></span><progress id="embedding-progress"></progress><span id="embedding-progress-detail"></span><button id="install-embedding"></button><button id="cancel-embedding"></button><button id="remove-embedding"></button><button id="open-embedding-directory"></button>
+        <input id="asr-enabled"><input id="asr-python-path"><input id="asr-model-path"><input id="asr-ffmpeg-path"><button id="install-asr"></button><button id="remove-asr"></button>
+        <span id="gptsovits-state"></span><progress id="gptsovits-progress"></progress><span id="gptsovits-progress-detail"></span><select id="gptsovits-preset"></select><input id="gptsovits-download-url"><input id="gptsovits-install-dir"><button id="install-gptsovits"></button><button id="cancel-gptsovits"></button><button id="remove-gptsovits"></button><button id="open-gptsovits-directory"></button><button id="start-gptsovits-service"></button><button id="stop-gptsovits-service"></button>
+        <span id="tts-settings-anchor"></span><button id="open-asr-directory"></button><button id="open-gptsovits-directory"></button>
       </div>
 
       <div class="settings-actions"><p id="settings-status" class="inline-status"></p><button id="reset-settings" class="button button-secondary" type="button">重置配置</button><button id="save-settings" class="button button-primary" type="submit">保存配置</button></div>

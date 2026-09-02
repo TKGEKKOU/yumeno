@@ -100,7 +100,7 @@ def test_index_job_commits_status_when_row_still_exists(tmp_path, monkeypatch):
 
     job = _make_job(markdown)
     store = _CleanupStore()
-    monkeypatch.setattr("ingestion.document_jobs.ingest_markdown_file", lambda path, scope: 1)
+    monkeypatch.setattr("ingestion.document_jobs.ingest_markdown_file", lambda path, scope, **kwargs: 1)
 
     index_document_job("job-1", lambda: OkSession(job), store=store)
 
@@ -140,7 +140,7 @@ def test_index_job_cleans_orphan_vectors_when_row_deleted_during_indexing(tmp_pa
 
     store = _CleanupStore()
     session = StaleSession(_make_job(markdown))
-    monkeypatch.setattr("ingestion.document_jobs.ingest_markdown_file", lambda path, scope: 1)
+    monkeypatch.setattr("ingestion.document_jobs.ingest_markdown_file", lambda path, scope, **kwargs: 1)
 
     index_document_job("job-1", lambda: session, store=store)
 
@@ -240,3 +240,28 @@ def test_index_job_removes_structured_import_when_vector_indexing_fails(tmp_path
     )
     assert list_structured_tables_for_context(context, root=tmp_path) == []
     assert job.status == "index_failed"
+
+def test_index_job_forwards_explicit_store_to_ingester(tmp_path, monkeypatch):
+    from ingestion.document_jobs import index_document_job
+
+    markdown = tmp_path / "preview.md"
+    markdown.write_text("# Guide\n\nBody.", encoding="utf-8")
+    job = _make_job(markdown)
+    store = _CleanupStore()
+    captured = {}
+
+    def fake_ingest(path, scope, **kwargs):
+        captured.update(kwargs)
+        return 1
+
+    monkeypatch.setattr("ingestion.document_jobs.ingest_markdown_file", fake_ingest)
+
+    outcome = index_document_job("job-1", lambda: type("Session", (), {
+        "__enter__": lambda self: self,
+        "__exit__": lambda self, *args: False,
+        "get": lambda self, model, job_id: job if job_id == job.id else None,
+        "commit": lambda self: None,
+    })(), store=store)
+
+    assert outcome["status"] == "indexed"
+    assert captured["store"] is store

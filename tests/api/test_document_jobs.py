@@ -138,3 +138,33 @@ def test_delete_indexing_job_cleans_vectors_too(client, db_session, tmp_path, mo
     assert deleted == [
         (DocumentScope("local-default", persona["knowledge_space_id"], document_id), document_id)
     ]
+
+
+def test_sanitize_filename_preserves_unicode_stem_and_extension():
+    from ingestion.document_jobs import sanitize_filename
+
+    assert sanitize_filename("ビオラ.txt") == "ビオラ.txt"
+    assert sanitize_filename("角色设定_日本語.md") == "角色设定_日本語.md"
+    assert sanitize_filename("../unsafe?.pdf") == "unsafe_.pdf"
+
+
+def test_upload_accepts_japanese_filename(client, tmp_path, monkeypatch):
+    persona = _create_persona(client)
+    monkeypatch.setattr("ingestion.document_jobs.DATA_DIR", tmp_path)
+
+    def fake_convert(source, destination):
+        text = "# 薇欧拉\n\n测试资料。"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(text, encoding="utf-8")
+        return text
+
+    monkeypatch.setattr("ingestion.document_jobs.convert_source", fake_convert)
+    response = client.post(
+        f"/api/knowledge-spaces/{persona['knowledge_space_id']}/documents/upload",
+        files=[("files", ("ビオラ.txt", "测试内容".encode("utf-8"), "text/plain"))],
+    )
+
+    assert response.status_code == 201
+    job = response.json()[0]
+    assert job["original_filename"] == "ビオラ.txt"
+    assert job["markdown_filename"] == "ビオラ.md"

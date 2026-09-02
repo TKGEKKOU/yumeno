@@ -96,7 +96,7 @@ class GPTSoVITSAdapter:
 
         try:
             output = subprocess.run(
-                ["netstat", "-ano", "-p", "tcp"],
+                ["netstat", "-ano"],
                 capture_output=True,
                 text=True,
                 timeout=10,

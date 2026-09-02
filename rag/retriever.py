@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+_CACHED_STORES: list[object] = []
+
 from settings import Settings
 from ingestion.milvus_store import MilvusRagStore, quote_filter_value
 from rag.contracts import RagQueryContext
@@ -32,11 +34,7 @@ from rag.contracts import RagQueryContext
 @lru_cache(maxsize=4)
 def _cached_store(
     store_type: type[MilvusRagStore],
-    milvus_uri: str,
-    milvus_user: str,
-    milvus_password: str,
-    collection_name: str,
-    dimensions: int,
+    settings: Settings,
 ) -> object:
     """按连接标识缓存"已连接"的 MilvusRagStore。
 
@@ -46,7 +44,25 @@ def _cached_store(
     缓存后该开销只发生一次，检索热路径不再重复连接 Milvus。
     """
 
-    return store_type().connect()
+    store = store_type(settings)
+    _CACHED_STORES.append(store)
+    return store.connect()
+
+
+def clear_retriever_cache() -> None:
+    """关闭并清空检索器缓存，供应用 shutdown 或配置重载调用。"""
+
+    stores = list(_CACHED_STORES)
+    _CACHED_STORES.clear()
+    _cached_store.cache_clear()
+    for store in stores:
+        close = getattr(store, "close", None)
+        if close is not None:
+            try:
+                close()
+            except Exception:
+                # 关闭阶段不能因一个已经失效的连接阻塞应用退出。
+                pass
 
 
 def build_scope_expression(context: RagQueryContext) -> str:
@@ -68,7 +84,7 @@ def build_scope_expression(context: RagQueryContext) -> str:
     )
 
 
-def build_retriever(context: RagQueryContext, k: int = 4):
+def build_retriever(context: RagQueryContext, k: int = 4, settings: Settings | None = None):
     """构建 Dense + BM25 sparse 混合检索器，并用 RRF 融合两路排名。
 
     Args:
@@ -81,15 +97,8 @@ def build_retriever(context: RagQueryContext, k: int = 4):
     对象本身很轻量（底层连接已被 _cached_store 缓存）。
     """
 
-    settings = Settings.load()
-    vector_store = _cached_store(
-        MilvusRagStore,
-        settings.milvus_uri,
-        settings.milvus_user,
-        settings.milvus_password,
-        settings.collection_name,
-        settings.embedding_dimensions,
-    )
+    active_settings = settings or Settings.load()
+    vector_store = _cached_store(MilvusRagStore, active_settings)
     return vector_store.as_retriever(
         search_type="similarity",
         search_kwargs={

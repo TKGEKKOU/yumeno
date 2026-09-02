@@ -16,6 +16,7 @@ def test_listener_pids_parses_netstat(monkeypatch):
             "  TCP    127.0.0.1:17005    0.0.0.0:0    LISTENING    12345\n"
             "  TCP    0.0.0.0:17005      0.0.0.0:0    LISTENING    9999\n"
             "  TCP    127.0.0.1:17000    0.0.0.0:0    LISTENING    7777\n"
+            "  TCP    127.0.0.1:1519    127.0.0.1:17005    TIME_WAIT    0\n"
         )
 
     monkeypatch.setattr(

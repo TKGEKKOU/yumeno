@@ -108,8 +108,7 @@ def test_capability_summary_includes_available_skills():
 
     summary = capability_summary()
     assert "document_management" in summary
-    assert "web-research" in summary
-    assert "联网搜索默认使用 web-research 技能" in summary
+    assert "联网搜索使用 web_search" in summary
 
 
 def test_skill_middleware_exposes_loaded_skill_tools():
@@ -526,7 +525,7 @@ def test_web_research_tools_visible_only_for_authorized_turn(tmp_path, monkeypat
                     "messages": [("user", "潍坊今天气温多少")],
                     "active_worker": None,
                     "loaded_skills": ["web-research"],
-                    "web_search_authorized": True,
+                    "intent_decision": {"web_authorized": True},
                 },
             {"configurable": {"thread_id": "persona-a:thread-a"}},
             context=_context(

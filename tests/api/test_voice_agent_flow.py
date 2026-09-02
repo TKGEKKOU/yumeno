@@ -70,3 +70,29 @@ def test_failed_transcription_keeps_audio_and_skips_agent(client, tmp_path, monk
     assert history[0]["status"] == "failed"
     assert history[0]["audio_url"]
     assert agent.questions == []
+
+
+def test_voice_transcript_prefers_shared_runtime_when_available(client, tmp_path, monkeypatch):
+    persona, message = _voice_message(client, tmp_path, monkeypatch)
+    client.app.state.asr_provider_factory = lambda settings: FakeASR()
+
+    class Service:
+        def query(self, question, context):
+            raise AssertionError("voice transcript must not bypass AgentRuntime")
+
+    class Runtime:
+        def query(self, question, context):
+            return AgentTurnResult(
+                status="completed", answer="运行时语音回复", specialist="conversation"
+            )
+
+    client.app.state.agent_service = Service()
+    client.app.state.agent_runtime = Runtime()
+
+    response = client.post(
+        f"/api/voice-messages/{message['id']}/transcribe",
+        headers={"X-YUMENO-Request": "web"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["turn"]["answer"] == "运行时语音回复"

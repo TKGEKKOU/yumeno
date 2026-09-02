@@ -97,15 +97,15 @@ def search_web_documents(
         return []
 
 
-def web_search_documents(question: str, recent: bool = False) -> list[Document]:
+def web_search_documents(question: str, recent: bool = False, settings: Settings | None = None) -> list[Document]:
     """Use the locally configured provider only when web fallback is enabled."""
-    settings = Settings.load()
-    if not settings.enable_web_fallback:
+    active_settings = settings or Settings.load()
+    if not active_settings.enable_web_fallback:
         return []
     return search_web_documents(
-        settings.web_search_provider,
-        settings.web_search_api_key,
+        active_settings.web_search_provider,
+        active_settings.web_search_api_key,
         question,
         recent,
-        settings.web_search_base_url,
+        active_settings.web_search_base_url,
     )

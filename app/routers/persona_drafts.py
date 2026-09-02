@@ -7,7 +7,7 @@ from app.database import get_session
 from app.models import KnowledgeSpace, Persona, PersonaDraft
 from app.schemas import PersonaDraftResponse, PersonaDraftUpdate, PersonaResponse
 from settings import Settings
-from ingestion.document_jobs import create_conversion_job, index_document_job, prepare_index
+from ingestion.document_jobs import create_conversion_job, dispatch_document_index, prepare_index
 from persona.drafts import (
     analyze_materials,
     confirm_draft,
@@ -167,5 +167,13 @@ def confirm_persona_draft(
         for job in draft_documents(session, draft):
             if job.status == "preview_ready":
                 prepare_index(session, job)
-                background_tasks.add_task(index_document_job, job.id, request.app.state.session_factory)
+                dispatch_document_index(
+                    job.id,
+                    request.app.state.session_factory,
+                    runtime=getattr(request.app.state, "agent_runtime", None),
+                    schedule=background_tasks.add_task,
+                )
+                # dispatcher 使用独立会话写入 run_id；刷新当前会话，确保确认响应
+                # 立即返回可查询的 Runtime 运行 ID，而不是旧的 None。
+                session.refresh(job)
     return response_for(session, draft)

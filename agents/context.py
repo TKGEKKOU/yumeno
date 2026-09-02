@@ -22,11 +22,15 @@ class PersonaAgentContext:
     conversation_id: str
     persona_name: str
     persona_type: str
+    attachment_ids: tuple[str, ...] = field(default_factory=tuple)
+    attachment_manifest: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     persona_profile: dict[str, Any] = field(default_factory=dict)
     session_factory: Callable[[], Session] | None = None
     conversation_summary: str = ""
     capability_policies: tuple[CapabilityPolicy, ...] = field(default_factory=tuple)
     telemetry: Any | None = None
+    # 共享后台任务 Runtime；不参与序列化，仅供管理类工具派发可追踪任务。
+    agent_runtime: Any | None = None
 
     def __post_init__(self) -> None:
         # 没有知识空间意味着该角色不可检索，属于配置错误而非合法状态。

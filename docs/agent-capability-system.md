@@ -8,15 +8,16 @@
 flowchart LR
   U[用户 / B站弹幕 / QQ] --> S[PersonaAgentService]
   S --> G[LangGraph Supervisor]
-  G --> W[Knowledge / Web / Memory / Management Worker]
+  G --> K[knowledge 子图]
+  G --> W[Memory / Document / Profile / Voice / Live2D / Config Worker]
   G --> SK[Skill: 指令 + allowed-tools]
   SK --> T[内置 Tool]
   SK --> M[MCP Tool]
-  W --> R[Milvus RAG]
+  K --> R[Adaptive RAG / 只读 SQL / Web fallback]
   M --> X[stdio / SSE / Streamable HTTP MCP Server]
 ```
 
-关键原则：Skill 是行为和工具集合的声明包，不是独立 Agent；Tool 是一次可执行能力；MCP 是外部 Tool 的标准传输协议；RAG 是 knowledge Worker 使用的受控数据服务；Worker 通过结构化交接把结果交回 Supervisor。
+关键原则：Skill 是行为和工具集合的声明包，不是独立 Agent；Tool 是一次可执行能力；MCP 是外部 Tool 的标准传输协议；knowledge 是由 Planner 驱动的受控子图，负责完整 RAG、只读 SQL 和策略化联网回退；其他 Worker 通过结构化交接把结果交回 Supervisor。
 
 ## 2. Agent 与会话
 
@@ -24,7 +25,7 @@ flowchart LR
 
 Supervisor 是唯一面向用户生成最终答案的 Agent。Worker 只使用自身 specialist 工具，完成后返回交接结果。handoff 有业务级上限，达到上限时返回结构化失败结果，避免模型在 Supervisor 与 Worker 之间无限循环。
 
-长期记忆存放在 SQLite 的 persona memory；知识检索始终通过 Milvus RAG，不把 Milvus 替换成本地临时索引。
+长期记忆存放在 SQLite 的 persona memory。普通文档知识问答通过完整 Adaptive RAG；CSV/XLSX 等结构化资料走 workspace 隔离 SQLite 的只读 SQL，Schema Card 可作为 RAG 的检索入口。
 
 ## 3. Capability、Tool 与策略
 
@@ -44,7 +45,63 @@ Supervisor 是唯一面向用户生成最终答案的 Agent。Worker 只使用�
 
 旧 MCP 服务器粒度授权 API 仍兼容：`/mcp-grants`。新能力策略是 Tool 级事实源，旧字段用于迁移和兼容旧配置。
 
-## 4. Skill 生命周期
+## 4. Worker Manifest 与统一结果合同
+
+YUMENO 的 Worker 能力边界由 `WorkerManifest` 描述。Manifest 不是第二套工具注册表，而是从 `ToolSpec` 自动生成的公开声明，确保“能做什么”和“实际挂载了哪些工具”不会漂移。
+
+当前内置 Worker：
+
+- `knowledge`：角色知识空间检索、结构化查询和受策略控制的公开信息补充。
+- `memory`：角色记忆与工作区记忆的读取和维护。
+- `document`：知识文档、资料上传和 URL 导入。
+- `profile`：角色档案和会话导出。
+- `voice`：音色素材、分析、训练、进度和绑定。
+- `live2d`：Live2D 模型、参数与 VTube Studio 配置。
+- `config`：配置读取以及确认后的配置变更。
+
+每个 Manifest 声明：
+
+- `input_schema` / `output_schema`：Worker 输入与共享输出合同。
+- `tools` / `capabilities`：当前实际可见的工具和稳定能力 ID。
+- `mutating_operations`：可能写入数据的操作。
+- `requires_confirmation`：该领域是否可能触发人工确认；不表示每次请求都必然弹窗。
+- `timeout_seconds` / `retry_policy`：统一 Runtime 可使用的执行策略边界。
+
+只读查询：
+
+- `GET /api/workers/manifests`
+- `GET /api/workers/manifests/{worker}`
+
+Worker 返回统一的 `AgentResult` 合同。新字段使用 `worker` 标识领域，`answer` 是标准回答字段；`specialist` 和旧的 `summary` 仅为旧 API、旧控制台和历史图节点保留的兼容字段。合同还可以携带 `evidence`、`artifacts`、`citations`、`uncertainties`、`trace`、`confidence`、`requires_approval` 和结构化 `error`。
+
+`knowledge_worker` 复用 RAG 的稳定错误合同：`insufficient` 代表资料不足而非系统故障；
+`failed_retrieval`、`failed_generation`、`failed_quality_gate`、`dependency_unavailable` 代表失败。
+失败时 Worker 只返回错误合同，不返回答案草稿或弱证据；父图仍由 `persona_supervisor` 统一组织最终表达。
+
+Runtime 会把该合同映射为可持久化的运行结果，并在 `result_json` 中保留完整的脱敏结构。不会保存完整 Prompt、思维链或 API Key；事件和错误信息只保留诊断所需的公开摘要。
+
+## 5. Knowledge Worker 与 RAG 错误合同
+
+`knowledge` 不是一个自由总结的 `create_agent`，而是由 Planner、检索、质量门、纠错/回退和 finalize 组成的受控子图：
+
+- 普通文档：Dense + BM25 + RRF 召回、Reranker 精排、上下文组装、答案生成和答案级质量门；
+- 结构化资料：Schema Card 辅助定位，真实数据通过隔离 SQLite 的只读 SQL 查询；
+- 证据不足：按策略执行有界改写、联网回退或保守拒答；联网结果仍需重新进入完整质量链；
+- 结果交接：只把通过合同校验的结果交回 `persona_supervisor`，不直接向用户输出。
+
+RAG 证据合同使用三种状态：`accepted`、`insufficient`、`failed`。`failed` 时丢弃答案草稿和证据，使用以下稳定错误码之一：
+
+| 错误码 | 含义 |
+|---|---|
+| `insufficient` | 流程正常，但没有足够可靠证据 |
+| `failed_retrieval` | 本地或联网检索阶段失败 |
+| `failed_generation` | 答案生成阶段失败 |
+| `failed_quality_gate` | 质量门执行阶段失败 |
+| `dependency_unavailable` | RAG Service 或底层依赖不可用 |
+
+直接 RAG API 使用顶层 `error_code` / `error_message`；Worker 交接使用 `error: { code, message }`。公开消息由固定映射生成，不穿透 Milvus、模型或 Python 异常原文。
+
+## 5. Skill 生命周期
 
 标准 Skill 包是目录中的 `SKILL.md`，frontmatter 至少包含 `name`、`description` 和 `allowed-tools`。旧 `tool-names` 仍可读取。
 
@@ -56,7 +113,7 @@ Supervisor 是唯一面向用户生成最终答案的 Agent。Worker 只使用�
 
 手工创建的本地 Skill 默认启用且可信，但脚本仍需显式允许。GitHub/URL 安装和 ZIP 上传默认停用、不信任、禁止脚本；控制台或 API 必须分别打开这些开关。未可信 Skill 不会注入提示词，也不会暴露工具；脚本执行还需要已加载、可信、允许脚本和现有人工确认。
 
-## 5. MCP Runtime
+## 6. MCP Runtime
 
 真实运行时使用官方 MCP SDK 2.x 的 `ClientSessionGroup`。FastAPI lifespan 创建 `MCPManager`，管理器在独立 `yumeno-mcp-runtime` 线程中持有事件循环、stdio 子进程和远程会话。同步 LangChain Tool 通过线程安全 future 调用该事件循环，因此不会为每次搜索重复启动 `uvx`。
 
@@ -84,11 +141,11 @@ Supervisor 是唯一面向用户生成最终答案的 Agent。Worker 只使用�
 
 内置 `free-search` 使用 `free-search-mcp==0.9.2` 与 `mcp==2.0.0`，默认百度引擎且不要求 API key。网络不可用时，状态面板显示错误，其他能力仍可用。
 
-## 6. 前端控制台
+## 7. 前端控制台
 
 “扩展”页面分为 Skill、MCP 服务器和已注册工具三块，并在顶部显示能力链路。Skill 卡片显示启用、信任和脚本开关；MCP 卡片显示传输方式、连接状态、工具数、错误和角色授权。连接、启用、停用、重载、测试和删除动作均使用现有 API，并即时刷新状态。
 
-## 7. 运行与验证
+## 8. 运行与验证
 
 开发环境：
 

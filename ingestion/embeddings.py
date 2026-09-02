@@ -45,6 +45,11 @@ def _build_embedding_model(
     return OpenAIEmbeddings(**options)
 
 
+def clear_embedding_cache() -> None:
+    """清理外部 Embedding 客户端缓存，使下一次请求读取新配置。"""
+    _build_embedding_model.cache_clear()
+
+
 def get_embedding_model(settings: Settings | None = None):
     active = settings or Settings.load()
     if active.embedding_provider == "managed_local":

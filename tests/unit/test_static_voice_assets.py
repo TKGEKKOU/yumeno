@@ -230,8 +230,24 @@ def test_streaming_voice_feed_starts_on_first_sentence_and_finishes_at_final():
 def test_late_stage_event_does_not_clear_streamed_reply_text():
     source = read_script("chat")
 
-    assert source.count('if (body.classList.contains("loading-bubble")) body.textContent = "";') == 2
-    assert source.count('body.classList.remove("loading-bubble");\n    body.textContent = "";') == 0
+    assert "function finishReply(node)" in source
+    assert source.count("finishReply(state.realtimeAnswerNode)") == 1
+    assert source.count("finishReply(state.pendingReplyNode)") == 1
+
+
+def test_reply_start_marks_process_stages_complete_instead_of_leaving_spinners():
+    script = read_script("chat")
+
+    assert 'body.setAttribute("data-role", "voice-reply")' in script
+    assert 'processList.setAttribute("data-role", "agent-process")' in script
+    assert "function completeReplyStages(node)" in script
+    assert 'list.querySelectorAll(".agent-process-item.is-active")' in script
+    assert script.count("collapseReplyStages(") == 4
+    assert script.count("completeReplyStages(") == 3
+    assert "function collapseReplyStages(node)" in script
+    assert ".agent-process-details" in script
+    assert "clearReplyStage(state.pendingReplyNode)" not in script
+    assert "clearReplyStage(state.realtimeAnswerNode)" not in script
 
 
 def test_gpt_sovits_status_enables_chat_before_settings_dom_guard():
@@ -256,4 +272,88 @@ def test_chat_process_panel_removed_and_loading_state_exists():
     assert "appendResultDetails(node, result)" in script
     assert "loading-bubble" in styles
     assert "background: transparent" in styles
-    assert ".chat-panel" in styles and "border: 0" in styles
+
+
+def test_chat_upload_uses_persistent_shared_voice_session_bridge():
+    script = read_script("chat")
+    common = read_script("common")
+    voice = read_script("voice-studio")
+    app = read_script("app")
+
+    assert "voiceCloneSessionId: null" in common
+    assert "window.PL.chat.voiceCloneSessionId = sessionId" in script
+    assert "window.PL.chat.voiceCloneSessionId = null" in script
+    assert "uploadChatVoiceMaterial" in script
+    assert "音色素材上传失败" in script
+    assert "resumeChatVoiceCloneSession" in voice
+    assert "voice: { view: \"voice\", init: window.PL.modules.voice?.init, onShow: window.PL.modules.voice?.onShow }" in app
+
+
+def test_view_switch_keeps_chat_realtime_connected():
+    app = read_script("app")
+
+    assert "if (view !== \"chat\") {" not in app
+    assert "closeRealtime();" not in app
+    assert "window.PL?.modules?.[previousView]?.onHide?.();" in app
+    assert "if (module?.init) module.init();" in app
+    assert "if (module?.onShow) module.onShow();" in app
+
+
+def test_settings_page_keeps_three_navigation_groups_and_safety_confirmation():
+    html = read_view("settings")
+    script = read_script("settings")
+
+    for section in ["section-model", "section-knowledge", "section-voice"]:
+        assert f'id="{section}"' in html
+        assert f'data-target="{section}"' in html
+    assert "bindSettingsRail" in script
+    assert "openSettingsConfirmation" in script
+    assert 'id="settings-confirm-dialog"' in (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+def test_chat_process_bubble_shows_node_workflow():
+    script = read_script("chat")
+    styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+    assert "agent-process-list" in script and styles
+    assert "agent-process-spinner" in script and styles
+    assert "agent-process-check" in script and styles
+    assert "while (list.children.length > 6)" in script
+    assert "item.title = label" in script
+    assert "agent-process-details summary::after" in styles
+
+
+def test_chat_stage_renderer_does_not_use_innerhtml():
+    script = read_script("chat")
+    assert "function setReplyStage" in script
+    assert "item.innerHTML" not in script
+    assert 'createElement("span")' in script
+    assert "agent-process-text" in script
+
+
+def test_chat_progress_uses_agent_process_surface_only():
+    script = read_script("chat")
+    styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+
+    realtime_stage = script.split('if (event.type === "agent.stage")', 1)[1].split(
+        '} else if (event.type === "text.delta")', 1
+    )[0]
+    realtime_delta = script.split('} else if (event.type === "text.delta")', 1)[1].split(
+        '} else if (event.type === "text.final")', 1
+    )[0]
+    stream_stage = script.split('if (event.kind === "stage")', 1)[1].split(
+        '} else if (event.kind === "token")', 1
+    )[0]
+    stream_delta = script.split('} else if (event.kind === "token")', 1)[1].split(
+        '} else if (event.kind === "result")', 1
+    )[0]
+
+    assert "setReplyStage(state.realtimeAnswerNode, event.stage" in realtime_stage
+    assert "setReplyStage(state.pendingReplyNode, event.stage" in stream_stage
+    assert "showThinkingIndicator" not in script
+    assert "thinking-indicator" not in styles
+    assert "agent-process-list { flex-basis: 100%" in styles
+    assert "message-loading > .agent-process-list" not in styles
+
+
+def test_voice_clone_intent_uses_waiting_for_material_stage():
+    script = read_script("chat")
+    assert "已识别为声音克隆，正在准备上传会话…" in script
+    assert "已识别为声音克隆，正在准备会话..." not in script

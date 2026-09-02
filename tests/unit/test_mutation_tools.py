@@ -93,11 +93,14 @@ def test_add_persona_knowledge_is_confirmed_and_scoped(db_session, tmp_path):
 def test_registry_marks_every_mutation_as_confirmed():
     expected = {
         "add_persona_knowledge",
+        "import_knowledge_from_url",
         "rename_persona",
         "update_persona_profile",
         "delete_persona_document",
         "save_workspace_memory",
         "delete_workspace_memory",
+        "request_training_confirmation",
+        "request_config_change",
     }
     assert set(MUTATION_TOOL_NAMES) == expected
     mutation_specs = [spec for spec in tool_specs() if spec.name in expected]
@@ -143,4 +146,38 @@ def test_delete_document_tool_cleans_structured_storage(db_session, monkeypatch)
     assert result["status"] == "deleted"
     assert deleted == [
         ("local-default", persona.knowledge_space_id, document.document_id)
+    ]
+
+
+
+def test_add_persona_knowledge_uses_context_runtime_when_no_legacy_indexer(
+    db_session, tmp_path, monkeypatch
+):
+    from agents.runtime.runner import AgentRuntime
+    from app.run_store import RunStore
+    from agents.tools.management import add_knowledge_for_context
+
+    persona = create_persona(db_session, "Runtime knowledge")
+    db_session.commit()
+    monkeypatch.setattr("ingestion.document_jobs.ingest_markdown_file", lambda path, scope: 1)
+    runtime = AgentRuntime(object(), RunStore(lambda: db_session))
+    context = context_for(persona, db_session)
+    context = context.__class__(**{**context.__dict__, "agent_runtime": runtime})
+
+    result = add_knowledge_for_context(
+        context,
+        "# Runtime\n\n通过统一运行时索引。",
+        data_dir=tmp_path,
+        confirmer=lambda action: True,
+    )
+
+    assert result["status"] == "indexed"
+    assert result["run_id"]
+    runtime_run = runtime.run_store.get(result["run_id"])
+    assert runtime_run is not None
+    assert runtime_run.status.value == "completed"
+    assert [event.name for event in runtime.run_store.list_events(result["run_id"])] == [
+        "task_started",
+        "index_started",
+        "task_completed",
     ]

@@ -5,11 +5,11 @@ from types import SimpleNamespace
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from agents.context import PersonaAgentContext
 from agents.registry import READ_ONLY_TOOL_NAMES, tool_specs
-from agents.supervisor import route_specialist, specialist_prompt
+from agents.intent_funnel import analyze_intents
+from agents.workflow import _supervisor_prompt
 from agents.service import (
     PersonaAgentService,
     is_capability_question,
-    is_explicit_web_search_question,
 )
 from agents.tools.knowledge import run_persona_knowledge_search
 from agents.tools.management import list_documents_for_context
@@ -25,13 +25,13 @@ def test_capability_question_requires_explicit_self_inspection():
 
 
 def test_web_search_requires_explicit_request_or_external_fact():
-    assert is_explicit_web_search_question("请搜索一下这个项目") is True
-    assert is_explicit_web_search_question("今天的天气怎么样") is True
-    assert is_explicit_web_search_question("最新的汇率是多少") is True
-    assert is_explicit_web_search_question("今天我很累") is False
-    assert is_explicit_web_search_question("工具怎么用") is False
-    assert is_explicit_web_search_question("查一下角色资料") is False
-    assert is_explicit_web_search_question("直接搜薇欧拉") is True
+    assert analyze_intents("请搜索一下这个项目").web_authorized is True
+    assert analyze_intents("今天的天气怎么样").web_authorized is True
+    assert analyze_intents("最新的汇率是多少").web_authorized is True
+    assert analyze_intents("今天我很累").web_authorized is False
+    assert analyze_intents("工具怎么用").web_authorized is False
+    assert analyze_intents("查一下角色资料").web_authorized is False
+    assert analyze_intents("直接搜薇欧拉").web_authorized is True
 
 
 def test_rag_insufficient_requests_confirmation_without_search(monkeypatch):
@@ -46,7 +46,7 @@ def test_rag_insufficient_requests_confirmation_without_search(monkeypatch):
         seen["action"] = action
         return False
 
-    monkeypatch.setattr("agents.workflow.request_confirmation", deny)
+    monkeypatch.setattr("agents.graph.knowledge.request_confirmation", deny)
     search_calls = []
     run = _knowledge_workflow(
         lambda query, ctx: {"status": "insufficient", "answer": "", "evidence": []},
@@ -62,7 +62,11 @@ def test_rag_insufficient_requests_confirmation_without_search(monkeypatch):
     assert seen["action"]["tool"] == "web_search_confirmation"
     assert "知识库" in seen["action"]["target"]
     assert search_calls == []
-    assert result["messages"][-1].content == "用户未授权联网搜索。"
+    contract = json.loads(result["messages"][-1].content)
+    assert result["messages"][-1].name == "search_persona_knowledge"
+    assert contract["status"] == "insufficient"
+    assert contract["web_fallback"] is True
+    assert result["worker_results"][0]["status"] == "insufficient"
 
 
 def test_rag_confirmation_runs_one_batch_search_and_hides_payload(monkeypatch):
@@ -73,7 +77,7 @@ def test_rag_confirmation_runs_one_batch_search_and_hides_payload(monkeypatch):
         conversation_id="thread-a", persona_name="Ames", persona_type="character",
     )
     calls = []
-    monkeypatch.setattr("agents.workflow.request_confirmation", lambda action: True)
+    monkeypatch.setattr("agents.graph.knowledge.request_confirmation", lambda action: True)
     run = _knowledge_workflow(
         lambda query, ctx: {"status": "insufficient", "answer": "", "evidence": []},
         lambda ctx, sql: {},
@@ -89,9 +93,12 @@ def test_rag_confirmation_runs_one_batch_search_and_hides_payload(monkeypatch):
     )
 
     assert calls == ["请搜索工具配置"]
-    answer = result["messages"][-1].content
+    answer = result["worker_results"][0]["answer"]
     assert "结果一" in answer and "事实二" in answer
     assert '"title"' not in answer
+    assert result["worker_results"][0]["status"] == "accepted"
+    assert result["messages"][-1].name == "web_search"
+    assert str(result["messages"][-1].tool_call_id).endswith(":web")
 
 
 def test_explicit_web_request_skips_rag_fallback_confirmation(monkeypatch):
@@ -103,7 +110,7 @@ def test_explicit_web_request_skips_rag_fallback_confirmation(monkeypatch):
         conversation_id="thread-a", persona_name="Ames", persona_type="character",
     )
     monkeypatch.setattr(
-        "agents.workflow.request_confirmation",
+        "agents.graph.knowledge.request_confirmation",
         lambda action: (_ for _ in ()).throw(AssertionError("explicit web must not confirm")),
     )
     calls = []
@@ -127,7 +134,9 @@ def test_explicit_web_request_skips_rag_fallback_confirmation(monkeypatch):
     )
 
     assert calls == ["直接搜薇欧拉"]
-    assert "薇欧拉资料" in result["messages"][-1].content
+    assert "薇欧拉资料" in result["worker_results"][0]["answer"]
+    assert result["worker_results"][0]["status"] == "accepted"
+    assert result["messages"][-1].name == "web_search"
 
 
 def test_internal_tool_payload_is_removed_from_final_answer():
@@ -141,9 +150,9 @@ def test_internal_tool_payload_is_removed_from_final_answer():
 def test_web_tools_require_request_authorization():
     from agents.workflow import _web_tool_allowed
 
-    assert _web_tool_allowed("delegate_to_web", {"web_search_authorized": False}) is False
-    assert _web_tool_allowed("search", {"web_search_authorized": False}) is False
-    assert _web_tool_allowed("research", {"web_search_authorized": True}) is True
+    assert _web_tool_allowed("web_search", {"intent_decision": {"web_authorized": False}}) is False
+    assert _web_tool_allowed("search", {"intent_decision": {"web_authorized": False}}) is False
+    assert _web_tool_allowed("research", {"intent_decision": {"web_authorized": True}}) is True
     assert _web_tool_allowed("delegate_to_knowledge", {}) is True
 
 
@@ -179,13 +188,13 @@ def test_confirmed_search_prefers_keyless_batch_tool(monkeypatch):
             return [{"title": self.name, "content": "ok"}]
 
     monkeypatch.setattr(
-        "agents.workflow.tool_specs",
+        "agents.graph.knowledge.tool_specs",
         lambda: [
             SimpleNamespace(name="web_search", tool=FakeTool("web_search"), specialist="web"),
             SimpleNamespace(name="search", tool=FakeTool("search"), specialist="mcp"),
         ],
     )
-    monkeypatch.setattr("agents.workflow.is_mcp_tool_visible", lambda persona_id, name: True)
+    monkeypatch.setattr("agents.graph.knowledge.is_mcp_tool_visible", lambda persona_id, name: True)
     context = PersonaAgentContext(
         persona_id="persona-a", workspace_id="local-default", knowledge_space_ids=("space-a",),
         conversation_id="thread-a", persona_name="Ames", persona_type="character",
@@ -202,11 +211,11 @@ def test_confirmed_search_uses_configured_key_provider_without_tool_runtime(monk
     from agents.workflow import _default_web_search_executor
 
     monkeypatch.setattr(
-        "agents.workflow.tool_specs",
+        "agents.graph.knowledge.tool_specs",
         lambda: [SimpleNamespace(name="web_search", specialist="web")],
     )
     monkeypatch.setattr(
-        "agents.workflow.web_search_documents",
+        "agents.graph.knowledge.web_search_documents",
         lambda query, recent=True: [
             Document(page_content="weather result", metadata={"title": "Tavily", "source": "https://example.com"})
         ],
@@ -219,6 +228,7 @@ def test_confirmed_search_uses_configured_key_provider_without_tool_runtime(monk
     result = _default_web_search_executor("今天潍坊天气", context)
 
     assert result == [{"content": "weather result", "title": "Tavily", "source": "https://example.com"}]
+
 
 
 def test_real_graph_pauses_before_rag_fallback_search():
@@ -242,19 +252,40 @@ def test_real_graph_pauses_before_rag_fallback_search():
                     "id": "handoff-knowledge",
                     "type": "tool_call",
                 }],
-            )
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "search_persona_knowledge",
+                    "args": {"query": "未知资料"},
+                    "id": "rag-1",
+                    "type": "tool_call",
+                }],
+            ),
+            AIMessage(content="根据公开来源，补充事实。"),
         ]
     )
     calls = []
+    rag_calls = []
     graph = build_persona_workflow(
         model,
         MemorySaver(),
-        knowledge_executor=lambda query, context: {
+        knowledge_executor=lambda query, context: rag_calls.append(query) or {
             "specialist": "knowledge", "status": "insufficient", "answer": "", "evidence": [],
         },
         web_search_executor=lambda query, context: calls.append(query) or [
             {"title": "公开来源", "content": "补充事实", "url": "https://example.test"}
         ],
+        web_rag_executor=lambda query, context, documents: {
+            "specialist": "knowledge",
+            "status": "accepted",
+            "answer": "根据公开来源，补充事实。",
+            "evidence": documents,
+            "citations": [{"title": item["title"], "url": item["url"]} for item in documents],
+            "uncertainties": [],
+            "trace": [{"node": "web_search"}],
+            "confidence": 0.8,
+        },
     )
     context = PersonaAgentContext(
         persona_id="persona-a", workspace_id="local-default", knowledge_space_ids=("space-a",),
@@ -262,10 +293,10 @@ def test_real_graph_pauses_before_rag_fallback_search():
     )
     config = {"configurable": {"thread_id": "persona-a:thread-a"}}
 
-    first = graph.invoke(
+    graph.invoke(
         {
             "messages": [("user", "未知资料")], "active_worker": None,
-            "loaded_skills": [], "web_search_authorized": False,
+            "loaded_skills": [],
             "worker_results": [], "handoff_count": 0,
         },
         config,
@@ -275,34 +306,73 @@ def test_real_graph_pauses_before_rag_fallback_search():
     snapshot = graph.get_state(config)
     assert snapshot.interrupts[0].value["tool"] == "web_search_confirmation"
     assert calls == []
+    assert rag_calls == ["未知资料"]
 
     resumed = graph.invoke(Command(resume={"approved": True}), config, context=context)
 
+    assert rag_calls == ["未知资料"]
     assert calls == ["未知资料"]
-    assert "补充事实" in resumed["messages"][-1].content
-
+    assert resumed["worker_results"][-1]["status"] == "accepted"
+    assert "web_fallback" not in resumed["worker_results"][-1]
+    assert "补充事实" in resumed["worker_results"][-1]["answer"]
+    assert resumed["messages"][-1].content == "根据公开来源，补充事实。"
 
 def test_worker_tools_are_limited_to_registered_owner():
     from agents.workflow import worker_tools
 
-    assert [tool.name for tool in worker_tools("web")] == ["web_search"]
-    assert "search_persona_knowledge" not in [tool.name for tool in worker_tools("web")]
+    knowledge_tools = [tool.name for tool in worker_tools("knowledge")]
+    memory_tools = [tool.name for tool in worker_tools("memory")]
+    document_tools = [tool.name for tool in worker_tools("document")]
+    assert "search_persona_knowledge" in knowledge_tools
+    assert "query_structured_data" in knowledge_tools
+    assert "web_search" in knowledge_tools
+    assert "import_knowledge_from_url" not in knowledge_tools
+    assert "import_knowledge_from_url" in document_tools
+    assert "save_persona_memory" not in knowledge_tools
+    assert "search_persona_knowledge" not in memory_tools
+
+
+def test_knowledge_subgraph_nodes_are_planner_retrieve_fallback():
+    from agents.workflow import _knowledge_subgraph
+
+    graph = _knowledge_subgraph(
+        model=None,
+        knowledge_executor=lambda query, context: {},
+        structured_executor=lambda context, sql: {},
+        web_search_executor=lambda query, context: [],
+    )
+    nodes = graph.get_graph().nodes
+    assert "knowledge_planner" in nodes
+    assert "knowledge_retrieve" in nodes
+    assert "knowledge_fallback" in nodes
+    assert "knowledge_executor" not in nodes
+    edges = [(str(edge[0]), str(edge[1])) for edge in graph.get_graph().edges]
+    assert any(src.endswith("knowledge_planner") and dst.endswith("knowledge_retrieve") for src, dst in edges)
+    assert any(src.endswith("knowledge_retrieve") and dst.endswith("knowledge_fallback") for src, dst in edges)
 
 
 def test_persona_workflow_has_supervisor_and_worker_nodes():
     from langgraph.checkpoint.memory import MemorySaver
 
     from agents.workflow import WORKERS, build_persona_workflow
+    from agents.graph.state import worker_node_name
 
     graph = build_persona_workflow(model=None, checkpointer=MemorySaver())
     nodes = graph.get_graph().nodes
 
     assert "persona_supervisor" in nodes
     for worker in WORKERS:
-        assert f"{worker}_worker" in nodes
-    assert "finalize_knowledge" not in nodes
-    for worker in ("web", "memory", "management"):
+        node_name = worker_node_name(worker)
+        worker_node = graph.nodes[node_name]
+        finalize_node = graph.nodes[f"finalize_{worker}"]
+        assert node_name in nodes
         assert f"finalize_{worker}" in nodes
+        assert any("branch:to:finalize_" + worker in str(writer) for writer in worker_node.writers)
+        assert any("branch:to:persona_supervisor" in str(writer) for writer in finalize_node.writers)
+        assert all("__end__" not in str(writer) and "branch:to:__end__" not in str(writer) for writer in worker_node.writers)
+        assert all("__end__" not in str(writer) and "branch:to:__end__" not in str(writer) for writer in finalize_node.writers)
+    assert "web_worker" not in nodes
+    assert "management_worker" not in nodes
 
 
 def test_supervisor_prompt_includes_full_persona_profile_and_fact_first_rules():
@@ -355,7 +425,7 @@ def test_rag_generation_prompt_limits_answer_length():
     assert "300" in PROMPT.template
 
 
-def test_web_worker_prompt_requires_structured_evidence_handoff():
+def test_document_worker_prompt_covers_url_import():
     from agents.workflow import _worker_prompt
 
     context = PersonaAgentContext(
@@ -367,7 +437,23 @@ def test_web_worker_prompt_requires_structured_evidence_handoff():
         persona_type="character",
     )
 
-    prompt = _worker_prompt("web", context)
+    prompt = _worker_prompt("document", context)
+    assert "URL" in prompt
+
+
+def test_memory_worker_prompt_requires_structured_evidence_handoff():
+    from agents.workflow import _worker_prompt
+
+    context = PersonaAgentContext(
+        persona_id="persona-a",
+        workspace_id="local-default",
+        knowledge_space_ids=("space-a",),
+        conversation_id="thread-a",
+        persona_name="Ames",
+        persona_type="character",
+    )
+
+    prompt = _worker_prompt("memory", context)
 
     assert "KEY FACTS" in prompt
     assert "SOURCES" in prompt
@@ -431,9 +517,9 @@ def test_supervisor_handoff_returns_to_persona_response():
                 content="",
                 tool_calls=[
                     {
-                        "name": "delegate_to_web",
-                        "args": {"request": "today's news"},
-                        "id": "handoff-web",
+                        "name": "delegate_to_memory",
+                        "args": {"request": "remember this fact"},
+                        "id": "handoff-memory",
                         "type": "tool_call",
                     }
                 ],
@@ -458,13 +544,18 @@ def test_supervisor_handoff_returns_to_persona_response():
     )
 
     assert result["active_worker"] is None
-    assert result["worker_results"] == [{"worker": "web", "summary": "Current public result."}]
+    worker_result = result["worker_results"][-1]
+    assert worker_result["worker"] == "memory"
+    assert worker_result["specialist"] == "memory"
+    assert worker_result["status"] == "completed"
+    assert worker_result["answer"] == "Current public result."
+    assert worker_result["summary"] == "Current public result."
     assert result["messages"][-1].content == "Persona final response."
 
 
-def test_knowledge_handoff_uses_one_strategy_call_then_deterministic_tool():
+
+def test_knowledge_handoff_planner_calls_rag_then_supervisor_answers():
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-    from langchain_core.messages import AIMessage
     from langgraph.checkpoint.memory import MemorySaver
 
     from agents.workflow import build_persona_workflow
@@ -485,7 +576,19 @@ def test_knowledge_handoff_uses_one_strategy_call_then_deterministic_tool():
                         "type": "tool_call",
                     }
                 ],
-            )
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "search_persona_knowledge",
+                        "args": {"query": "角色在哪里出生？"},
+                        "id": "rag-1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="她出生在龙门。"),
         ]
     )
     calls = []
@@ -522,13 +625,21 @@ def test_knowledge_handoff_uses_one_strategy_call_then_deterministic_tool():
     )
 
     assert calls == [("角色在哪里出生？", "persona-a")]
-    assert result["messages"][-1].content == "她出生在龙门。"
+    assert result["active_worker"] is None
     assert result["worker_results"][-1]["status"] == "accepted"
+    assert result["worker_results"][-1]["answer"] == "她出生在龙门。"
+    assert result["messages"][-1].content == "她出生在龙门。"
+    handoff = next(
+        message.content
+        for message in result["messages"]
+        if getattr(message, "name", None) == "knowledge_worker"
+    )
+    assert "她出生在龙门。" in handoff
+    assert "自由发挥的 Worker 总结" not in handoff
 
 
-def test_structured_handoff_executes_validated_sql_and_formats_result():
+def test_structured_handoff_executes_validated_sql_and_returns_contract():
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-    from langchain_core.messages import AIMessage
     from langgraph.checkpoint.memory import MemorySaver
 
     from agents.workflow import build_persona_workflow
@@ -557,7 +668,8 @@ def test_structured_handoff_executes_validated_sql_and_formats_result():
                         "type": "tool_call",
                     }
                 ],
-            )
+            ),
+            AIMessage(content="华东地区销售额最高，为 30。"),
         ]
     )
     sql_calls = []
@@ -597,13 +709,14 @@ def test_structured_handoff_executes_validated_sql_and_formats_result():
     assert sql_calls == [
         "SELECT c_001 AS region, SUM(c_002) AS total FROM t_a GROUP BY c_001"
     ]
-    assert "华东" in result["messages"][-1].content
-    assert "30" in result["messages"][-1].content
+    assert result["worker_results"][-1]["status"] == "accepted"
+    assert "华东" in result["worker_results"][-1]["answer"]
+    assert "30" in result["worker_results"][-1]["answer"]
+    assert result["messages"][-1].content == "华东地区销售额最高，为 30。"
 
 
-def test_service_reports_one_agent_model_call_for_knowledge_fast_path():
+def test_service_reports_supervisor_answer_after_knowledge_contract():
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-    from langchain_core.messages import AIMessage
     from langgraph.checkpoint.memory import MemorySaver
 
     from agents.workflow import build_persona_workflow
@@ -624,7 +737,19 @@ def test_service_reports_one_agent_model_call_for_knowledge_fast_path():
                         "type": "tool_call",
                     }
                 ],
-            )
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "search_persona_knowledge",
+                        "args": {"query": "角色在哪里出生？"},
+                        "id": "rag-1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="她出生在龙门。"),
         ]
     )
     checkpointer = MemorySaver()
@@ -655,11 +780,9 @@ def test_service_reports_one_agent_model_call_for_knowledge_fast_path():
     result = service.query("角色在哪里出生？", context)
 
     assert result.answer == "她出生在龙门。"
-    assert result.metrics["model_calls"] == 1
-    assert result.metrics["tool_calls"] == 1
+    assert result.metrics["model_calls"] == 3
     assert result.tool_calls[0]["name"] == "search_persona_knowledge"
     assert result.evidence[0]["filename"] == "设定.md"
-
 
 def test_management_handoff_resumes_in_same_parent_workflow(db_session):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -690,9 +813,9 @@ def test_management_handoff_resumes_in_same_parent_workflow(db_session):
                 content="",
                 tool_calls=[
                     {
-                        "name": "delegate_to_management",
+                        "name": "delegate_to_profile",
                         "args": {"request": "rename"},
-                        "id": "handoff-management",
+                        "id": "handoff-profile",
                         "type": "tool_call",
                     }
                 ],
@@ -725,7 +848,7 @@ def test_management_handoff_resumes_in_same_parent_workflow(db_session):
 
 
 def test_registry_exposes_expected_read_only_tools():
-    assert READ_ONLY_TOOL_NAMES == (
+    retrieval_tools = (
         "search_persona_knowledge",
         "web_search",
         "list_persona_documents",
@@ -734,8 +857,35 @@ def test_registry_exposes_expected_read_only_tools():
         "list_structured_tables",
         "query_structured_data",
     )
-    read_only_specs = [spec for spec in tool_specs() if spec.name in READ_ONLY_TOOL_NAMES]
-    assert read_only_specs and all(not spec.requires_confirmation for spec in read_only_specs)
+    specs = {spec.name: spec for spec in tool_specs()}
+    for name in retrieval_tools:
+        assert name in READ_ONLY_TOOL_NAMES
+        assert specs[name].mutates_data is False
+    # web_search 不写数据；是否确认由 knowledge_fallback 策略决定，而不是 ToolSpec。
+    assert specs["web_search"].requires_confirmation is False
+    confirmation_without_mutation = {
+        spec.name for spec in tool_specs() if spec.requires_confirmation and not spec.mutates_data
+    }
+    assert confirmation_without_mutation <= {
+        "request_training_confirmation",
+        "request_config_change",
+    }
+    assert all(specs[name].mutates_data is False for name in READ_ONLY_TOOL_NAMES if name in specs)
+
+
+def test_public_specialist_aliases_current_workers():
+    from agents.service import PersonaAgentService
+
+    assert PersonaAgentService._specialist_for_state({"active_worker": "profile"}) == "management"
+    assert PersonaAgentService._specialist_for_state({"active_worker": "document"}) == "management"
+    assert PersonaAgentService._specialist_for_state({"active_worker": "config"}) == "management"
+    assert PersonaAgentService._specialist_for_state({"active_worker": "voice_clone"}) == "management"
+    assert PersonaAgentService._specialist_for_state({"active_worker": "memory"}) == "memory"
+    assert PersonaAgentService._specialist_for_state({"active_worker": "knowledge"}) == "conversation"
+    assert PersonaAgentService._specialist_for_state(
+        {"active_worker": "knowledge"},
+        {"tool": "web_search_confirmation"},
+    ) == "web"
 
 
 def test_web_search_returns_guidance_when_no_key_configured(monkeypatch):
@@ -752,15 +902,24 @@ def test_web_search_returns_guidance_when_no_key_configured(monkeypatch):
     assert "未配置" in text
 
 
-def test_supervisor_routes_to_capability_specialists():
-    assert route_specialist("查一下今天的新闻") == "web"
-    assert route_specialist("记住我喜欢红茶") == "memory"
-    assert route_specialist("列出这个角色的资料") == "management"
-    assert route_specialist("根据资料介绍她的经历") == "conversation"
-    assert route_specialist("你好") == "conversation"
+def test_legacy_four_specialist_graph_is_removed():
+    import agents.supervisor as supervisor_module
+
+    assert not hasattr(supervisor_module, "build_supervisor_graph")
+    assert not hasattr(supervisor_module, "create_specialist")
+    assert not hasattr(supervisor_module, "route_specialist")
+    assert supervisor_module.Specialist is not None
 
 
-def test_every_specialist_receives_persona_type_and_profile():
+def test_intent_funnel_is_advisory_not_a_hard_router():
+    assert analyze_intents("查一下今天的新闻").primary == "web"
+    assert analyze_intents("记住我喜欢红茶").primary == "memory"
+    assert analyze_intents("列出这个角色的资料").primary == "knowledge"
+    assert analyze_intents("根据资料介绍她的经历").primary == "knowledge"
+    assert analyze_intents("你好").primary == "conversation"
+
+
+def test_supervisor_prompt_receives_persona_type_and_profile():
     context = PersonaAgentContext(
         persona_id="persona-a",
         workspace_id="local-default",
@@ -771,11 +930,11 @@ def test_every_specialist_receives_persona_type_and_profile():
         persona_profile={"voice": "活泼", "boundaries": "不伤害用户"},
     )
 
-    for specialist in ("conversation", "web", "memory", "management"):
-        prompt = specialist_prompt(specialist, context)
-        assert "严格遵循人物设定" in prompt
-        assert "活泼" in prompt
-        assert "不伤害用户" in prompt
+    prompt = _supervisor_prompt(context)
+    assert "爱弥斯" in prompt
+    assert "活泼" in prompt
+    assert "不伤害用户" in prompt
+    assert "You are the only assistant visible to the user." in prompt
 
 
 def test_all_specialists_share_one_conversation_thread():
@@ -851,6 +1010,81 @@ def test_knowledge_tool_returns_fail_closed_specialist_result():
     assert result["answer"] == ""
     assert result["evidence"] == []
     assert result["uncertainties"] == ["资料没有说明原因"]
+
+
+
+def test_knowledge_executor_reuses_existing_contract_without_rerunning_rag():
+    from agents.workflow import _knowledge_workflow
+
+    context = PersonaAgentContext(
+        persona_id="persona-a", workspace_id="local-default", knowledge_space_ids=("space-a",),
+        conversation_id="thread-a", persona_name="Ames", persona_type="character",
+    )
+    rag_calls = []
+    run = _knowledge_workflow(
+        lambda query, ctx: rag_calls.append(query) or {
+            "specialist": "knowledge",
+            "status": "accepted",
+            "answer": "不该再跑 RAG",
+            "evidence": [],
+        },
+        lambda ctx, sql: {},
+    )
+    existing = {
+        "specialist": "knowledge",
+        "status": "accepted",
+        "answer": "她出生在龙门。",
+        "evidence": [{"filename": "设定.md", "content": "出生于龙门"}],
+        "citations": [{"filename": "设定.md"}],
+        "uncertainties": [],
+        "trace": [],
+        "confidence": 0.9,
+    }
+    result = run(
+        {
+            "worker_request": "角色在哪里出生？",
+            "worker_call_id": "call-1",
+            "messages": [
+                ToolMessage(
+                    content=json.dumps(existing, ensure_ascii=False),
+                    name="search_persona_knowledge",
+                    tool_call_id="rag-1",
+                )
+            ],
+        },
+        SimpleNamespace(context=context),
+    )
+
+    assert rag_calls == []
+    assert result["worker_results"][0]["answer"] == "她出生在龙门。"
+
+
+def test_knowledge_specialist_result_accepts_web_search_contract():
+    from agents.workflow import _knowledge_specialist_result
+
+    payload = {
+        "specialist": "knowledge",
+        "status": "accepted",
+        "answer": "公开来源补充事实。",
+        "evidence": [{"title": "公开来源", "content": "补充事实"}],
+        "citations": [{"url": "https://example.test"}],
+        "uncertainties": [],
+        "trace": [],
+        "confidence": 0.7,
+    }
+    messages = [
+        ToolMessage(
+            content=json.dumps(payload, ensure_ascii=False),
+            name="web_search",
+            tool_call_id="web-1",
+        )
+    ]
+
+    result = _knowledge_specialist_result(messages)
+
+    assert result["status"] == "accepted"
+    assert result["answer"] == "公开来源补充事实。"
+    assert "web_fallback" not in result
 
 
 def test_knowledge_finalize_discards_worker_text_when_gate_rejects_evidence():
@@ -984,13 +1218,15 @@ def test_capability_question_does_not_match_character_ability_setting():
     assert not is_capability_question("给你加上一些能力设定")
 
 
-def test_supervisor_routes_profile_mutations_to_management():
-    assert route_specialist("update_persona_profile") == "management"
-    assert route_specialist("rename_persona") == "management"
-    assert route_specialist("把你的名字改为 Ameath") == "management"
-    assert route_specialist("给你加上一些设定：电子幽灵") == "management"
-    assert route_specialist("记住，这是你的共鸣回路：光学取样") == "management"
-    assert route_specialist("记住我喜欢红茶") == "memory"
+def test_intent_funnel_does_not_hard_route_profile_mutations():
+    assert analyze_intents("修改角色设定").primary == "management"
+    assert analyze_intents("删除资料").primary == "management"
+    assert analyze_intents("记住我喜欢红茶").primary == "memory"
+    # 明确的角色名与设定变更直接进入 profile 管理，减少多余 Supervisor 决策。
+    assert analyze_intents("把你的名字改为 Ameath").primary == "management"
+    assert analyze_intents("给你加上一些设定：电子幽灵").primary == "management"
+    assert analyze_intents("我想给你改名").primary == "management"
+    assert analyze_intents("改名成agent工程师").primary == "management"
 
 
 class _TransientProviderError(RuntimeError):
@@ -1032,8 +1268,9 @@ def test_agent_query_returns_friendly_answer_when_llm_service_unavailable(monkey
 def test_stage_mapping_from_updates():
     from agents.service import _stage_from_update
 
-    assert _stage_from_update({"knowledge_worker": {"messages": []}}) == "知识agent · 正在检索角色资料…"
-    assert _stage_from_update({"persona_supervisor": {"messages": []}}) == "正在思考…"
+    assert _stage_from_update({"knowledge_worker": {"messages": []}}) == "知识检索 · 正在搜索资料和网络信息…"
+    assert _stage_from_update({"finalize_knowledge": {"messages": []}}) == "知识检索完成，整理结果中…"
+    assert _stage_from_update({"persona_supervisor": {"messages": []}}) == "正在组织回复…"
     assert _stage_from_update({}) is None
 
 

@@ -53,15 +53,10 @@ function formatBytes(bytes) {
 function initSettings() {
   document.body.classList.add("status-cards-collapsed");
   window.PL.vuePages?.mountRerankerSettings?.();
-  window.PL.vuePages?.mountProvidersSettings?.();
   bindSettingsEvents();
   prepareSettingsSections();
   loadStatus();
   loadSettings();
-  loadEmbeddingStatus();
-  loadAsrStatus();
-  loadSeparatorStatus();
-  loadGptSoVitsStatus();
 }
 
 function bindSettingsEvents() {
@@ -79,33 +74,30 @@ function bindSettingsEvents() {
   bindIf("web-search-enabled", "change", renderWebSearchSettings);
   bindIf("web-search-provider", "change", renderWebSearchSettings);
   ["web-search-api-key", "web-search-base-url"].forEach((id) => bindIf(id, "input", renderWebSearchSettings));
-  bindIf("save-asr", "click", saveAsrConfig);
-  bindIf("install-asr", "click", installAsr);
-  bindIf("cancel-asr", "click", cancelAsr);
-  bindIf("remove-asr", "click", removeAsr);
-  bindIf("open-asr-directory", "click", openAsrDirectory);
-  bindIf("install-embedding", "click", installEmbedding);
-  bindIf("cancel-embedding", "click", cancelEmbedding);
-  bindIf("remove-embedding", "click", removeEmbedding);
-  bindIf("open-embedding-directory", "click", openEmbeddingDirectory);
-  bindIf("install-separator", "click", installSeparator);
-  bindIf("cancel-separator", "click", cancelSeparator);
-  bindIf("remove-separator", "click", removeSeparator);
-  bindIf("open-separator-directory", "click", openSeparatorDirectory);
-  bindIf("save-gptsovits-config", "click", saveGptSoVitsConfig);
-  bindIf("detect-gptsovits", "click", detectGptSoVits);
-  bindIf("gptsovits-preset", "change", applyGptSoVitsPreset);
-  bindIf("gptsovits-download-url", "input", syncGptSoVitsPreset);
-  bindIf("install-gptsovits", "click", installGptSoVits);
-  bindIf("cancel-gptsovits", "click", cancelGptSoVitsInstall);
-  bindIf("start-gptsovits-service", "click", startGptSoVitsService);
-  bindIf("stop-gptsovits-service", "click", stopGptSoVitsService);
-  bindIf("open-gptsovits-directory", "click", openGptSoVitsDirectory);
-  bindIf("remove-gptsovits", "click", removeGptSoVitsInstall);
   document.querySelectorAll("[data-collapsible]").forEach((section) => section.addEventListener("toggle", () => {
     const label = section.querySelector(".section-toggle-label");
     if (label) label.textContent = section.open ? "收起" : "展开";
   }));
+  bindSettingsRail();
+}
+
+function bindSettingsRail() {
+  const links = [...document.querySelectorAll(".settings-nav-link")];
+  if (!links.length) return;
+  links.forEach((link) => link.addEventListener("click", (event) => {
+    event.preventDefault();
+    const target = $(link.dataset.target);
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  const observer = new IntersectionObserver((entries) => {
+    const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (!visible) return;
+    links.forEach((link) => link.classList.toggle("is-active", link.dataset.target === visible.target.id));
+  }, { rootMargin: "-24% 0px -64% 0px", threshold: [0, .25] });
+  links.forEach((link) => {
+    const target = $(link.dataset.target);
+    if (target) observer.observe(target);
+  });
 }
 function setApiKeyVisibilityIcon(inputId, visible) {
   const button = $(`toggle-${inputId}`);
@@ -209,6 +201,13 @@ async function loadSettings() {
     const keyPlaceholder = (configured) => configured ? "已保存，可输入新 Key 替换" : "请输入 API Key";
     $("openai-api-key").placeholder = keyPlaceholder(config.openai_api_key_configured);
     $("web-search-api-key").placeholder = keyPlaceholder(config.web_search_api_key_configured);
+    // 设置接口是 localhost-only 管理接口，按用户要求直接显示当前明文 Key。
+    $("openai-api-key").value = config.openai_api_key || "";
+    $("web-search-api-key").value = config.web_search_api_key || "";
+    $("openai-api-key").type = "text";
+    $("web-search-api-key").type = "text";
+    setApiKeyVisibilityIcon("openai-api-key", true);
+    setApiKeyVisibilityIcon("web-search-api-key", true);
     state.openaiKeyConfigured = config.openai_api_key_configured;
     state.webSearchKeyConfigured = config.web_search_api_key_configured;
     $("openai-base-url").value = config.openai_base_url; $("openai-model").value = config.openai_model;
@@ -219,7 +218,7 @@ async function loadSettings() {
     $("chunk-overlap").value = config.chunk_overlap;
     $("web-search-enabled").checked = config.enable_web_fallback;
     $("web-search-provider").value = config.web_search_provider === "off" ? "bocha" : config.web_search_provider;
-    renderEmbeddingInstallAction(); renderChunkWarning(); renderWebSearchSettings();
+    renderChunkWarning(); renderWebSearchSettings();
   } catch (reason) { setText("settings-status", reason, true); }
 }
 
@@ -824,8 +823,8 @@ async function saveSettings() {
   $("save-settings").disabled = true; setText("settings-status");
   const value = (id) => $(id).value.trim();
   try {
-    const webEnabled = $("web-search-enabled").checked;
-    await api(fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ openai_api_key: value("openai-api-key"), openai_base_url: value("openai-base-url"), openai_model: value("openai-model"), embedding_provider: "managed_local", embedding_model: "Qwen/Qwen3-Embedding-0.6B", embedding_model_source: "modelscope", embedding_device: $("embedding-device").value, chunk_size: Number(value("chunk-size")), chunk_overlap: Number(value("chunk-overlap")), web_search_provider: webEnabled ? $("web-search-provider").value : "off", web_search_api_key: value("web-search-api-key"), web_search_base_url: value("web-search-base-url"), enable_web_fallback: webEnabled }) }));
+    // Provider 相关配置只有“供应商配置”页可以写入，避免隐藏兼容 DOM 与 Provider 页面双写。
+    await api(fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ embedding_device: $("embedding-device").value, chunk_size: Number(value("chunk-size")), chunk_overlap: Number(value("chunk-overlap")) }) }));
     resetApiKeyInputs();
     setText("settings-status", "已保存，可立即使用"); await loadSettings();
   } catch (reason) { setText("settings-status", reason, true); }

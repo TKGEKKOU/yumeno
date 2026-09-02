@@ -6,30 +6,35 @@ YUMENO 是本地优先的角色对话应用。本文件描述 Agent、Workflow�
 
 核心约束：
 
-- Agent 只做一次策略决策，决定普通对话、知识检索、联网、记忆或管理路径。
-- Workflow 负责权限校验、输入预处理、确定性执行、结果后处理、循环上限和状态恢复。
+- 只有外层 Supervisor 对用户说话；Worker 和知识子图不直达父图 END。
+- Supervisor / planner 只做策略或工具选择；RAG、SQL、联网是确定性管线。
 - 系统行为统一封装为标准 Tool；Tool 返回结构化合同，不让上层解析自然语言日志。
 - Milvus 保留为向量数据库；复杂 CSV/XLSX 不把整张表硬塞进向量库，而是进入工作区隔离的 SQLite。
 - 运行详情只在当前轮内存返回，不新增运行轨迹数据库。
 
+现行 LangGraph 总图与同构规则见仓库根目录 [ARCHITECTURE.md](../../ARCHITECTURE.md) 和 [ARCHITECTURE_DESIGN.md](../../ARCHITECTURE_DESIGN.md)。
+
+四个层面的选型已经锁死：拓扑是 State Graph（通信约束为 Supervisor 中心辐射），协作是层级验证，记忆是分层记忆且工作记忆落在持久化状态图，训练范式声明无需 CTDE/MARL。
+
 ## 2. 请求流程
 
 ```mermaid
-flowchart LR
+graph TD
     U[Web / QQ / B站事件] --> C[服务端构建 PersonaAgentContext]
-    C --> S[Supervisor Agent\n一次策略决策]
-    S --> W{Workflow 路由}
-    W --> K[Knowledge Workflow]
-    W --> O[Legacy Worker\nWeb / Memory / Management]
-    K --> P[Capability Policy]
-    P --> T1[search_persona_knowledge]
-    P --> T2[query_structured_data]
-    T1 --> R[Milvus Dense + BM25 + RRF + 质量门]
-    T2 --> Q[SQLite mode=ro + AST + Authorizer + 超时]
-    R --> F[证据合同]
-    Q --> F
-    O --> F
-    F --> A[回复后处理 / 引用 / 当前轮 metrics]
+    C --> S[persona_supervisor]
+    S -->|闲聊或最终表达| A[可见回复]
+    S -->|delegate_to_knowledge| K[knowledge 子图]
+    K --> P[knowledge_planner]
+    P --> R[knowledge_retrieve]
+    R --> F[knowledge_fallback]
+    F --> FK[finalize_knowledge]
+    FK --> S
+    R -->|RAG| M[Milvus Dense + BM25 + RRF + 质量门]
+    R -->|SQL| Q[SQLite 只读 + AST + Authorizer]
+    F -->|策略允许| W[web_search]
+    S -->|delegate_to_*| O[memory / document / profile / voice / live2d / config]
+    O --> FZ[finalize_*]
+    FZ --> S
 ```
 
 ### 2.1 上下文
@@ -38,23 +43,31 @@ flowchart LR
 
 ## 3. Agent 与 Workflow
 
-传统路径保留 LangGraph Supervisor/Worker、checkpoint、HITL 和管理类中断，确保 Skill、MCP、写操作兼容。知识和结构化查询迁移到快路径：Supervisor 发出一次 `delegate_to_knowledge`，Workflow 从状态中读取受控 `worker_request`，执行 Tool、校验合同并直接生成可展示结果，不再为同一检索问题再次调用 Worker 和最终 Supervisor。
+父图保持 LangGraph Supervisor / Worker、checkpoint 和 HITL。knowledge 不再是“一次决策后直出答案”的快路径，也不再是普通 `create_agent` 工具循环。
 
-这里的“一次策略决策”目前严格适用于知识检索和结构化查询主链路。Web、Memory、Management 以及动态 Skill/MCP 写操作仍使用 Legacy Worker 图，以保留工具选择、HITL 和 checkpoint 恢复语义；它们是后续可按同一执行合同逐步迁移的兼容边界，不应在指标中计入快路径收益。
+知识主链路是：
+
+1. Supervisor 发出 `delegate_to_knowledge`，并把结构化查询写成 `kind=structured` 合同；
+2. planner 选择 RAG，或在已有 SQL 合同时跳过二次模型调用；
+3. retrieve 执行能力校验、RAG 或只读 SQL，写入 JSON 合同；
+4. fallback 仅在本地不足时按策略 HITL / 联网；
+5. finalize 做合同校验，回到 Supervisor 生成可见回复。
+
+受限工具 Worker 仍使用自己的 LLM 与工具选择，以保留多步确认、技能/MCP 写操作和 checkpoint 恢复语义。它们与 knowledge 的共同点不是“都是自由 Agent”，而是**都经 finalize 回 Supervisor，都不直达父图 END**。
 
 确定性 Workflow 负责：
 
 1. Capability Policy 校验；
-2. 识别普通知识请求或结构化请求；
-3. 结构化 SQL AST 校验、作用域选择和只读执行；
+2. 识别普通知识请求或结构化合同；
+3. 结构化 SQL 的 AST 校验、作用域选择和只读执行；
 4. 结果截断、表格化和证据合同；
-5. handoff / retry / correction 的上限与失败关闭。
+5. handoff / 纠错路径的失败关闭，以及 HITL 恢复时不重跑已完成的检索。
 
 ## 4. Tool、Skill 与 MCP
 
 内置 Tool 由 `agents/registry.py` 单一注册表管理，声明 specialist、是否变更数据和是否需要确认。Skill 是可加载的提示词与 Tool 组合，默认不把全部技能工具暴露给模型；MCP 是运行时注册的外部 Tool，默认视为不可信，除非服务端显式声明只读，否则经过确认流程。
 
-内置免 key 搜索使用 `free-search-mcp==0.9.2` 与 `mcp==2.0.0`，迁移自旧的 0.4.2/1.29.0 组合，以匹配当前 MCP SDK 协议。
+`mutates_data` 与 `requires_confirmation` 正交：检索类工具不写数据，但联网兜底仍可能需要确认；`request_*_confirmation` 本身不写数据，因为它就是确认步骤。URL 导入属于 document Worker，不属于 knowledge 检索子图。
 
 这三者关系是：Skill 负责可复用能力说明和工具集合，MCP 提供外部能力实现，Tool 是 Workflow 实际执行的最小运行单元。角色策略以 capability id 覆盖启用状态，不让用户在互相依赖的能力之间做孤立开关。
 
@@ -71,28 +84,46 @@ flowchart LR
 
 ## 6. RAG 全链路
 
-普通文档：转换为 Markdown，按标题/段落结构切分，向量化后写入 Milvus；检索使用 Dense + BM25 + RRF，服务端按 workspace/knowledge space 过滤，生产检索 `k=4`，评测口径固定 `Recall@3`。
+普通文档：转换为 Markdown，按标题/段落结构切分，向量化后写入 Milvus；检索使用 Dense + BM25 + RRF，服务端按 workspace/knowledge space 过滤，质量门决定是 `accepted` 还是 `insufficient`。
 
-CSV/XLSX：受控导入工作区隔离 SQLite，物理表/列使用 ASCII 标识，同时生成 Schema Card 写入 Milvus。模型只需根据 Schema Card 生成 SQL，Workflow 再执行：
+CSV/XLSX：受控导入工作区隔离 SQLite，物理表/列使用 ASCII 标识，同时生成 Schema Card 写入 Milvus。Supervisor 根据 Schema Card 生成只读 SQL 合同，knowledge retrieve 再执行：
 
 - sqlglot 只允许单条 SELECT / 非递归 CTE；
 - 禁止写操作、PRAGMA、ATTACH、系统表、危险函数和越权表；
-- SQLite `mode=ro`、`query_only`、authorizer、progress timeout；
-- 默认最多 100 行、50 列、256 KB、2 秒；
+- SQLite 只读模式、authorizer 与超时边界；
+- 结果按安全上限截断；
 - 文档删除、角色删除和 Milvus 索引失败均清理结构化数据。
+
+联网不是独立对外 Worker。它是 knowledge_fallback 的策略化升级：用户明确要求或本地证据不足且经过确认后，才允许用公开来源补证据。
 
 ## 7. 可观测与评测
 
-每轮返回 request-local `events` 和 `metrics`：run_id、首字延迟、总耗时、模型调用、Token 使用、上下文裁剪、Tool 成功/失败、handoff 和 RAG trace。详情不写入持久化存储。
+每轮返回 request-local `events` 和 `metrics`：阶段、首字延迟、模型调用、上下文裁剪、Tool 成功/失败、handoff 和 RAG trace。详情不写入持久化存储。
 
-评测页支持自动题集、Top3 指标、检索/整链路 P50/P95、拒答率、质量门通过率、复杂题改写/纠错率、工作区隔离校验和 JSON 导出。
+评测页支持自动题集、检索/整链路延迟、拒答率、质量门通过率和隔离校验。具体数字以评测导出为准，不在架构文档里写死。
 
 ## 8. 失败边界
 
-- 外部 LLM 429/5xx：返回统一降级文案，并将运行状态标为 `degraded`；
+- 外部 LLM 瞬时故障：返回统一降级文案，并将运行状态标为 `degraded`；
 - Tool 权限失败：返回 denied/insufficient，不把未经授权的草稿交给 Supervisor；
 - Milvus 不可用：索引任务失败并补偿清理结构化表；
-- 复杂 SQL 超时或超限：返回受控错误，不允许继续扩大资源消耗。
-- 本地 Embedding worker：创建后立即登记进程，关闭时执行 terminate、限时等待和必要 kill；轻量测试应用不触发真实模型预热。
-- Embedding 生命周期：在 `Popen` 前后检查永久关闭状态，关闭与启动竞态时立即回收迟到子进程；崩溃仅丢弃当前 worker，允许下一次请求自动恢复；显式 4 项 LRU 在淘汰时关闭 worker，应用关闭清空全部实例。
+- 复杂 SQL 超时或超限：返回受控错误，不允许继续扩大资源消耗；
+- HITL 拒绝联网或写操作：保持原合同状态，不伪装成功；
+- 本地 Embedding worker：创建后立即登记进程，关闭时执行 terminate、限时等待和必要 kill；轻量测试应用不触发真实模型预热；
+- Embedding 生命周期：在 `Popen` 前后检查永久关闭状态，关闭与启动竞态时立即回收迟到子进程；崩溃仅丢弃当前 worker，允许下一次请求自动恢复；
 - MCP 生命周期：专用 asyncio Runtime 保持 transport/session，FastAPI 的异步连接、发现与断开通过工作线程桥接；每服务器操作锁与 generation 保证最后操作生效，超时/关闭取消在途 Future，工具发现失败清理 Session，应用先等待连接任务取消再关闭 Runtime。
+
+### 8.1 RAG 错误合同
+
+所有 RAG 入口（直接 RAG API、`knowledge_worker` 以及父图委派链路）共享同一组公开错误码：
+
+| 错误码 | 含义 | 行为 |
+|---|---|---|
+| `insufficient` | 没有足够证据，但管线本身正常 | 保守拒答，状态仍为正常完成 |
+| `failed_retrieval` | Dense/BM25、Reranker 或联网检索阶段失败 | 直接 `no_answer`，不再改写或生成 |
+| `failed_generation` | 证据已准备但答案生成失败 | 直接 `no_answer` |
+| `failed_quality_gate` | 质量门执行或校验阶段失败，不等同于普通证据不足 | 丢弃草稿和证据，直接 `no_answer`
+| `dependency_unavailable` | 依赖初始化或运行时不可用 | 收敛为脱敏失败结果 |
+
+`RagEvidenceResult`、`AgentResult`、RAG API 响应和 `RagQueryRecord` 均保留 `error_code` 与
+`error_message`。公开消息由代码映射生成，底层异常只进入服务端日志；失败状态不会把未通过质量门的答案草稿交给 Supervisor。

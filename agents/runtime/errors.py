@@ -23,6 +23,7 @@ class RuntimeErrorCode(str, Enum):
     WORKER_FAILED = "worker_failed"
     CHECKPOINT_UNAVAILABLE = "checkpoint_unavailable"
     RUNTIME_FAILED = "runtime_failed"
+    RUNTIME_RESTARTED = "runtime_restarted"
 
 
 _PUBLIC_MESSAGES = {
@@ -43,6 +44,7 @@ _PUBLIC_MESSAGES = {
     RuntimeErrorCode.WORKER_FAILED: "能力模块处理失败，请稍后重试。",
     RuntimeErrorCode.CHECKPOINT_UNAVAILABLE: "运行恢复状态暂时不可用。",
     RuntimeErrorCode.RUNTIME_FAILED: "运行处理失败，请稍后重试。",
+    RuntimeErrorCode.RUNTIME_RESTARTED: "服务重启后，未完成的运行已安全结束，请重新发起。",
 }
 
 

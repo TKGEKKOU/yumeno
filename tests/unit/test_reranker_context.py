@@ -137,3 +137,5 @@ def test_context_assembly_loads_neighbors_and_orders_each_document_by_chunk_id()
     assert result.main_hit_count == 2
     assert result.neighbor_count == 2
     assert all(doc.metadata.get("supporting_neighbor") for doc in (result.documents[0], result.documents[2]))
+    assert all(doc.metadata.get("evidence_role") == "supporting_neighbor" for doc in (result.documents[0], result.documents[2]))
+    assert all(doc.metadata.get("evidence_role") != "supporting_neighbor" for doc in (result.documents[1], result.documents[3]))

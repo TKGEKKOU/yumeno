@@ -1,5 +1,8 @@
 # YUMENO 项目完整技术解读
 
+> **现行 Agent 图以仓库根目录 ARCHITECTURE.md 为准。** knowledge 已收回父图闭环：Planner + retrieve/fallback，经 finalize 回 Supervisor，不再是快路径直出。Web/Memory/Management 作为独立对外 Worker 的说法已经过时。
+
+
 > 版本基线：2026-08-11 当前工作区
 > 目标读者：项目维护者、简历撰写者、技术面试准备者
 > 说明：本文把结论分为“代码事实”“架构推断”“待实测假设”。没有启动真实 Milvus、角色知识库或外部 LLM 时，不把 Recall@3、Milvus 延迟和 TTFT 写成已测结果。
@@ -29,8 +32,8 @@ YUMENO 是一个 Windows 本地优先的角色化 Agent/RAG 桌面应用：它�
 
 - FastAPI 入口是 [`main.py`](../../main.py)，应用工厂是 [`app/main.py`](../../app/main.py) 的 `create_app()`。
 - 桌面入口是 [`desktop_main.py`](../../desktop_main.py)，它委托 [`desktop/launcher.py`](../../desktop/launcher.py) 的 `run()` 创建 WebView2 窗口。
-- 知识和结构化查询主链路是“一次 Supervisor 策略决策 + 确定性 Workflow/Tool”。
-- Web、Memory、Management、动态 Skill/MCP 写操作仍保留 Legacy Worker、checkpoint 和 HITL。
+- 知识和结构化查询主链路是 Supervisor 委派 knowledge 子图：Planner 选择 RAG/SQL，retrieve/fallback 执行确定性管线，finalize 后回到 Supervisor。
+- 写操作与动态 Skill/MCP 仍走 HITL / checkpoint；独立 Web/Memory/Management 对外 Worker 已过时，生产入口是 Supervisor + 领域子图。
 - Milvus 负责 Dense/BM25/RRF 检索；CSV/XLSX 数据进入按 workspace/knowledge space 隔离的 SQLite。
 - 每轮 Agent 指标只随本轮响应返回，不持久化运行轨迹数据库。
 - MCP SDK session 由专用线程中的单一 owner task 创建、使用和关闭。
@@ -54,7 +57,7 @@ YUMENO 是一个 Windows 本地优先的角色化 Agent/RAG 桌面应用：它�
 ```mermaid
 flowchart TB
     UI["WebView2 / 浏览器前端"]
-    CH["渠道适配层\nB站 / OneBot-NapCat / QQ Official"]
+    CH["渠道适配层\nB站 / OneBot-NapCat"]
     API["FastAPI API 与 WebSocket"]
     APP["应用服务层\n角色 / 对话 / 文档 / 评测"]
     ORCH["Agent 编排层\nSupervisor / Workflow / HITL"]
@@ -110,7 +113,7 @@ flowchart LR
 
 1. [`main.py`](../../main.py) 调用 `create_app()`。
 2. `uvicorn.run()` 绑定 `Settings.app_host/app_port`，默认 `127.0.0.1:17000`。
-3. FastAPI lifespan 创建 MCP 管理器、QQ/B站管理器、Agent 服务和媒体资源管理器。
+3. FastAPI lifespan 创建 MCP 管理器、B站/OneBot 管理器、Agent 服务和媒体资源管理器。
 4. 完整启动时后台预热 Embedding、ASR、GPT-SoVITS；测试应用 `initialize_database=False` 不预热重资源。
 
 ### 4.2 桌面模式
@@ -127,7 +130,7 @@ flowchart LR
 
 正确顺序是“先停止调用者，再停止被调用资源”：
 
-1. 停止 QQ/B站接入。
+1. 停止 B站/OneBot 接入。
 2. 取消并等待 MCP 初始化任务，再关闭 MCP owner runtime。
 3. 关闭 Embedding 新建闸门、回收 worker、等待预热线程结束。
 4. 取消 ASR/TTS 预热并停止服务。
@@ -251,17 +254,18 @@ Realtime 层由 [`realtime/execution.py`](../../realtime/execution.py) 和 [`app
 
 ## 9. Agent、Workflow 与 Tool 的边界
 
-### 9.1 Agent 只做策略决策
+### 9.1 Supervisor 做策略和最终表达
 
-Supervisor 提示词和节点在 [`agents/workflow.py`](../../agents/workflow.py)。它识别当前请求应属于：
+Supervisor 提示词和节点在 [`agents/graph/supervisor.py`](../../agents/graph/supervisor.py)。父图由 [`agents/graph/build.py`](../../agents/graph/build.py) 编译，`agents/workflow.py` 只是兼容门面。
 
-- conversation
-- knowledge
-- web
-- memory
-- management
+图内 Worker 是：
 
-知识和结构化请求经 `delegate_to_knowledge` 产生受控 `worker_request`，随后由确定性 `_knowledge_workflow()` 执行，不再调用一个 Worker 模型重新决定同一件事。
+- knowledge（Planner + 确定性 retrieve/fallback）
+- memory / document / profile / voice_clone / config（受限工具 LLM 子 Agent）
+
+HTTP 仍映射到旧四值 specialist（conversation / web / memory / management），那是 resume 兼容层，不是图内节点。
+
+知识和结构化请求经 `delegate_to_knowledge` 产生受控 `worker_request`。planner 选择 RAG 或消费 SQL 合同，retrieve/fallback 执行确定性管线，finalize 后回到 Supervisor，不再直达父图 END。
 
 ### 9.2 Workflow 做硬逻辑
 
@@ -294,23 +298,23 @@ Workflow 负责：
 
 ## 10. LangGraph 拓扑
 
-主图在 [`agents/workflow.py`](../../agents/workflow.py) 的 `build_persona_workflow()`：
+主图在 [`agents/graph/build.py`](../../agents/graph/build.py) 的 `build_persona_workflow()`，`agents.workflow` 再导出：
 
 ```mermaid
 flowchart LR
     START --> SUP["persona_supervisor"]
     SUP --> END
-    SUP -. handoff .-> K["knowledge_worker\n确定性"]
-    K --> END
-    SUP -. handoff .-> W["web_worker"]
-    W --> FW["finalize_web"] --> SUP
+    SUP -. handoff .-> K["knowledge_worker\nplanner+retrieve+fallback"]
+    K --> FK["finalize_knowledge"] --> SUP
     SUP -. handoff .-> M["memory_worker"]
     M --> FM["finalize_memory"] --> SUP
-    SUP -. handoff .-> G["management_worker"]
-    G --> FG["finalize_management"] --> SUP
+    SUP -. handoff .-> D["document_worker"]
+    D --> FD["finalize_document"] --> SUP
+    SUP -. handoff .-> P["profile / voice_clone / config"]
+    P --> FP["finalize_*"] --> SUP
 ```
 
-看似 `SUP -> END` 与 handoff 冲突，实际 handoff Tool 返回 `Command(PARENT, goto=...)` 改变父图控制流。知识快路径在 Tool 执行后直接生成可展示答案；Legacy Worker 通过 finalize 把结果回填到 Supervisor。
+看似 `SUP -> END` 与 handoff 冲突，实际 handoff Tool 返回 `Command(PARENT, goto=...)` 改变父图控制流。所有 Worker 都经 finalize 回 Supervisor；子图 END 只结束子图，不等于父图 END。
 
 ## 11. 四层记忆与上下文预算
 
@@ -886,7 +890,7 @@ stdio/HTTP transport 需要长期 session，且 AnyIO cancel scope 受 task 归�
 2. 从 [`static/js/chat.js`](../../static/js/chat.js) 的 `submitQuestion()` 追到 [`app/routers/agents.py`](../../app/routers/agents.py)。
 3. 继续看 [`agents/context_factory.py`](../../agents/context_factory.py)，确认 persona、workspace、知识空间和能力为什么由服务端派生。
 4. 看 [`agents/service.py`](../../agents/service.py) 如何建立 thread、串流事件、恢复 HITL 并组装本轮指标。
-5. 看 [`agents/workflow.py`](../../agents/workflow.py) 的 Supervisor、知识快路径和 Legacy Worker 边界。
+5. 看 [`agents/graph/build.py`](../../agents/graph/build.py) 的父图，以及 [`agents/graph/knowledge.py`](../../agents/graph/knowledge.py) / [`agents/graph/supervisor.py`](../../agents/graph/supervisor.py) 的 Worker 边界。
 6. 沿知识请求进入 [`rag/adaptive_graph.py`](../../rag/adaptive_graph.py)、[`rag/retriever.py`](../../rag/retriever.py) 和 [`ingestion/milvus_store.py`](../../ingestion/milvus_store.py)。
 7. 沿表格请求进入 [`structured_data/sql_guard.py`](../../structured_data/sql_guard.py) 和 [`structured_data/service.py`](../../structured_data/service.py)。
 8. 最后按需要阅读 MCP、Embedding、B站、OneBot、TTS 和 Live2D 适配层；它们都应复用前面的上下文和 Agent 服务，而不是各自复制业务逻辑。
@@ -914,7 +918,7 @@ stdio/HTTP transport 需要长期 session，且 AnyIO cancel scope 受 task 归�
 | `ingestion/` | 文件转换、切分、向量化、Milvus、Embedding 资源 | 回答生成 | `create_conversion_job()`、`ingest_markdown_file()` |
 | `structured_data/` | CSV/XLSX 导入、Schema Card、SQL 只读验证和执行 | 自由 SQL、向量语义回答 | `import_structured_file()`、`StructuredQueryService.query()` |
 | `persona/` | 角色创建、作用域解析、删除补偿 | Agent 流程 | `resolve_knowledge_scope()`、`PersonaDeletionService` |
-| `integrations/` | EventBus、渠道配置、B站、OneBot、QQ 官方、MCP transport | 复制一套角色逻辑 | 各 manager/router |
+| `integrations/` | EventBus、渠道配置、B站、OneBot、MCP transport | 复制一套角色逻辑 | 各 manager/router |
 | `extensions/` | 在线扩展目录与安装任务 | MCP transport 运行 | `CatalogClient`、installer |
 | `skills/` | 内置 Skill 包 | FastAPI 路由 | 每个 Skill 的说明、脚本和元数据 |
 | `voice/` | ASR、VAD、分离、克隆工作室、GPT-SoVITS 安装/训练/合成 | 聊天上下文 | 各资源 manager 和 service |
@@ -939,7 +943,7 @@ stdio/HTTP transport 需要长期 session，且 AnyIO cancel scope 受 task 归�
 
 - 改请求字段或状态码：先看 `app/routers/`。
 - 改某个页面的布局/交互：看 `static/views`、对应 `static/js` 和 `static/styles.css`。
-- 改模型如何选择知识/Web/记忆：看 `agents/workflow.py`。
+- 改模型如何选择知识/Web/记忆：看 `agents/graph/supervisor.py`、`agents/graph/knowledge.py` 和 `agents/intent_funnel.py`。
 - 改工具权限：看 `agents/capabilities.py`、`agents/policy.py` 和 guard middleware。
 - 改检索质量：看 `rag/retriever.py`、`rag/adaptive_graph.py`，不要先改 QQ/B站适配层。
 - 改资料接入：看 `ingestion/document_jobs.py` 和 `ingestion/indexer.py`。
@@ -958,7 +962,7 @@ stdio/HTTP transport 需要长期 session，且 AnyIO cancel scope 受 task 归�
 4. 创建角色删除、实时执行、Embedding/ASR/TTS/分离/工作室等 manager。
 5. 完整模式下建表、执行轻量 schema upgrade、迁移旧音色资产。
 6. 创建 SQLite LangGraph checkpointer；测试模式使用 `MemorySaver`。
-7. 创建 B站、OneBot、QQ official 和两个 `ImMessageRouter`。
+7. 创建 B站、OneBot 和统一 `ImMessageRouter`。
 8. 把统一消息事件订阅到 IM router。
 9. include 全部 router，挂载静态文件、Live2D 资产和只读 Datasette。
 10. lifespan 进入时连接 MCP、启动可选渠道、后台预热重资源；退出时先关闭渠道/MCP，再回收 Embedding；ASR/GPT-SoVITS 预热任务当前发出取消请求后停止服务，仍保留进一步收口的竞态改进空间。
@@ -972,7 +976,7 @@ stdio/HTTP transport 需要长期 session，且 AnyIO cancel scope 受 task 归�
 | `agent_service` | `PersonaAgentService` | 应用全程 | 网页、B站、QQ |
 | `checkpoint_resource` | SQLite checkpointer wrapper | 完整应用全程 | LangGraph 会话恢复 |
 | `realtime_executions` | `ConversationExecutionRegistry` | 进程内 | 防同会话并发覆盖 |
-| `event_bus` | `EventBus` | 进程内 | QQ official/OneBot 到 IM router |
+| `event_bus` | `EventBus` | 进程内 | OneBot 到 IM router |
 | `mcp_manager` | `MCPManager` | lifespan | MCP 配置、连接、工具注册 |
 | `mcp_connect_task` | asyncio Task | lifespan | 非阻塞启动可选 MCP |
 | `embedding_resources` | `LocalEmbeddingResourceManager` | 应用全程 | 安装、删除、状态 API |
@@ -992,9 +996,7 @@ stdio/HTTP transport 需要长期 session，且 AnyIO cancel scope 受 task 归�
 | `voice_studio` | `VoiceStudioManager` | 应用全程 | 声音工作室会话 |
 | `bilibili` | `BilibiliLiveManager` | lifespan | 直播连接和 FIFO 处理 |
 | `onebot` | `OneBotConnectionManager` | lifespan | NapCat 反向 WS 和动作请求 |
-| `qq_official` | `QqOfficialGateway` | lifespan | 兼容保留的官方渠道 |
 | `im_router` | `ImMessageRouter` | 应用全程 | OneBot 入站消息 |
-| `im_router_qq_official` | `ImMessageRouter` | 应用全程 | 官方 QQ 入站消息 |
 | `extension_catalog_client` | `CatalogClient` | 应用全程 | 在线扩展目录 |
 
 ### 38.3 为什么测试模式不预热重资源
@@ -1325,14 +1327,14 @@ static/js/chat.js submit
 
 ### 42.4 `build_persona_workflow()`
 
-`agents/workflow.py` 同时包含四类机制：
+实现位于 `agents/graph/`，`agents/workflow.py` 只是兼容门面。父图包含四类机制：
 
 - 动态 prompt：把当前 Persona profile、摘要、记忆和结构化 schema 注入模型。
 - Skill middleware：只让模型看见基础工具和已加载/自动加载 Skill 的工具，减少工具过载。
 - Capability guard：Tool 执行前再次校验角色授权；MCP 高风险工具还可要求确认。
 - Observability/context budget：裁剪模型历史并记录模型调用、首 token、工具和 RAG 阶段。
 
-知识快路径的关键是 `_knowledge_workflow()`：Supervisor 只生成一次知识/结构化请求，随后 Workflow 解析合同、执行标准 Tool、后处理答案，不再让多个 Agent 反复商量。
+knowledge 子图的关键是 planner → retrieve → fallback：Supervisor 只生成一次知识/结构化请求；planner 选择 RAG 或消费 SQL 合同，retrieve/fallback 执行确定性管线，finalize 校验合同后回到 Supervisor。
 
 ### 42.5 文档索引链
 
@@ -2008,7 +2010,7 @@ QQ 风险最高的不是“收到消息”，而是主动外发：
 - [ ] `app/routers/agents.py`：理解协议边界。
 - [ ] `agents/context_factory.py`：确认服务端权威上下文。
 - [ ] `agents/service.py`：理解 thread、stream、resume、result。
-- [ ] `agents/workflow.py`：理解 Supervisor/Worker/Tool 和 middleware。
+- [ ] `agents/graph/`：理解 Supervisor、knowledge 子图、受限 Worker 和 middleware；`agents/workflow.py` 只是门面。
 
 完成标准：能不用看代码画出“一轮网页对话”的序列图。
 

@@ -40,3 +40,15 @@ runtime/reranker/
 .tmp-*/
 tmp*.py
 diagrams/
+# Local diagnostic/runtime artifacts
+_startup.*
+_workflow_startup.*
+run-final.*
+CONOUT$
+*.err
+*.out
+*.bak
+*.backup
+.chat_extract.txt
+.tmp_*
+logs/

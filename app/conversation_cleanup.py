@@ -4,7 +4,8 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from app.models import ConversationMessage, ConversationSummary, Persona
+from app.attachments import attachment_root
+from app.models import ConversationAttachment, ConversationMessage, ConversationSummary, Persona
 from persona.service import LOCAL_WORKSPACE_ID
 
 
@@ -27,6 +28,18 @@ def clear_conversation_data(session, checkpointer, persona_id: str, conversation
     ))
     for summary in summaries:
         session.delete(summary)
+    attachments = list(session.scalars(
+        select(ConversationAttachment).where(
+            ConversationAttachment.workspace_id == LOCAL_WORKSPACE_ID,
+            ConversationAttachment.conversation_id == conversation_id,
+        )
+    ))
+    for attachment in attachments:
+        session.delete(attachment)
+    project_root = audio_root.resolve().parents[1]
+    attachment_directory = attachment_root(project_root, conversation_id)
+    if attachment_directory.exists():
+        shutil.rmtree(attachment_directory)
     directory = audio_root / hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()[:32]
     if directory.exists():
         shutil.rmtree(directory)

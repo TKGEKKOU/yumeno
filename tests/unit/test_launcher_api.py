@@ -3,7 +3,14 @@ import sys
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from desktop.launcher_api import LauncherApi
+
+
+@pytest.fixture(autouse=True)
+def _do_not_open_real_browser(monkeypatch):
+    monkeypatch.setattr("desktop.launcher_api.open_app", lambda url: None)
 
 
 class FakeDocker:

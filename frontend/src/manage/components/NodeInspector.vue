@@ -2,6 +2,7 @@
 import { Check, ExternalLink, Eye, FolderOpen, Play, RefreshCw, RotateCcw, Trash2, Upload } from "lucide-vue-next";
 import { computed, ref, watch } from "vue";
 import { plainClone } from "../api";
+import KnowledgeQualityPanel from "./KnowledgeQualityPanel.vue";
 import type { PersonaSummary, RetrievalConfig, RoleGraphNode, WorkbenchSnapshot } from "../types";
 
 const props = defineProps<{ node?: RoleGraphNode; draft: WorkbenchSnapshot; disabled?: boolean; uploadCompleteToken?: number }>();
@@ -66,6 +67,7 @@ watch(() => props.uploadCompleteToken, () => { selectedFiles.value = []; directT
       <label><span>补充文本</span><textarea v-model="directText" rows="3" placeholder="直接写入角色知识库"></textarea></label>
       <button type="button" class="inspect-action" :disabled="disabled || (!selectedFiles.length && !directText.trim())" @click="submitDocuments"><Upload :size="15"/>{{ disabled ? '处理中' : '写入知识库' }}</button>
       <ul class="document-items"><li v-for="doc in draft.documents" :key="String(doc.id)"><div><b>{{ doc.original_filename || doc.original_name || doc.id }}</b><span>{{ doc.status }}</span></div><span class="document-actions"><button type="button" title="预览 Markdown" @click="emit('previewDocument', doc)"><Eye :size="14"/></button><button v-if="doc.status === 'index_failed'" type="button" title="重新索引" @click="emit('retryDocument', String(doc.id))"><RotateCcw :size="14"/></button><button type="button" title="删除资料" @click="emit('deleteDocument', String(doc.id))"><Trash2 :size="14"/></button></span></li></ul>
+      <KnowledgeQualityPanel :persona-id="draft.persona.id" :knowledge-space-id="draft.persona.knowledge_space_id" :documents="draft.documents" :disabled="disabled" />
       <button type="button" class="inspect-action" @click="emit('openRagEval')"><ExternalLink :size="15"/>前往 RAG 评测</button>
     </div>
     <div v-else-if="kind === 'memory'" class="inspect-stack"><p>会话记忆按对话窗口隔离，长期记忆与角色绑定。</p><small>清理操作继续在对应对话或接入窗口执行，避免误清其他会话。</small></div>

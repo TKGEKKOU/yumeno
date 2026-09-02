@@ -1,7 +1,49 @@
-    <section id="chat-view" class="view is-hidden">
-      <div id="chat-layout" class="chat-layout">
-        <section class="chat-panel">
-          <div class="chat-toolbar"><button id="live2d-toggle" class="icon-button" type="button" title="角色面板" aria-label="角色面板" aria-pressed="false"><i data-lucide="scan-face"></i></button><div class="chat-persona-picker"><button id="chat-persona-toggle" class="chat-persona-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><strong id="chat-title">选择角色</strong><i data-lucide="chevron-down"></i></button><div id="chat-persona-menu" class="persona-menu is-hidden" role="menu"><div id="persona-list" class="persona-list"></div></div></div><div class="chat-settings"><button id="chat-settings-toggle" class="icon-button" type="button" title="对话设置" aria-label="对话设置" aria-haspopup="menu" aria-expanded="false"><i data-lucide="settings-2"></i></button><div id="chat-settings-menu" class="chat-settings-menu is-hidden" role="menu"><label class="chat-voice-toggle"><input id="assistant-voice-toggle" type="checkbox" checked><span>自动播放语音</span></label><button id="clear-conversation" class="chat-settings-item" type="button" title="清空当前对话" aria-label="清空当前对话" disabled><i data-lucide="trash-2"></i><span>清除聊天记录</span></button></div></div></div>
+<section id="chat-view" class="view is-hidden">
+  <div id="chat-layout" class="chat-layout">
+    <aside id="chat-files-sidebar" class="chat-files-sidebar" aria-label="会话文件" aria-hidden="true">
+      <header class="chat-files-head">
+        <div class="chat-files-title-group">
+          <span class="chat-files-kicker">FILES</span>
+          <strong>会话文件</strong>
+          <small id="chat-files-summary">上传后可在对话中使用</small>
+        </div>
+        <div class="chat-files-head-actions">
+          <button id="chat-files-upload" class="icon-button" type="button" title="上传文件" aria-label="上传文件"><i data-lucide="plus"></i></button>
+          <button id="chat-files-close" class="icon-button chat-files-close" type="button" title="收起文件栏" aria-label="收起文件栏"><i data-lucide="panel-left-close"></i></button>
+        </div>
+      </header>
+      <div id="chat-files-dropzone" class="chat-files-dropzone" tabindex="0" role="button" aria-label="上传文件或拖拽到此处">
+        <i data-lucide="upload-cloud"></i>
+        <span>拖拽文件到这里</span>
+        <small>或点击上传</small>
+      </div>
+      <div class="chat-files-list-label"><span>当前附件</span><span id="chat-files-count-label">0</span></div>
+      <div id="chat-files-list" class="chat-files-list"></div>
+    </aside>
+    <button id="chat-files-backdrop" class="chat-files-backdrop is-hidden" type="button" aria-label="关闭文件栏"></button>
+
+    <main class="chat-panel" aria-label="主要对话区">
+      <header class="chat-toolbar">
+        <div class="chat-toolbar-inner">
+          <div class="chat-toolbar-leading">
+            <button id="live2d-toggle" class="icon-button" type="button" title="角色面板" aria-label="角色面板" aria-pressed="false"><i data-lucide="scan-face"></i></button>
+            <div class="chat-persona-picker">
+              <button id="chat-persona-toggle" class="chat-persona-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+                <strong id="chat-title">选择角色</strong><i data-lucide="chevron-down"></i>
+              </button>
+              <div id="chat-persona-menu" class="persona-menu is-hidden" role="menu"><div id="persona-list" class="persona-list"></div></div>
+            </div>
+          </div>
+          <div class="chat-toolbar-actions">
+            <button id="chat-files-toggle" class="icon-button" type="button" title="打开会话文件" aria-label="打开会话文件" aria-haspopup="dialog" aria-expanded="false"><i data-lucide="paperclip"></i><span id="chat-files-count" class="chat-files-count" aria-label="附件数量">0</span></button>
+            <button id="chat-context-peek" class="icon-button chat-context-peek is-hidden" type="button" aria-controls="chat-context-sidebar" aria-expanded="false" title="打开任务与流程" aria-label="打开任务与流程"><i data-lucide="panel-right-open"></i><span id="chat-context-peek-label" class="chat-context-peek-label">任务</span><b id="chat-context-peek-count" class="is-hidden">0</b></button>
+            <button id="chat-settings-toggle" class="icon-button" type="button" title="对话设置" aria-label="对话设置" aria-haspopup="dialog" aria-expanded="false"><i data-lucide="settings-2"></i></button>
+          </div>
+        </div>
+      </header>
+
+      <div class="chat-scroll-region">
+        <div class="chat-main-inner">
           <section id="live2d-dock" class="live2d-stage-pane" aria-label="角色舞台" hidden>
             <div id="live2d-stage" class="live2d-stage">
               <canvas id="live2d-canvas" class="live2d-canvas"></canvas>
@@ -31,8 +73,94 @@
               </div>
             </footer>
           </section>
-          <div id="chat-log" class="chat-log selectable"><p class="empty-state">选择角色后开始聊天</p></div>
-          <div class="chat-footer"><div class="chat-inline-status is-hidden"><p id="audio-status" class="audio-status" aria-live="polite"></p><p id="question-status" class="question-status" aria-live="polite"></p><p id="chat-error" class="inline-error chat-error"></p></div><section id="confirmation-panel" class="confirmation-panel is-hidden"><div><strong id="confirmation-title">确认操作</strong><p id="confirmation-detail"></p></div><div class="confirmation-actions"><button id="cancel-action" class="button button-secondary" type="button">取消</button><button id="confirm-action" class="button button-warning" type="button">确认</button></div></section><form id="question-form" class="composer"><textarea id="question" rows="3" maxlength="12000" placeholder="输入消息" required></textarea><button id="send-question" class="send-button" type="submit" title="发送" disabled><i data-lucide="send-horizontal"></i></button></form></div>
+
+          <div id="chat-log" class="chat-log selectable"><div class="chat-empty-state" aria-hidden="true"></div>
+          <section id="chat-task-workspace" class="chat-task-workspace is-hidden" aria-label="当前任务工作区" aria-live="polite">
+            <header class="chat-task-workspace-head">
+              <div><span class="chat-task-workspace-kicker">WORKSPACE</span><strong id="chat-task-workspace-title">文件任务</strong><small id="chat-task-workspace-type">通用文件处理</small></div>
+              <div class="chat-task-workspace-status"><span id="chat-task-workspace-stage">准备中</span><b id="chat-task-workspace-progress-label">0%</b></div>
+            </header>
+            <div class="chat-task-workspace-progress"><span id="chat-task-workspace-progress-bar"></span></div>
+            <div id="chat-task-workspace-files" class="chat-task-workspace-files" aria-label="任务输入文件"></div>
+            <p id="chat-task-workspace-message" class="chat-task-workspace-message"></p>
+            <div id="chat-task-workspace-actions" class="chat-task-workspace-actions" aria-label="当前任务操作"></div>
+            <div id="chat-task-workspace-results" class="chat-task-workspace-results is-hidden" aria-label="任务输出文件"></div>
+          </section>
+          </div>
+          <div id="chat-attachment-strip" class="chat-attachment-strip is-hidden" aria-label="待发送附件"></div>
+          <section id="chat-media-workbench" class="chat-media-workbench is-hidden" aria-label="当前媒体预览"></section>
+        </div>
+      </div>
+
+      <footer class="chat-footer">
+        <div class="chat-main-inner chat-footer-inner">
+          <div class="chat-inline-status is-hidden"><p id="audio-status" class="audio-status" aria-live="polite"></p><p id="question-status" class="question-status" aria-live="polite"></p><p id="chat-error" class="inline-error chat-error"></p></div>
+          <section id="confirmation-panel" class="confirmation-panel is-hidden"><div><strong id="confirmation-title">确认操作</strong><p id="confirmation-detail"></p></div><div class="confirmation-actions"><button id="cancel-action" class="button button-secondary" type="button">取消</button><button id="confirm-action" class="button button-warning" type="button">确认</button></div></section>
+          <form id="question-form" class="composer">
+            <input id="chat-voice-material" class="visually-hidden-input" type="file" accept=".pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.json,.png,.jpg,.jpeg,.webp,.gif,audio/*,video/*,.wav,.mp3,.m4a,.aac,.flac,.ogg,.opus,.wma,.mp4,.mkv,.webm,.mov,.avi" multiple>
+            <button id="chat-attachment" class="icon-button" type="button" title="上传附件" aria-label="上传附件" disabled><i data-lucide="paperclip"></i></button>
+            <textarea id="question" rows="1" maxlength="12000" placeholder="输入消息，Enter 发送" required></textarea>
+            <button id="voice-chat" class="icon-button composer-voice-button" type="button" title="语音输入" aria-label="语音输入"><i data-lucide="mic"></i></button>
+            <button id="send-question" class="send-button" type="submit" title="发送" disabled><i data-lucide="arrow-up"></i></button>
+          </form>
+        </div>
+      </footer>
+      <aside id="chat-attachments-drawer" class="chat-attachments-drawer is-hidden" role="dialog" aria-modal="true" aria-labelledby="chat-attachments-title"><header><div><strong id="chat-attachments-title">会话附件</strong><small id="chat-attachments-summary">当前会话中的文件</small></div><button id="chat-attachments-close" class="close-button" type="button" title="关闭附件" aria-label="关闭附件"><i data-lucide="x"></i></button></header><div id="chat-attachments-list-mobile" class="chat-attachments-list"></div></aside>
+    </main>
+
+    <aside id="chat-context-sidebar" class="chat-context-sidebar is-hidden" aria-label="任务、流程与会话上下文" aria-hidden="true">
+      <header class="chat-context-head"><div><span class="chat-context-kicker">TASKS</span><strong>任务</strong></div><button id="chat-context-close" class="icon-button" type="button" title="收起任务栏" aria-label="收起任务栏"><i data-lucide="panel-right-close"></i></button></header>
+      <div class="chat-context-scroll">
+        <section id="chat-task-summary-section" class="chat-context-section is-hidden" aria-labelledby="chat-task-summary-title"><div class="chat-context-section-head"><h3 id="chat-task-summary-title">当前任务</h3><span id="chat-task-worker" class="chat-context-badge"></span></div><div id="chat-task-summary" class="chat-task-summary"></div></section>
+        <section id="chat-pending-section" class="chat-context-section is-hidden" aria-labelledby="chat-pending-title"><div class="chat-context-section-head"><h3 id="chat-pending-title">待处理事项</h3><span id="chat-pending-count" class="chat-context-count">0</span></div><div id="chat-pending-list" class="chat-pending-list"></div></section>
+        <section id="chat-workflow-section" class="chat-context-section is-hidden" aria-labelledby="chat-workflow-title"><button id="chat-workflow-toggle" class="chat-context-section-head chat-workflow-toggle" type="button" aria-expanded="false" aria-controls="chat-workflow-detail"><span><small>FLOW</small><strong id="chat-workflow-title">流程详情</strong></span><i data-lucide="chevron-down"></i></button><div id="chat-workflow-detail" class="chat-workflow-detail is-hidden"><div id="chat-workflow-meta" class="chat-workflow-meta"></div><div id="chat-workflow-canvas" class="chat-workflow-canvas" role="group" aria-label="任务流程图"></div><div id="chat-workflow-node-detail" class="chat-workflow-node-detail" aria-live="polite"></div></div></section>
+        <section id="chat-context-attachments-section" class="chat-context-section is-hidden" aria-labelledby="chat-context-attachments-title"><div class="chat-context-section-head"><h3 id="chat-context-attachments-title">任务相关文件</h3><button id="chat-context-files-open" class="chat-context-link" type="button">管理</button></div><div id="chat-context-attachments" class="chat-context-attachments"></div></section>
+      </div>
+    </aside>
+    <button id="chat-context-backdrop" class="chat-context-backdrop is-hidden" type="button" aria-label="关闭任务栏"></button>
+
+    <button id="chat-settings-backdrop" class="chat-settings-backdrop is-hidden" type="button" aria-label="关闭对话设置"></button>
+    <aside id="chat-settings-sidebar" class="chat-settings-sidebar is-hidden" role="dialog" aria-modal="false" aria-labelledby="chat-settings-title" aria-hidden="true">
+      <header class="chat-settings-head">
+        <div><span class="chat-context-kicker">WORKSPACE</span><strong id="chat-settings-title">对话设置</strong></div>
+        <button id="chat-settings-close" class="icon-button" type="button" title="关闭对话设置" aria-label="关闭对话设置"><i data-lucide="x"></i></button>
+      </header>
+      <div class="chat-settings-scroll">
+        <section class="chat-settings-section" aria-labelledby="chat-settings-conversation-title">
+          <div class="chat-settings-section-title"><h3 id="chat-settings-conversation-title">当前对话</h3><span>即时生效</span></div>
+          <label class="chat-setting-row"><span><strong>自动播放语音</strong><small>收到角色回复后自动播放语音</small></span><input id="assistant-voice-toggle" type="checkbox" checked></label>
+          <button id="clear-conversation" class="chat-setting-button is-danger" type="button" title="清空当前对话" disabled><i data-lucide="trash-2"></i><span>清除当前对话</span></button>
+        </section>
+        <section class="chat-settings-section" aria-labelledby="chat-settings-display-title">
+          <div class="chat-settings-section-title"><h3 id="chat-settings-display-title">显示与交互</h3><span>本机偏好</span></div>
+          <label class="chat-setting-row"><span><strong>显示 Live2D</strong><small>打开角色舞台，不改变对话布局</small></span><input id="chat-live2d-setting" type="checkbox"></label>
+          <label class="chat-setting-row"><span><strong>显示思考内容</strong><small>显示意图识别、Agent 交接和处理步骤</small></span><input id="chat-thinking-setting" type="checkbox"></label><label class="chat-setting-row"><span><strong>显示调试信息</strong><small>显示模型、工具、耗时、压缩和证据等运行数据</small></span><input id="chat-debug-setting" type="checkbox"></label>
+          <label class="chat-setting-row"><span><strong>展开流程详情</strong><small>任务栏默认展开流程图</small></span><input id="chat-workflow-setting" type="checkbox"></label>
+        </section>
+        <section class="chat-settings-section" aria-labelledby="chat-settings-status-title">
+          <div class="chat-settings-section-title"><h3 id="chat-settings-status-title">当前状态</h3><span>只读</span></div>
+          <dl class="chat-settings-status-list">
+            <div><dt>角色</dt><dd id="chat-setting-persona">未选择</dd></div>
+            <div><dt>附件</dt><dd id="chat-setting-attachments">0 个</dd></div>
+            <div><dt>任务</dt><dd id="chat-setting-tasks">无活动任务</dd></div>
+          </dl>
+        </section>
+        <section class="chat-settings-section" aria-labelledby="chat-settings-provider-title">
+          <div class="chat-settings-section-title"><h3 id="chat-settings-provider-title">当前供应商</h3><span id="chat-setting-provider-state">读取中</span></div>
+          <dl id="chat-setting-provider-status" class="chat-settings-status-list chat-settings-provider-list">
+            <div><dt>对话模型</dt><dd id="chat-setting-llm-provider">读取中…</dd></div>
+            <div><dt>模型</dt><dd id="chat-setting-llm-model">读取中…</dd></div>
+            <div><dt>服务地址</dt><dd id="chat-setting-llm-endpoint">读取中…</dd></div>
+            <div><dt>Embedding</dt><dd id="chat-setting-embedding">读取中…</dd></div>
+            <div><dt>联网搜索</dt><dd id="chat-setting-search">读取中…</dd></div>
+          </dl>
+          <small class="chat-settings-provider-note">仅显示当前运行摘要，不显示 API Key。</small>
+        </section>
+        <section class="chat-settings-section chat-settings-links" aria-label="完整配置入口">
+          <button id="chat-open-full-settings" class="chat-setting-link" type="button"><span><strong>完整设置</strong><small>模型、知识库、语音引擎与系统状态</small></span><i data-lucide="arrow-up-right"></i></button>
+          <button id="chat-open-providers" class="chat-setting-link" type="button"><span><strong>供应商配置</strong><small>管理 Provider、资源和连接测试</small></span><i data-lucide="arrow-up-right"></i></button>
         </section>
       </div>
-    </section>
+    </aside>
+  </div>
+</section>

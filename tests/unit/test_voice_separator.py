@@ -103,3 +103,44 @@ def test_separate_with_real_model_if_present(tmp_path):
     HtdemucsSeparator(model).separate(source, target)
     with wave.open(str(target), "rb") as output:
         assert output.getnframes() == mix.shape[1]
+
+
+def test_separate_stems_writes_vocals_and_instrumental(tmp_path):
+    from voice.separator.onnx import HtdemucsSeparator
+
+    mix = np.stack(
+        [
+            0.4 * np.sin(2 * np.pi * 220 * np.arange(44100) / 44100),
+            0.2 * np.sin(2 * np.pi * 330 * np.arange(44100) / 44100),
+        ],
+        axis=0,
+    ).astype(np.float32)
+    source = tmp_path / "mix.wav"
+    source.write_bytes(stereo_wav(mix))
+    vocals = tmp_path / "vocals.wav"
+    instrumental = tmp_path / "instrumental.wav"
+
+    separator = HtdemucsSeparator(Path("unused.onnx"), session_factory=lambda _: IdentitySession())
+    returned = separator.separate_stems(source, vocals, instrumental)
+
+    assert returned == vocals
+    assert vocals.is_file()
+    assert instrumental.is_file()
+    with wave.open(str(instrumental), "rb") as output:
+        frames = np.frombuffer(output.readframes(output.getnframes()), dtype=np.int16).reshape(-1, 2)
+    assert float(np.abs(frames.astype(np.float32) / 32767.0).max()) < 1e-3
+
+
+def test_separate_keeps_gpt_sovits_vocals_only_contract(tmp_path):
+    from voice.separator.onnx import HtdemucsSeparator
+
+    source = tmp_path / "mix.wav"
+    source.write_bytes(stereo_wav(np.zeros((2, 4410), dtype=np.float32)))
+    vocals = tmp_path / "vocals.wav"
+    temporary = vocals.with_suffix(".instrumental.tmp.wav")
+
+    separator = HtdemucsSeparator(Path("unused.onnx"), session_factory=lambda _: IdentitySession())
+    separator.separate(source, vocals)
+
+    assert vocals.is_file()
+    assert not temporary.exists()

@@ -23,63 +23,57 @@
 
 ### 架构设计亮点
 
-#### 1. LangGraph Supervisor + Worker 模式
+#### 1. LangGraph Supervisor + 领域子图
 `
-1 个 Supervisor (主调度器)
-  ↓ Command.PARENT handoff
-6 个 Worker (专职执行器)
-  - knowledge: 知识检索 + 联网搜索 (5 tools)
-  - memory: persona/workspace 记忆管理 (7 tools)
-  - document: 文档上传和管理 (3 tools)
-  - profile: 人设配置和导出 (3 tools)
-  - voice_clone: 语音克隆全流程 (7 tools)
-  - config: 系统配置修改 (4 tools)
+persona_supervisor
+  ├─ knowledge_worker：Planner + 确定性 retrieve/fallback（RAG / SQL / 策略化联网）
+  ├─ memory / document / profile / voice_clone / config：受限工具 LLM Worker
+  └─ 全部经 finalize 合同回到 Supervisor；Worker 不直达 END
 `
 
 **设计原则**：
-- ✅ **单一职责**：每个 Worker 只负责一个业务领域
-- ✅ **最小权限**：Worker 只能访问其专属的工具集
-- ✅ **高内聚低耦合**：Worker 间通过 Supervisor 协调，不直接通信
-- ✅ **工具均衡分配**：3-7 tools/worker，避免过轻或过重
+- ✅ **同构分层**：选择、执行、校验、对用户说话在宏观和微观保持同一套规则
+- ✅ **最小权限**：Worker 只能访问其专属工具集，Worker 之间不互相调用
+- ✅ **合同交接**：knowledge 交 JSON 证据合同，其他 Worker 交事实摘要
+- ✅ **HITL / checkpoint**：写操作和联网兜底可中断恢复
 
 **面试话术**：
-> "我设计了一个基于 LangGraph 的多智能体系统，采用 Supervisor + 6 Worker 架构。Supervisor 负责意图理解和任务分派（LLM 做策略决策），Worker 负责具体执行（确定性代码执行）。通过 Command.PARENT 机制实现子图间通信，并使用 MemorySaver checkpointer 持久化会话状态，支持多轮对话和中断恢复。"
+> "我用 LangGraph 做 Supervisor 编排。knowledge 是 Planner Agent 加确定性 RAG/SQL 管线，其余领域是受限工具的 LLM 子 Agent。所有 Worker 都经合同回到 Supervisor，不允许直达 END；写操作走 HITL 和 checkpoint。这样 LLM 负责策略和最终表达，检索和权限边界交给确定性代码。"
 
 #### 2. 权限隔离和安全机制
 
-**工具级权限验证**：
+**工具权限来自注册表 + middleware，不是装饰器**：
 `python
-@require_worker(["memory"])
-def save_persona_memory(content: str, runtime: ToolRuntime):
-    # 只有 memory_worker 可以调用
-    # 防止其他 Worker 越权访问
+# Worker 只能拿到 specialist 匹配的工具
+tools_for_specialist("memory")
+
+# 执行前 capability middleware 再按角色策略拦截、确认或拒绝
 `
+真正的边界在 `agents/registry.py` 和 `agents/graph/middleware.py`。没有第二套 `@require_worker` 装饰器鉴权。
 
 **HITL（Human-in-the-Loop）审批**：
-- 14/29 工具需要人工审批（48%）
-- 两阶段提交：request_XXX → 用户确认 → apply_XXX
+- 写操作：request → interrupt → 用户确认 → apply
 - 覆盖：记忆写入、文档管理、配置修改、语音训练
+- 联网兜底：`knowledge_fallback` 按 `intent_decision.web_authorized` 拒绝 / 确认 / 直接执行
 
-**多层安全机制**：
-1. 输入验证：文件路径、SQL 查询、内容长度
-2. 速率限制：防止 API 滥用（如 10 次/分钟）
-3. 审计日志：所有工具调用可追溯
-4. 跨 persona 隔离：防止数据泄露
+**多层边界**：
+1. 工具集隔离：每个 LLM Worker 只挂本领域工具
+2. capability 策略：未授权直接拒绝，需确认则 interrupt
+3. SQL 只读校验：`agents/sql_security.py`
+4. 作用域隔离：`PersonaAgentContext` 由服务端注入
+5. 意图硬门禁：搜索工具只认 `intent_decision.web_authorized`
 
 **面试话术**：
-> "安全性方面，我实现了工具级权限验证，通过装饰器模式二次验证调用者身份，防止 Worker 越权。对于敏感操作（记忆写入、配置修改等），采用 HITL 审批流程，用户需要明确确认后才执行。同时集成了输入验证、速率限制、审计日志等多层防护。"
+> "权限不是靠装饰器二次验身份。工具按 specialist 注册进对应 Worker，create_agent 只挂自己那一类工具；capability middleware 在执行前按角色策略拦截或 HITL。写操作走两阶段确认，联网兜底由 intent_decision.web_authorized 硬门禁决定。"
 
 #### 3. 可扩展性设计
 
-**动态 Worker 注册**：
+**扩展一个领域必须改图，不能热加载**：
 `python
-# 运行时添加新 Worker，无需修改核心代码
-register_worker(WorkerSpec(
-    name="email",
-    tools=["send_email", "read_inbox"],
-    prompt_template="Handle email operations.",
-    description="Delegate email tasks."
-))
+# 1. 在 registry 注册 ToolSpec(specialist="email", ...)
+# 2. 把 email 加入 agents/graph/state.py 的 WORKERS
+# 3. 在 build_persona_workflow 显式接入节点和 finalize 边
+# 没有 register_worker() 会自动改变生产拓扑
 `
 
 **MCP 协议集成**：
@@ -93,32 +87,17 @@ register_worker(WorkerSpec(
 - 类似 VS Code 插件机制
 
 **面试话术**：
-> "可扩展性方面，我设计了动态 Worker 注册机制，支持运行时添加/移除 Worker，无需修改核心代码。同时集成了 MCP 协议和技能系统，可以动态加载外部工具和自定义能力，实现了插件化架构。"
+> "可扩展性方面，Worker 规格表与父图编译集解耦：新领域要同时改规格、工具权限和父图节点，不能热加载一个直达 END 的 Agent。真正的扩展面是 MCP 和技能系统，可以动态加载外部工具和自定义能力。"
 
 #### 4. 监控和可观测性
 
-**分布式追踪**：
-- 记录完整的 Worker 调用链
-- 每个工具的执行时长
-- 请求级别的端到端追踪
-
-**Metrics 收集**：
-`python
-{
-  "total_calls": 1234,
-  "success_rate": "98.5%",
-  "avg_duration_ms": "345.67",
-  "top_errors": {...}
-}
-`
-
-**健康检查**：
-- 成功率监控（< 50% 告警）
-- 响应时间监控（> 30s 告警）
-- 依赖服务状态检查
+**请求级遥测，不是独立监控集群**：
+- `RunRecorder` 记录本轮 stage、handoff、TTFT、token 与模型耗时
+- 前端过程气泡吃 custom stage 事件
+- 上下文预算裁剪模型视图，不删除 checkpoint
 
 **面试话术**：
-> "可观测性方面，我实现了分布式追踪系统，记录完整的 Worker 调用链和工具执行时长。设计了 Metrics 收集器，自动统计调用次数、成功率、响应时间等关键指标。提供健康检查接口，实时监控 Worker 状态和依赖服务可用性。"
+> "可观测性是请求级的：每轮记录 stage、handoff、首 token 和 token 消耗，并推给前端过程气泡。这不是 Jaeger 式分布式追踪，也没有独立的 Worker 健康检查集群。"
 
 ---
 
@@ -223,7 +202,7 @@ xxx
 ### 代码质量
 
 1. **类型系统**：TypedDict, Literal, dataclass
-2. **设计模式**：策略、责任链、注册表、装饰器
+2. **设计模式**：注册表、中间件责任链、合同校验、HITL 中断恢复
 3. **原则**：DRY, KISS, SOLID
 4. **可测试性**：每个 Worker 可独立测试
 
@@ -271,48 +250,21 @@ xxx
 > "我设计了多层容错机制：
 > 1. **失败返回 Supervisor**：Worker 执行失败后，会将错误信息封装返回 Supervisor
 > 2. **Supervisor 重试或降级**：Supervisor 可以选择重试、调用备用 Worker、或直接告知用户
-> 3. **审计日志**：所有失败都会记录，便于事后分析
-> 4. **健康检查**：监控系统会检测到成功率下降，触发告警
+> 3. **请求级事件**：失败会进入本轮 RunRecorder 和 Worker 合同，而不是独立审计集群
 > 
 > 例如，如果 web_search 失败（API 超时），knowledge_worker 会告诉 Supervisor，Supervisor 可以选择只用本地知识库回答，或明确告诉用户'联网搜索暂时不可用'。"
 
 #### Q4: 如何添加一个新的 Worker？
 
 **回答**：
-> "非常简单，因为我设计了动态注册机制：
+> "扩展领域是显式改图，不是热加载。步骤是：
 > 
-> 1. **定义工具**：
->    `python
->    @tool
->    def send_email(to: str, subject: str, body: str):
->        ...
->    `
+> 1. 定义工具并 `register_tool_specs([ToolSpec(..., specialist='email', requires_confirmation=True)])`
+> 2. 把 `email` 加入 `WORKERS`
+> 3. 在 `build_persona_workflow` 增加 worker 节点、finalize 节点和回 Supervisor 的边
+> 4. Supervisor 增加 `delegate_to_email` handoff
 > 
-> 2. **注册到工具注册表**：
->    `python
->    register_tool_specs([
->        ToolSpec("send_email", "email", send_email, requires_confirmation=True)
->    ])
->    `
-> 
-> 3. **创建 Worker 规格**：
->    `python
->    email_worker = WorkerSpec(
->        name="email",
->        tools=["send_email", "read_inbox"],
->        prompt_template="Handle email operations.",
->        description="Delegate email tasks."
->    )
->    `
-> 
-> 4. **注册 Worker**：
->    `python
->    register_worker(email_worker)
->    `
-> 
-> 5. **重建图**：下次构建 workflow 时自动包含新 Worker
-> 
-> 整个过程不需要修改核心代码，符合开闭原则。"
+> 工具权限可以随注册表更新；父图拓扑必须显式编译。不能 register 一个直达 END 的 Agent。"
 
 #### Q5: 如何保证系统性能？
 
@@ -328,16 +280,12 @@ xxx
 >    - Embedding 缓存
 >    - 配置缓存
 > 
-> 3. **速率限制**：
->    - 防止滥用，保护后端服务
->    - 例如语音训练限制 3 次/天
+> 3. **图内有界**：
+>    - handoff 上限 4 次
+>    - 同轮搜索工具用过即隐藏
+>    - 上下文预算裁剪模型视图
 > 
-> 4. **监控和优化**：
->    - 收集每个 Worker 的响应时间
->    - 识别瓶颈并优化
->    - 例如发现某个工具平均耗时 10s，就优化它
-> 
-> 5. **流式响应**：
+> 4. **流式响应**：
 >    - WebSocket + SSE 实时推送
 >    - 用户不用等到所有处理完成才看到结果"
 
@@ -355,8 +303,8 @@ xxx
 >    - 更适合企业级应用场景
 > 
 > 3. **可扩展性**：
->    - 我的动态 Worker 注册机制支持运行时热加载
->    - MCP 协议集成更标准化
+>    - 新领域必须改 WORKERS 和父图，不能热加载直达 END 的 Agent
+>    - 真正的动态扩展面是 MCP 和技能系统
 > 
 > 4. **可观测性**：
 >    - 我有完整的分布式追踪和监控系统
@@ -388,18 +336,18 @@ xxx
 Python, FastAPI, LangChain, LangGraph, Milvus, SQLite, Vue.js, WebSocket
 
 ### 项目描述（2-3 行）
-基于 LangGraph 设计的生产级多智能体系统，采用 Supervisor + 6 Worker 架构，实现知识检索、记忆管理、语音克隆等功能。强调安全性（工具权限隔离 + HITL 审批）、可扩展性（动态 Worker 注册 + MCP 集成）和可观测性（分布式追踪 + 健康检查）。
+基于 LangGraph 的角色化多智能体 RAG 系统：Supervisor 负责策略和最终表达，knowledge 走确定性检索管线，其余领域 Worker 使用受限工具并经合同回传。强调权限隔离、HITL、checkpoint 恢复和可观测性。
 
 ### 技术亮点（3-5 条）
-1. **多智能体架构**：基于 LangGraph 设计 1 Supervisor + 6 Worker 分工协作系统，通过 Command.PARENT 机制实现子图通信，使用 MemorySaver 持久化会话状态；LLM 只做策略决策，工具执行交给确定性代码
+1. **多智能体架构**：LangGraph Supervisor 编排 knowledge 子图与受限工具 Worker；knowledge 走 Planner + 确定性 RAG/SQL/联网管线，其余 Worker 经合同回 Supervisor，会话状态由 checkpoint 持久化
 
-2. **安全机制**：实现工具级权限验证（装饰器模式），29 个工具按最小权限原则分配到 6 个 Worker；14 个敏感操作采用 HITL 二次审批流程；集成输入验证、速率限制、审计日志等多层防护
+2. **安全机制**：工具按领域隔离，写操作和策略化联网走 HITL；capability middleware + SQL 校验 + 服务端作用域注入，不靠装饰器二次鉴权
 
-3. **可扩展性**：设计动态 Worker 注册机制，支持运行时添加/移除 Worker；集成 MCP 协议和技能系统，可动态加载外部工具和自定义能力
+3. **可扩展性**：Worker 规格与父图编译集分离，避免动态注册改变生产拓扑；集成 MCP 协议和技能系统，可动态加载外部工具和自定义能力
 
 4. **RAG 优化**：基于 Milvus 向量数据库实现多提供商 Embedding 和 Reranker；设计质量门禁机制（相似度过滤 + 上下文限制）；knowledge_worker 返回结构化证据合同，包含引用、不确定性和置信度
 
-5. **可观测性**：实现分布式追踪系统记录完整调用链；设计 Metrics 收集器统计调用次数、成功率、响应时间；提供健康检查接口监控 Worker 状态
+5. **可观测性**：请求级 RunRecorder 记录 stage、handoff、TTFT 和 token；前端过程气泡展示当前阶段，而不是独立监控集群
 
 ### 项目成果（1-2 条）
 - 架构设计获得导师/同学认可，代码质量达到生产级标准
@@ -412,10 +360,14 @@ Python, FastAPI, LangChain, LangGraph, Milvus, SQLite, Vue.js, WebSocket
 - **架构设计文档**：ARCHITECTURE_DESIGN.md
 - **代码仓库**：（你的 GitHub 链接）
 - **核心文件**：
-  - gents/workflow.py - LangGraph 主图
-  - gents/security.py - 安全模块
-  - gents/worker_registry.py - 动态注册
-  - gents/monitoring.py - 监控模块
+  - agents/graph/build.py - 父图编译
+  - agents/graph/knowledge.py - knowledge Planner + 确定性执行
+  - agents/graph/supervisor.py - Supervisor 与受限 LLM Worker
+  - agents/service.py - HTTP/流式入口与旧 specialist 映射
+  - agents/intent_funnel.py - 确定性意图漏斗
+  - agents/registry.py - 工具注册与权限声明
+  - agents/graph/middleware.py - capability / 搜索可见性 / 请求级遥测
+  - diagrams/ - 宏观到微观架构图
 
 ---
 

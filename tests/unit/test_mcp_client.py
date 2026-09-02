@@ -160,9 +160,11 @@ def test_mcp_tools_not_exposed_to_workers(tmp_path):
     manager.save_configs([MCPServerConfig(name="demo", command="python")])
     asyncio.run(manager.connect_all(register=True))
     try:
+        from agents.workflow import WORKERS
+
         worker_names = {
             tool.name
-            for specialist in ("conversation", "web", "memory", "management")
+            for specialist in WORKERS
             for tool in tools_for_specialist(specialist)
         }
         assert "demo_add" not in worker_names

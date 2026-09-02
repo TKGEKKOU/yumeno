@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ class OneBotConnectionManager:
         self._pending_actions: dict[str, asyncio.Future] = {}
         self._send_locks: dict[str, asyncio.Lock] = {}
         self._recent_messages: deque[dict] = deque(maxlen=50)
+        self._recent_events: dict[str, float] = {}
 
     def config(self) -> dict:
         return self._config_provider()
@@ -115,6 +117,20 @@ class OneBotConnectionManager:
 
     def clear_recent_messages(self) -> None:
         self._recent_messages.clear()
+
+    async def reconnect(self) -> dict:
+        connections = list(self._connections)
+        self._error = None
+        self._last_error_at = None
+        if connections:
+            await asyncio.gather(
+                *(
+                    websocket.close(code=1012, reason="reconnect requested")
+                    for websocket in connections
+                ),
+                return_exceptions=True,
+            )
+        return self.status()
 
     async def send_message(self, target_type: str, target_id: str, segments: list[dict]) -> dict:
         if target_type not in {"private", "group"}:
@@ -206,6 +222,23 @@ class OneBotConnectionManager:
         message = parse_message_event(payload)
         if message is None:
             return
+        fingerprint = message.message_id or "|".join(
+            [
+                message.self_id,
+                message.message_type,
+                message.user_id,
+                message.group_id or "",
+                str(payload.get("time") or ""),
+                str(payload.get("raw_message") or message.text),
+            ]
+        )
+        now = time.monotonic()
+        if now - self._recent_events.get(fingerprint, 0) < 3:
+            return
+        self._recent_events[fingerprint] = now
+        self._recent_events = {
+            key: value for key, value in self._recent_events.items() if now - value < 30
+        }
 
         def reply(text: str) -> None:
             self.record_text_message(

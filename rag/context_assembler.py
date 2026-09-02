@@ -79,7 +79,7 @@ def assemble_context(
             if chunk_id and chunk_id not in main_ids:
                 neighbors_by_id[chunk_id] = Document(
                     page_content=str(getattr(document, "page_content", "") or ""),
-                    metadata={**metadata, "supporting_neighbor": True},
+                    metadata={**metadata, "supporting_neighbor": True, "evidence_role": "supporting_neighbor"},
                 )
 
     document_groups: dict[str, dict] = {}

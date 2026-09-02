@@ -475,17 +475,8 @@
     function enterMain() {
       if (readyDone) return;
       readyDone = true;
-      setPhase("服务已就绪", "running");
-      const started = performance.now();
-      const wait = setInterval(() => {
-        if (currentPercent >= 99.5 || performance.now() - started > 1800) {
-          clearInterval(wait);
-          document.body.classList.add("is-done");
-          setTimeout(() => {
-            try { window.location.replace(`${BASE}/static/index.html`); } catch (e) { /* ignore */ }
-          }, 460);
-        }
-      }, 100);
+      setTarget(100);
+      setPhase("工作台已在浏览器打开。关闭此窗口将停止本地服务。", "running");
     }
 
     async function tick() {

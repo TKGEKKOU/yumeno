@@ -19,21 +19,28 @@ from app.database import (
     Base,
     build_engine,
     build_session_factory,
+    upgrade_attachment_schema,
     upgrade_persona_schema,
     upgrade_voice_asset_schema,
     upgrade_document_job_schema,
+    upgrade_rag_query_schema,
     upgrade_runtime_schema,
+    upgrade_eval_candidate_schema,
+    upgrade_persona_version_schema,
 )
 from app.routers.agents import router as agents_router
-from app.routers.asr import router as asr_router
+from app.routers.attachments import router as attachments_router
+from app.routers.asr import router as asr_router, stt_router
 from app.routers.documents import router as documents_router
 from app.routers.extensions import router as extensions_router
 from app.routers.embedding import router as embedding_router
 from app.routers.eval import router as eval_router
+from app.routers.eval_dataset import router as eval_dataset_router
 from app.routers.integrations import router as integrations_router
 from app.routers.live2d import router as live2d_router
 from app.routers.mcp import router as mcp_router
 from app.routers.persona_drafts import router as persona_drafts_router
+from app.routers.persona_versions import router as persona_versions_router
 from app.routers.messages import router as messages_router
 from app.routers.personas import router as personas_router
 from app.routers.rag import router as rag_router
@@ -47,9 +54,12 @@ from app.routers.tts import router as tts_router
 from app.routers.video_clone import router as video_clone_router
 from app.routers.voice_assets import router as voice_assets_router
 from app.routers.voice_studio import router as voice_studio_router
+from app.routers.voice_rvc import router as voice_rvc_router, provider_router as rvc_provider_router, audio_resource_router
 from app.routers.voice import router as voice_router
 from app.routers.voice_stream import router as voice_stream_router
 from app.routers.providers import router as providers_router
+from app.routers.resources import router as resources_router, legacy_router as provider_resources_router
+from app.routers.worker_manifests import router as worker_manifests_router
 from settings import Settings
 from extensions.events import EVENT_MESSAGE, EventBus
 from ingestion.status import get_system_status
@@ -63,8 +73,8 @@ from integrations.onebot11.router import ImMessageRouter
 from integrations.onebot11.ws_server import OneBotConnectionManager, router as onebot_ws_router
 from persona.delete_service import PersonaDeletionService
 from realtime.execution import ConversationExecutionRegistry
-from voice.asr import build_asr_provider
-from voice.asr.install import ASRResourceManager
+from voice.asr import build_stt_provider
+from voice.asr.install import STTResourceManager
 from voice.asr.stream_client import WorkerStreamClient
 from voice.clone_tasks import CloneTaskManager
 from voice.separator.install import SeparatorResourceManager
@@ -74,7 +84,10 @@ from voice.gpt_sovits import GPTSoVITSAdapter, GPTSoVITSConfig
 from voice.gpt_sovits.install import GPTSoVITSInstallManager
 from voice.gpt_sovits.migration import migrate_voice_assets
 from voice.gpt_sovits.synthesis import GPTSoVITSSynthesisService
+from voice.tts.service import AdaptiveTTSSynthesisService
 from voice.gpt_sovits.training import TrainingService
+from voice.rvc import RVCResourceManager, RVCAdapter, RVCTaskManager, RVCSessionManager
+from voice.ffmpeg_resources import FFmpegResourceManager
 from voice.vad import build_vad
 from voice.vad.energy import EnergyVAD
 
@@ -95,14 +108,14 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     checkpoint_resource = None
 
     async def warm_asr_worker() -> None:
-        """Preload the local ASR worker in the background so the first voice
+        """Preload the local STT worker in the background so the first voice
         utterance is not delayed by a cold model load. ASR must already be
         installed; failures are ignored (the start command retries)."""
 
         try:
             if not app.state.asr_resources.status().get("ready"):
                 return
-            provider = app.state.asr_provider_factory(Settings.load())
+            provider = app.state.stt_provider_factory(Settings.load())
             manager = getattr(provider, "manager", None)
             if manager is not None:
                 await manager.ensure_ready()
@@ -184,7 +197,7 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         if reranker_warmup is not None:
             with suppress(asyncio.CancelledError, Exception):
                 await reranker_warmup
-        warmup = getattr(app.state, "asr_warmup_task", None)
+        warmup = getattr(app.state, "stt_warmup_task", None)
         if warmup is not None:
             warmup.cancel()
         gpt_warmup = getattr(app.state, "gpt_sovits_warmup_task", None)
@@ -205,6 +218,16 @@ def create_app(initialize_database: bool = True) -> FastAPI:
             from ingestion.local_embedding.client import begin_embedding_shutdown
 
             begin_embedding_shutdown()
+        except Exception:
+            pass
+        try:
+            # Retriever 缓存持有 langchain-milvus 包装器；先清空包装器，
+            # 再统一关闭进程级原生 MilvusClient，避免 Lite 文件残留锁。
+            from rag.retriever import clear_retriever_cache
+            from ingestion.milvus_store import close_milvus_connections
+
+            clear_retriever_cache()
+            await asyncio.to_thread(close_milvus_connections)
         except Exception:
             pass
         resource = getattr(app.state, "checkpoint_resource", None)
@@ -229,10 +252,13 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     app.state.session_factory = build_session_factory(engine)
     app.state.persona_delete_service = PersonaDeletionService(settings)
     app.state.realtime_executions = ConversationExecutionRegistry()
-    app.state.asr_provider_factory = build_asr_provider
-    app.state.asr_resources = ASRResourceManager(settings.project_root)
+    app.state.stt_provider_factory = build_stt_provider
+    app.state.asr_provider_factory = app.state.stt_provider_factory
+    app.state.stt_resources = STTResourceManager(settings.project_root)
+    app.state.asr_resources = app.state.stt_resources
     app.state.vad_factory = build_vad
     app.state.asr_stream_client_factory = WorkerStreamClient
+    app.state.asr_stream_client_factory = app.state.asr_stream_client_factory
     app.state.embedding_resources = LocalEmbeddingResourceManager(settings.project_root)
     app.state.reranker_resources = LocalRerankerResourceManager(settings.project_root)
     app.state.gpt_sovits_config = GPTSoVITSConfig(settings.project_root)
@@ -240,7 +266,8 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         app.state.gpt_sovits_config,
         settings.project_root,
     )
-    app.state.tts_synthesis = GPTSoVITSSynthesisService(app.state.gpt_sovits)
+    app.state.gpt_sovits_synthesis = GPTSoVITSSynthesisService(app.state.gpt_sovits)
+    app.state.tts_synthesis = AdaptiveTTSSynthesisService(app.state.gpt_sovits_synthesis, Settings.load)
     app.state.gpt_sovits_install = GPTSoVITSInstallManager(
         settings.project_root,
         app.state.gpt_sovits_config,
@@ -249,7 +276,18 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         settings.project_root,
         app.state.gpt_sovits_config,
     )
+    app.state.rvc_resources = RVCResourceManager(settings.project_root)
+    app.state.ffmpeg_resources = FFmpegResourceManager(settings.project_root)
+    app.state.rvc_adapter = RVCAdapter(app.state.rvc_resources)
+    app.state.rvc_tasks = RVCTaskManager(settings.project_root, app.state.rvc_adapter)
     app.state.separator_resources = SeparatorResourceManager(settings.project_root)
+    app.state.rvc_sessions = RVCSessionManager(
+        settings.project_root,
+        separator_factory=lambda: HtdemucsSeparator(
+            app.state.separator_resources.model_path,
+            providers=HtdemucsSeparator.available_providers() or ["CPUExecutionProvider"],
+        ),
+    )
     app.state.clone_tasks = CloneTaskManager(
         settings.project_root,
         separator_factory=lambda: HtdemucsSeparator(
@@ -269,10 +307,14 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     )
     if initialize_database:
         Base.metadata.create_all(engine)
+        upgrade_attachment_schema(engine)
         upgrade_persona_schema(engine)
         upgrade_voice_asset_schema(engine)
         upgrade_document_job_schema(engine)
+        upgrade_rag_query_schema(engine)
         upgrade_runtime_schema(engine)
+        upgrade_eval_candidate_schema(engine)
+        upgrade_persona_version_schema(engine)
         with app.state.session_factory() as migration_session:
             migrate_voice_assets(migration_session)
         # 会话状态（对话历史、中断点、Worker 结果）持久化到本地 SQLite；
@@ -286,9 +328,31 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         app.state.agent_service = PersonaAgentService(MemorySaver())
     if initialize_database:
         app.state.run_store = RunStore(app.state.session_factory)
+        # 进程重启后无法确认 queued/running 是否仍有执行者；先在启动时收口，
+        # 避免控制台把已经失去执行者的运行永久显示为“处理中”。
+        recovered_runs = app.state.run_store.recover_incomplete_runs()
+        # Runtime 收口后同步 RAG 评测领域快照，避免历史接口残留 pending/running。
+        from app.routers.eval import sync_recovered_evaluation_runs
+        sync_recovered_evaluation_runs(app.state.session_factory, recovered_runs)
+        # 文档索引也使用旧 DocumentJob 状态作领域快照；启动时同步，
+        # 避免 Runtime 已收口但文档任务仍永久停留在 indexing。
+        from ingestion.document_jobs import sync_recovered_document_runs
+        sync_recovered_document_runs(app.state.session_factory, recovered_runs)
+        app.state.recovered_agent_runs = recovered_runs
+        app.state.recovered_agent_run_ids = [run.run_id for run in recovered_runs]
         app.state.agent_runtime = AgentRuntime(app.state.agent_service, app.state.run_store)
+        # LangGraph ToolRuntime 可能没有 HTTP request；让 rvc_worker 使用同一份应用 state。
+        app.state.agent_runtime.app_state = app.state
         app.state.approval_service = ApprovalService(app.state.agent_runtime)
         app.state.agent_service.attach_runtime(app.state.agent_runtime)
+        # VoiceStudioManager 在 Runtime 初始化前创建；此处补上共享运行时，
+        # 让声音任务与对话、文档、评测共用同一套状态、事件、取消和重启收口。
+        app.state.voice_studio.attach_runtime(app.state.agent_runtime)
+        app.state.voice_studio.sync_recovered_runs(recovered_runs)
+
+    app.state.agent_runner = (
+        getattr(app.state, "agent_runtime", None) or app.state.agent_service
+    )
 
     # PersonaAgentService 是人设多 Agent（Supervisor + 领域 Worker）的应用层入口：
     # 对外只暴露 query / resume，内部由 LangGraph 图执行，thread_id = persona_id:conversation_id。
@@ -312,7 +376,7 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         key = f"{persona_id}:{conversation_id}"
         result = await app.state.realtime_executions.run(
             key,
-            lambda: app.state.agent_service.query(question, context),
+            lambda: app.state.agent_runner.query(question, context),
         )
         return response_for(result).model_dump()
 
@@ -345,20 +409,25 @@ def create_app(initialize_database: bool = True) -> FastAPI:
         settings.project_root / "data" / "im_bindings.json",
         settings.project_root / "data" / "integrations.json",
         tts_synthesis=app.state.tts_synthesis,
+        agent_runtime=getattr(app.state, "agent_runtime", None),
     )
     app.state.event_bus.subscribe(EVENT_MESSAGE, app.state.im_router.handle)
     app.include_router(agents_router)
+    app.include_router(attachments_router)
     app.include_router(asr_router)
+    app.include_router(stt_router)
     app.include_router(onebot_ws_router)
     app.include_router(integrations_router)
     app.include_router(live2d_router)
     app.include_router(messages_router)
     app.include_router(mcp_router)
     app.include_router(personas_router)
+    app.include_router(persona_versions_router)
     app.include_router(documents_router)
     app.include_router(extensions_router)
     app.include_router(embedding_router)
     app.include_router(eval_router)
+    app.include_router(eval_dataset_router)
     app.include_router(persona_drafts_router)
     app.include_router(skills_router)
     app.include_router(rag_router)
@@ -371,9 +440,15 @@ def create_app(initialize_database: bool = True) -> FastAPI:
     app.include_router(video_clone_router)
     app.include_router(voice_assets_router)
     app.include_router(voice_studio_router)
+    app.include_router(voice_rvc_router)
+    app.include_router(rvc_provider_router)
+    app.include_router(audio_resource_router)
     app.include_router(voice_router)
     app.include_router(voice_stream_router)
     app.include_router(providers_router)
+    app.include_router(resources_router)
+    app.include_router(provider_resources_router)
+    app.include_router(worker_manifests_router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

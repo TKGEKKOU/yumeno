@@ -12,6 +12,7 @@ class OneBotMessage:
     text: str
     is_at: bool
     group_id: str | None = None
+    message_id: str = ""
 
 
 def parse_message_event(payload: dict) -> OneBotMessage | None:
@@ -33,6 +34,7 @@ def parse_message_event(payload: dict) -> OneBotMessage | None:
         text=text,
         is_at=is_at,
         group_id=group_id,
+        message_id=str(payload.get("message_id") or ""),
     )
 
 

@@ -999,9 +999,8 @@ async function confirmSaveAll() {
 async function loadEvalPersonas() {
   const list = await api(fetch("/api/personas"));
   const select = $("eval-persona");
-  select.innerHTML = '<option value="">请选择角色</option>' + list
-    .map((persona) => `<option value="${persona.id}">${persona.name}</option>`)
-    .join("");
+  select.replaceChildren(new Option("请选择角色", ""));
+  for (const persona of list) select.append(new Option(persona.name, persona.id));
 }
 
 const EVAL_METRIC_LABELS = {
@@ -1070,6 +1069,12 @@ const EVAL_METRIC_GROUPS = [
   { title: "行为与性能", keys: ["rewrite_rate", "correction_rate", "mean_rewrite_count", "mean_correction_count", "complex_rewrite_rate", "complex_correction_rate", "probe_refusal_rate", "cases_total", "cases_complex", "mean_total_latency_ms", "p95_total_latency_ms"] },
 ];
 
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 function renderEvalMetrics(metrics) {
   metrics = metrics || {};
   const sections = EVAL_METRIC_GROUPS.map((group) => {
@@ -1093,7 +1098,7 @@ function renderEvalMetrics(metrics) {
         } else {
           value = String(metrics[key]);
         }
-        return `<div class="eval-metric"><span>${label}</span><b${tone ? ` class="${tone}"` : ""}>${value}</b></div>`;
+        return `<div class="eval-metric"><span>${escapeHtml(label)}</span><b${tone ? ` class="${tone}"` : ""}>${escapeHtml(value)}</b></div>`;
       });
     if (!rows.length) return "";
     return `<div class="eval-metric-group"><span class="eval-metric-group-title">${group.title}</span><div class="eval-metric-grid">${rows.join("")}</div></div>`;
@@ -1116,11 +1121,18 @@ function renderEvalSummary(metrics) {
     ...(isolation === null ? [] : [{ label: "角色隔离", value: isolation ? "通过" : "未通过", tone: isolation ? "is-good" : "is-bad" }]),
     { label: "平均置信度", value: fmtPct(confidence), tone: Number.isFinite(confidence) && confidence >= 0.8 ? "is-good" : "" },
   ];
-  $("eval-summary").innerHTML = items
-    .map(({ label, value, tone }) =>
-      `<div class="eval-summary-item${tone ? ` ${tone}` : ""}"><span>${label}</span><b>${value}</b></div>`
-    )
-    .join("");
+  const summary = $("eval-summary");
+  summary.replaceChildren();
+  for (const { label, value, tone } of items) {
+    const node = document.createElement("div");
+    node.className = `eval-summary-item${tone ? ` ${tone}` : ""}`;
+    const labelNode = document.createElement("span");
+    labelNode.textContent = label;
+    const valueNode = document.createElement("b");
+    valueNode.textContent = value;
+    node.append(labelNode, valueNode);
+    summary.append(node);
+  }
   $("eval-summary").classList.remove("is-hidden");
 }
 
@@ -1139,7 +1151,9 @@ async function autoAnalyze() {
     const result = await api(fetch("/api/eval/analyze", { method: "POST" }));
     renderEvalAnalysis(result.analysis);
   } catch (reason) {
-    block.innerHTML = `<div class="eval-analysis-head">AI 点评</div><div class="eval-analysis-body">分析暂不可用：${reason.message || reason}</div>`;
+    const message = String(reason?.message || reason || "未知错误");
+    block.innerHTML = '<div class="eval-analysis-head">AI 点评</div><div class="eval-analysis-body"></div>';
+    block.querySelector(".eval-analysis-body").textContent = `分析暂不可用：${message}`;
   }
 }
 
@@ -1153,34 +1167,67 @@ function renderEvalCases(cases) {
       : (caseItem.grounded === null || caseItem.grounded === undefined)
         ? ["待判定", ""]
         : (caseItem.accepted ? ["符合预期", "is-ok"] : ["未通过", "is-bad"]);
-    const boolFlag = (name, value) =>
-      value === null || value === undefined
-        ? `${name}=—`
-        : `<span class="${value ? "flag-ok" : "flag-bad"}">${name}=${value}</span>`;
+    const item = document.createElement("div");
+    item.className = `eval-case ${verdict[1]}`;
+    const head = document.createElement("div");
+    head.className = "eval-case-head";
+    const question = document.createElement("b");
+    question.textContent = `${index + 1}. ${caseItem.question || ""}`;
+    const verdictNode = document.createElement("span");
+    verdictNode.className = `eval-verdict ${verdict[1]}`;
+    verdictNode.textContent = verdict[0];
+    head.append(question, verdictNode);
+    const answerNode = document.createElement("p");
+    answerNode.textContent = answer;
+    const flagsNode = document.createElement("span");
+    flagsNode.className = "eval-flags";
+    const boolFlag = (name, value) => {
+      if (value === null || value === undefined) {
+        const plain = document.createElement("span");
+        plain.className = "eval-plain-flag";
+        plain.textContent = `${name}=—`;
+        return plain;
+      }
+      const flag = document.createElement("span");
+      flag.className = value ? "flag-ok" : "flag-bad";
+      flag.textContent = `${name}=${value}`;
+      return flag;
+    };
+    const plainFlag = (text) => {
+      const flag = document.createElement("span");
+      flag.className = "eval-plain-flag";
+      flag.textContent = text;
+      return flag;
+    };
     const flags = [
       boolFlag("grounded", caseItem.grounded),
       boolFlag("useful", caseItem.useful),
-      `confidence=${caseItem.confidence ?? "—"}`,
-      caseItem.refused ? `<span class="${caseItem.is_probe ? "flag-ok" : "flag-bad"}">拒答</span>` : "",
-      caseItem.rewrite_used ? "查询改写" : "",
-      caseItem.corrected ? "生成纠错" : "",
-      caseItem.is_complex ? "复杂题" : "",
-      caseItem.is_probe ? "无关探针" : "",
-    ].filter(Boolean).join(" · ");
-    return `<div class="eval-case ${verdict[1]}"><div class="eval-case-head"><b>${index + 1}. ${caseItem.question}</b><span class="eval-verdict ${verdict[1]}">${verdict[0]}</span></div><p>${answer}</p><span class="eval-flags">${flags}</span></div>`;
+      plainFlag(`confidence=${caseItem.confidence ?? "—"}`),
+      caseItem.refused ? boolFlag("拒答", caseItem.is_probe) : null,
+      caseItem.rewrite_used ? plainFlag("查询改写") : null,
+      caseItem.corrected ? plainFlag("生成纠错") : null,
+      caseItem.is_complex ? plainFlag("复杂题") : null,
+      caseItem.is_probe ? plainFlag("无关探针") : null,
+    ].filter(Boolean);
+    flags.forEach((flag, flagIndex) => {
+      if (flagIndex) flagsNode.append(" · ");
+      flagsNode.append(flag);
+    });
+    item.append(head, answerNode, flagsNode);
+    return item;
   });
-  const hidden = list.slice(VISIBLE_CASES).join("");
-  $("eval-cases").innerHTML = list.slice(0, VISIBLE_CASES).join("");
-  if (hidden) {
+  const casesRoot = $("eval-cases");
+  casesRoot.replaceChildren(...list.slice(0, VISIBLE_CASES));
+  if (list.length > VISIBLE_CASES) {
     const expand = document.createElement("button");
     expand.type = "button";
     expand.className = "button button-secondary eval-expand";
     expand.textContent = `展开全部 ${cases.length} 条`;
     expand.addEventListener("click", () => {
-      expand.insertAdjacentHTML("beforebegin", hidden);
+      expand.replaceWith(...list.slice(VISIBLE_CASES));
       expand.remove();
     });
-    $("eval-cases").append(expand);
+    casesRoot.append(expand);
   }
   $("eval-details").classList.remove("is-hidden");
 }

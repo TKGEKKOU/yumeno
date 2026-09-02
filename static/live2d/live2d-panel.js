@@ -78,6 +78,7 @@
     if (!dock.hidden && controllerReady) return; // 已打开且已就绪
     dockOpening = true;
     dock.hidden = false;
+    dock.style.removeProperty("height");
     const panel = document.querySelector(".chat-panel");
     if (panel) panel.classList.add("is-live2d-open");
     setEnabled(true);
@@ -101,6 +102,10 @@
       renderModelSelect();
       syncControls();
       restoreStageHeight();
+      requestAnimationFrame(() => {
+        window.PLLive2D?.resize?.();
+        window.PLLive2D?.show?.();
+      });
       syncPersonaModel();
     } catch (e) {
       setStatus("error", "Live2D 初始化失败：" + (e && e.message ? e.message : e));
@@ -133,6 +138,7 @@
     const open = Boolean(node && !node.hidden);
     toggle.classList.toggle("is-active", open);
     toggle.setAttribute("aria-pressed", String(open));
+    document.dispatchEvent(new CustomEvent("yumeno:live2d-visibility", { detail: { open } }));
     toggle.title = open ? "关闭角色面板" : "打开角色面板";
     toggle.setAttribute("aria-label", toggle.title);
   }
@@ -533,7 +539,9 @@
     const tryOpen = () => {
       const deepLink = new URLSearchParams(location.search).get("live2d") === "1";
       const node = $("live2d-dock");
-      if (node && (isEnabled() || deepLink)) openDock();
+      // 不再根据历史 localStorage 状态自动打开；只有显式 deep link 才自动打开。
+      if (node && deepLink) openDock();
+      else if (node && !deepLink && !node.hidden) closeDock();
       else if (!node && controllerReady && window.PLLive2D) window.PLLive2D.hide();
     };
     tryOpen();
@@ -550,6 +558,7 @@
     setVoiceState: (state) => { if (window.PLLive2D) window.PLLive2D.setVoiceState(state); },
     setPersonaModel: (id) => { if (window.PLLive2D) window.PLLive2D.setPreferredModel(id); },
     open: () => openDock(),
+    close: () => closeDock(),
     refreshLayout: () => requestAnimationFrame(() => {
       if (!controllerReady || !window.PLLive2D) return;
       window.PLLive2D.show();

@@ -5,6 +5,7 @@ from app.routers.settings import require_local
 
 
 router = APIRouter(prefix="/api/asr", tags=["asr"])
+stt_router = APIRouter(prefix="/api/stt", tags=["stt"])
 
 
 class ASRConfigUpdate(BaseModel):
@@ -56,3 +57,34 @@ def cancel_install(request: Request, x_yumeno_request: str = Header(default=""))
 def open_model_directory(request: Request, x_yumeno_request: str = Header(default="")):
     protected(request, x_yumeno_request)
     return request.app.state.asr_resources.open_model_directory()
+
+
+# STT 是面向用户的规范命名；保留 /api/asr 作为旧客户端兼容路径。
+@stt_router.get("/status")
+def get_stt_status(request: Request):
+    return get_status(request)
+
+
+@stt_router.patch("/config")
+def update_stt_config(payload: ASRConfigUpdate, request: Request, x_yumeno_request: str = Header(default="")):
+    return update_config(payload, request, x_yumeno_request)
+
+
+@stt_router.post("/install", status_code=status.HTTP_202_ACCEPTED)
+def install_stt(request: Request, x_yumeno_request: str = Header(default="")):
+    return install(request, x_yumeno_request)
+
+
+@stt_router.delete("/install")
+def remove_stt(request: Request, x_yumeno_request: str = Header(default="")):
+    return remove(request, x_yumeno_request)
+
+
+@stt_router.delete("/install/cancel", status_code=status.HTTP_202_ACCEPTED)
+def cancel_stt_install(request: Request, x_yumeno_request: str = Header(default="")):
+    return cancel_install(request, x_yumeno_request)
+
+
+@stt_router.post("/model-directory")
+def open_stt_model_directory(request: Request, x_yumeno_request: str = Header(default="")):
+    return open_model_directory(request, x_yumeno_request)

@@ -1,3 +1,5 @@
+> **现行架构以 ARCHITECTURE.md 为准。** 本文件是较早一次验证快照，其中的 Worker 计数、工具计数和“精简为 6 个 Worker”口径不要再当现状引用。
+
 # YUMENO 多 Agent 架构验证报告
 
 ## 执行时间

@@ -225,3 +225,12 @@ def test_voice_studio_rejects_bad_files(client, tmp_path, monkeypatch):
     assert bad.status_code == 415
     missing = client.get("/api/voice-studio/sessions/nope", headers=headers)
     assert missing.status_code == 404
+
+
+def test_chat_created_session_can_upload_and_is_claimed(client, tmp_path, monkeypatch):
+    headers = {"X-YUMENO-Request": "web"}
+    chat_headers = {"X-YUMENO-Request": "web", "X-YUMENO-Chat-Session": "chat"}
+    install_manager(client, tmp_path, monkeypatch)
+    session_id = client.post("/api/voice-studio/sessions", headers=chat_headers).json()["session_id"]
+    assert client.post(f"/api/voice-studio/sessions/{session_id}/audio", headers=chat_headers).status_code == 422
+    assert client.get(f"/api/voice-studio/sessions/{session_id}", headers=headers).json()["claimed_at"] is not None

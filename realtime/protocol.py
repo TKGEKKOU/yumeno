@@ -8,6 +8,7 @@ class TextSubmitEvent(BaseModel):
 
     type: Literal["text.submit"]
     question: str = Field(min_length=1, max_length=2000)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=32)
 
     @field_validator("question")
     @classmethod
@@ -28,8 +29,13 @@ class ConfirmationEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["confirmation.respond"]
-    approved: bool
-    specialist: Literal["conversation", "web", "memory", "management"]
+    # 旧审批字段继续兼容；结构化等待输入可不携带 approved。
+    approved: bool | None = None
+    specialist: Literal["conversation", "web", "memory", "management"] = "management"
+    worker: str | None = Field(default=None, min_length=1, max_length=64)
+    task_id: str | None = Field(default=None, min_length=1, max_length=255)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=32)
+    input_values: dict[str, Any] = Field(default_factory=dict)
 
 
 class PingEvent(BaseModel):

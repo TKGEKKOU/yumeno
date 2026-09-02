@@ -1,0 +1,18 @@
+--index-url https://mirrors.pku.edu.cn/pypi/simple
+--extra-index-url https://mirrors.nju.edu.cn/pytorch/whl/cpu
+--extra-index-url https://pypi.org/simple
+
+torch==2.4.1+cpu
+torchaudio==2.4.1+cpu
+av>=15.1,<16
+einops>=0.8,<1
+faiss-cpu>=1.8,<2
+ffmpeg-python>=0.2,<1
+librosa>=0.10.2,<0.11
+numpy>=1.26.4,<2
+onnxruntime>=1.18,<2
+praat-parselmouth>=0.4.5,<1
+scipy>=1.13.1,<2
+soundfile>=0.13,<1
+tqdm>=4.67,<5
+transformers>=4.49,<4.50

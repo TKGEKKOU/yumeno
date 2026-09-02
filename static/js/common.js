@@ -82,6 +82,9 @@ const state = {
   poller: null,
   editPoller: null,
   pendingAction: null,
+  pendingInput: null,
+  pendingInputValues: {},
+  confirmationResponded: false,
   settingsAction: null,
   deletePersona: null,
   webSearchKeyConfigured: false,
@@ -93,6 +96,8 @@ const state = {
   realtimePendingQuestion: "",
   realtimeAckTimer: null,
   realtimeBusy: false,
+  realtimeReconnectAttempts: 0,
+  realtimeReconnectTimer: null,
   agentRequestPending: false,
   asrConfigured: false,
   ttsConfigured: false,
@@ -116,6 +121,10 @@ const state = {
   voicePlaybackQueue: [],
   voicePlaybackActive: false,
   pendingReplyNode: null,
+  voiceCloneSessionId: null,
+  chatVoiceUploadOpen: false,
+  lastUploadRequestAt: 0,
+  lastUserGestureAt: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -174,13 +183,34 @@ async function loadStatus() {
     if (sqliteLink && status.port) {
       sqliteLink.href = `http://127.0.0.1:${status.port}/sqlite/`;
     }
+    renderSetupCue(status);
   } catch {
     renderServiceStatus("sqlite", "SQLite", "unavailable");
     renderServiceStatus("milvus", "Milvus", "unavailable");
     const detail = $("system-status-detail");
     if (detail) detail.textContent = "无法获取详细状态，请稍后重试。";
+    renderSetupCue(null);
   }
 }
+function renderSetupCue(status) {
+  const cue = $("setup-cue");
+  if (!cue) return;
+  let dismissed = false;
+  try { dismissed = window.sessionStorage.getItem("yumeno-setup-cue-dismissed") === "1"; } catch (e) {}
+  const setupView = "providers";
+  const needsSetup = status?.config?.llm_provider === "未配置";
+  if (needsSetup && !dismissed) {
+    const go = cue.querySelector('[data-view="providers"]');
+    if (go) go.dataset.view = setupView;
+  }
+  cue.hidden = dismissed || !needsSetup;
+}
+function dismissSetupCue() {
+  try { window.sessionStorage.setItem("yumeno-setup-cue-dismissed", "1"); } catch (e) {}
+  const cue = $("setup-cue");
+  if (cue) cue.hidden = true;
+}
+$("setup-cue-dismiss")?.addEventListener("click", dismissSetupCue);
 function refreshSystemStatus() {
   const button = $("refresh-status");
   if (button) button.disabled = true;
@@ -298,3 +328,6 @@ function details(label, data) { const node = document.createElement("details"); 
 function empty(text) { const node = document.createElement("p"); node.className = "empty-state"; node.textContent = text; return node; }
 function openPreview(item) { $("preview-title").textContent = item.original_filename; $("preview-content").textContent = item.markdown_preview || item.error_message || "暂无内容"; $("preview-drawer").classList.add("is-open"); $("preview-backdrop").classList.add("is-open"); }
 function closePreview() { $("preview-drawer").classList.remove("is-open"); $("preview-backdrop").classList.remove("is-open"); }
+
+window.PL = window.PL || {};
+window.PL.state = state;

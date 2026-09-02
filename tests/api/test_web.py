@@ -155,7 +155,7 @@ def test_web_workbench_exposes_shell_and_module_views(client):
     assert "https://dashscope.aliyuncs.com/compatible-mode/v1" in client.get("/static/js/common.js").text
     shell = client.get("/static/index.html").text
     assert 'class="nav-index"' not in shell
-    assert shell.count('class="nav-label"') == 9
+    assert shell.count('class="nav-label"') == 11
     assert 'id="nav-live2d"' not in shell
     assert '/static/js/live2d-manager.js' not in shell
     assert client.get("/static/views/live2d.html").status_code == 404

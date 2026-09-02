@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_session
 from app.conversation_summary import schedule_summary_after_turn
-from app.models import ConversationMessage
+from app.models import ConversationAttachment, ConversationMessage, ConversationMessageAttachment
+from app.attachments import public_attachment
 from app.conversation_cleanup import clear_conversation_data
-from app.routers.agents import context_for, response_for
+from app.routers.agents import agent_runner_for, context_for, response_for
 from app.routers.personas import local_persona_or_404
 from app.routers.settings import require_local
 from app.schemas import ConversationMessageResponse, VoiceMessageTurnResponse
@@ -34,7 +35,21 @@ CONTENT_EXTENSIONS = {
 }
 
 
-def message_response(message: ConversationMessage) -> dict:
+def message_response(message: ConversationMessage, session: Session | None = None) -> dict:
+    attachments: list[dict] = []
+    if session is not None:
+        statement = (
+            select(ConversationAttachment)
+            .join(ConversationMessageAttachment, ConversationMessageAttachment.attachment_id == ConversationAttachment.id)
+            .where(
+                ConversationMessageAttachment.message_id == message.id,
+                ConversationAttachment.workspace_id == message.workspace_id,
+                ConversationAttachment.conversation_id == message.conversation_id,
+                ConversationAttachment.status == "ready",
+            )
+            .order_by(ConversationAttachment.created_at, ConversationAttachment.id)
+        )
+        attachments = [public_attachment(item) for item in session.scalars(statement)]
     return {
         "id": message.id,
         "role": message.role,
@@ -45,6 +60,7 @@ def message_response(message: ConversationMessage) -> dict:
         "status": message.status,
         "error_message": message.error_message,
         "created_at": message.created_at,
+        "attachments": attachments,
     }
 
 
@@ -94,7 +110,7 @@ async def create_voice_message(
     message.audio_path = str(target.relative_to(AUDIO_ROOT))
     session.commit()
     session.refresh(message)
-    return message_response(message)
+    return message_response(message, session)
 
 
 @router.get(
@@ -112,7 +128,7 @@ def list_messages(persona_id: str, conversation_id: str, session: Session = Depe
         )
         .order_by(ConversationMessage.created_at, ConversationMessage.id)
     )
-    return [message_response(message) for message in session.scalars(statement)]
+    return [message_response(message, session) for message in session.scalars(statement)]
 
 
 @router.delete(
@@ -215,9 +231,10 @@ async def transcribe_message(
     message.status = "completed"
     context = context_for(request, session, message.persona_id, message.conversation_id)
     key = f"{message.persona_id}:{message.conversation_id}"
+    agent_runner = agent_runner_for(request.app.state)
     result = await request.app.state.realtime_executions.run(
         key,
-        lambda: request.app.state.agent_service.query(transcript, context),
+        lambda: agent_runner.query(transcript, context),
     )
     assistant = ConversationMessage(
         workspace_id=message.workspace_id,
@@ -237,4 +254,4 @@ async def transcribe_message(
         persona_id=message.persona_id,
         conversation_id=message.conversation_id,
     )
-    return {"message": message_response(message), "turn": response_for(result)}
+    return {"message": message_response(message, session), "turn": response_for(result)}

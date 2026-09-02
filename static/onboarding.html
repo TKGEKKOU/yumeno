@@ -30,7 +30,7 @@
   <main class="guide-page">
     <header class="guide-hero">
       <h1>使用指南</h1>
-      <p>这是一个只读指南页。桌面版启动页负责环境检查与一键启动；浏览器里请按下方命令手动启动。</p>
+      <p>这是一个只读指南页。推荐用 <code>.\scripts\start.ps1</code> 启动 Web 工作台：脚本会无界面准备 Docker 引擎并打开浏览器。Docker 请从<strong>系统托盘</strong>启动，不必打开仪表板。</p>
       <div class="guide-status" id="guide-status"><span class="status-pill">服务状态检测中…</span></div>
     </header>
 
@@ -39,8 +39,9 @@
       <details class="guide-block" open>
         <summary>手动启动 / 停止</summary>
         <div class="guide-body">
-          <p>启动：先 <code>docker compose up -d</code> 准备 Milvus（应用数据存本地 SQLite），再运行 <code>.\.venv\Scripts\python.exe -B main.py</code>；页面地址 <code>http://127.0.0.1:17000/static/index.html</code>。</p>
-          <p>停止：桌面版关闭窗口时按【退出时】策略处理 Docker；浏览器版请手动停止 Python 进程，需要保留容器用 <code>docker compose stop</code>。</p>
+          <p>推荐启动：项目根目录运行 <code>.\scripts\start.ps1</code>。它会创建虚拟环境、无界面拉起 Compose，并打开 <code>http://127.0.0.1:17000/static/index.html</code>。Docker Desktop 只需留在<strong>系统托盘</strong>，不要打开仪表板。</p>
+          <p>首次打开后到「提供商配置」粘贴 LLM API Key。可选 <code>.\scripts\start.ps1 -Desktop</code> 保留宿主进度窗口；<code>-NoBrowser</code> 则不自动打开浏览器。</p>
+          <p>停止：关闭宿主窗口会按【退出时】策略处理服务；纯浏览器启动请停止 Python 进程，需要保留容器用 <code>docker compose stop</code>。</p>
         </div>
       </details>
     </section>
@@ -50,7 +51,7 @@
       <details class="guide-block" open>
         <summary>五个模块怎么用</summary>
         <div class="guide-body">
-          <p><b>设置</b>：配置 LLM API Key（必填），可选用 Embedding、联网搜索与本地语音 ASR / TTS；【退出时】板块管理 Docker 容器策略。</p>
+          <p><b>提供商配置</b>：粘贴 LLM API Key（必填），可选用 Embedding、联网搜索与本地语音 ASR / TTS。系统设置里的【退出时】板块管理 Docker 容器策略。</p>
           <p><b>资料</b>：创建角色、上传资料并生成入库，角色即可获得专属知识。</p>
           <p><b>对话</b>：选择角色开始聊天，支持语音消息与自动播放。</p>
           <p><b>接入</b>：可选配置 QQ（OneBot 11 / NapCat）等平台接入。</p>

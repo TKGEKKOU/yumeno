@@ -182,7 +182,8 @@ def synthesize(
     if not text:
         raise HTTPException(status_code=422, detail="TTS 文本不能为空")
     asset = persona_voice_asset(persona, session)
-    if asset is None:
+    active_provider = Settings.load().tts_provider
+    if asset is None and active_provider in {"", "gsv_tts_local"}:
         raise HTTPException(status_code=409, detail="角色未绑定可用的 GPT-SoVITS 音色")
     try:
         audio = request.app.state.tts_synthesis.synthesize(
@@ -218,7 +219,8 @@ def synthesize_stream(
     if not text:
         raise HTTPException(status_code=422, detail="TTS 文本不能为空")
     asset = persona_voice_asset(persona, session)
-    if asset is None:
+    active_provider = Settings.load().tts_provider
+    if asset is None and active_provider in {"", "gsv_tts_local"}:
         raise HTTPException(status_code=409, detail="角色未绑定可用的 GPT-SoVITS 音色")
     directory = _audio_directory(conversation_id)
 

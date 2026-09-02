@@ -4,7 +4,8 @@ const MODULES = {
   chat: { view: "chat", init: window.PL.modules.chat?.init, onShow: window.PL.modules.chat?.onShow },
   create: { view: "create", init: window.PL.modules.create?.init },
   manage: { view: "manage", init: window.PL.modules.manage?.init, onShow: window.PL.modules.manage?.onShow },
-  voice: { view: "voice", init: window.PL.modules.voice?.init },
+  voice: { view: "voice", init: window.PL.modules.voice?.init, onShow: window.PL.modules.voice?.onShow },
+  rvc: { view: "rvc", init: window.PL.modules.rvc?.init },
   integrations: { view: "integrations", init: window.PL.modules.integrations?.init, onShow: window.PL.modules.integrations?.onShow },
   napcat: { view: "napcat", init: window.PL.modules.napcat?.init, onShow: window.PL.modules.napcat?.onShow, onHide: window.PL.modules.napcat?.onHide },
   plugins: { view: "plugins", init: window.PL.modules.plugins?.init, onShow: window.PL.modules.plugins?.onShow, onHide: window.PL.modules.plugins?.onHide },
@@ -94,14 +95,18 @@ function setSidebarPinned(pinned) {
 async function switchView(view) {
   const entry = MODULES[view];
   if (!entry) return;
+  const module = window.PL?.modules?.[view];
   const switchEpoch = ++viewSwitchEpoch;
   const previousView = document.querySelector("[data-view].is-active")?.dataset.view;
-  if (previousView && previousView !== view) MODULES[previousView]?.onHide?.();
-  if (view !== "chat") {
-    if (state.voiceActive) stopVoiceChat();
-    closeRealtime();
-  }
-  document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("is-active", button.dataset.view === view));
+  if (previousView && previousView !== view) window.PL?.modules?.[previousView]?.onHide?.();
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    const active = button.dataset.view === view;
+    button.classList.toggle("is-active", active);
+    if (button.closest(".primary-nav")) {
+      if (active) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    }
+  });
   const root = $("view-root");
   if (!root) return;
   let node = VIEW_NODES[view];
@@ -114,20 +119,31 @@ async function switchView(view) {
     if (!node) return;
     VIEW_NODES[view] = node;
     root.append(node);
-    if (entry.init) entry.init();
+    if (module?.init) module.init();
   }
   Object.entries(VIEW_NODES).forEach(([key, viewNode]) => {
     viewNode.classList.toggle("is-hidden", key !== view);
   });
-  if (entry.onShow) entry.onShow();
+  if (location.hash.slice(1) !== view) {
+    history.replaceState(null, "", `#${view}`);
+  }
+  if (module?.onShow) module.onShow();
   icons();
 }
 
+window.switchView = switchView;
+
+window.addEventListener("hashchange", () => {
+  const requestedView = location.hash.slice(1);
+  if (MODULES[requestedView]) void switchView(requestedView);
+});
+
 document.addEventListener("DOMContentLoaded", async () => {
+  const initialView = location.hash.slice(1);
   bindShellEvents();
   await switchView("chat");
   await Promise.all([loadStatus(), loadPersonas(), loadAsrStatus(), loadGptSoVitsStatus()]);
-  const requestedView = location.hash.slice(1);
+  const requestedView = initialView;
   if (MODULES[requestedView]) await switchView(requestedView);
   if (location.hash === "#plugins") {
     // Already selected through the generic hash route above.

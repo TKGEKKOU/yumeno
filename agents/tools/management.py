@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from agents.context import PersonaAgentContext
 from app.models import DocumentJob, Persona
-from ingestion.document_jobs import DATA_DIR, index_document_job, sanitize_filename
+from ingestion.document_jobs import DATA_DIR, dispatch_document_index, sanitize_filename
 from ingestion.markdown_parser import DocumentScope
 from ingestion.milvus_store import MilvusRagStore
 from settings import Settings
@@ -136,7 +136,7 @@ def add_knowledge_for_context(
     content: str,
     title: str = "对话补充资料",
     confirmer: Confirmer = request_confirmation,
-    indexer: Indexer = index_document_job,
+    indexer: Indexer | None = None,
     data_dir: Path | None = None,
 ) -> dict:
     content = content.strip()
@@ -192,16 +192,28 @@ def add_knowledge_for_context(
     finally:
         session.close()
 
-    indexer(job_id, context.session_factory)
+    run_id = None
+    if indexer is not None:
+        # 保留旧注入点，方便离线测试和第三方调用方逐步迁移。
+        indexer(job_id, context.session_factory)
+    else:
+        run_id = dispatch_document_index(
+            job_id,
+            context.session_factory,
+            runtime=context.agent_runtime,
+        )
     result_session = _session(context)
     try:
         result = result_session.get(DocumentJob, job_id)
-        return {
+        payload = {
             "status": result.status if result else "indexing",
             "job_id": job_id,
             "document_id": document_id,
             "filename": filename,
         }
+        if run_id is not None:
+            payload["run_id"] = run_id
+        return payload
     finally:
         result_session.close()
 

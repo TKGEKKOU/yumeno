@@ -34,6 +34,9 @@ def test_retriever_keeps_hybrid_rrf_configuration(monkeypatch):
             return "retriever"
 
     class FakeStore:
+        def __init__(self, settings=None):
+            pass
+
         def connect(self):
             return FakeVectorStore()
 
@@ -49,3 +52,29 @@ def test_retriever_keeps_hybrid_rrf_configuration(monkeypatch):
         "ranker_params": {"k": 100},
         "expr": build_scope_expression(context),
     }
+
+
+def test_retriever_passes_request_settings_to_store(monkeypatch, tmp_path):
+    from dataclasses import replace
+    from settings import Settings
+
+    captured = {}
+
+    class FakeVectorStore:
+        def as_retriever(self, **kwargs):
+            return kwargs
+
+    class FakeStore:
+        def __init__(self, settings=None):
+            captured["settings"] = settings
+
+        def connect(self):
+            return FakeVectorStore()
+
+    monkeypatch.setattr("rag.retriever.MilvusRagStore", FakeStore)
+    active_settings = replace(Settings.load(tmp_path), milvus_uri="./custom.db")
+    context = RagQueryContext("persona-a", "local-default", ("space-a",))
+
+    build_retriever(context, settings=active_settings)
+
+    assert captured["settings"] is active_settings

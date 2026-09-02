@@ -6,6 +6,7 @@ from pathlib import Path
 
 from langchain.tools import ToolRuntime, tool
 
+from agents.sql_security import get_sql_security_guard
 from agents.context import PersonaAgentContext
 from settings import Settings
 from structured_data.service import StructuredQueryService, structured_db_path

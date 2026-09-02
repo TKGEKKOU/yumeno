@@ -16,7 +16,6 @@ from integrations.bindings import (
 )
 from integrations.commands import parse_command
 from integrations.config import load_integrations, onebot_config
-from integrations.qq_official.config import qq_official_config
 from persona.service import PersonaNotFound, find_persona_by_name
 from app.routers.tts import persona_output_language, persona_voice_asset
 from settings import Settings
@@ -52,6 +51,7 @@ class ImMessageRouter:
         integrations_path: Path,
         platform: str = "onebot11",
         tts_synthesis=None,
+        agent_runtime=None,
     ) -> None:
         self.agent_service = agent_service
         self.session_factory = session_factory
@@ -59,15 +59,17 @@ class ImMessageRouter:
         self.integrations_path = integrations_path
         self.platform = platform
         self.tts_synthesis = tts_synthesis
+        self.agent_runtime = agent_runtime
         self._locks: dict[str, asyncio.Lock] = {}
+
+    def _agent_runner(self):
+        return self.agent_runtime or self.agent_service
 
     def conversation_id(self, chat_type: str, chat_id: str) -> str:
         return f"im:{self.platform}:{chat_type}:{chat_id}"
 
     def _config(self) -> dict:
         data = load_integrations(self.integrations_path)
-        if self.platform == "qq_official":
-            return qq_official_config(data)
         return onebot_config(data)
 
     def _lock(self, key: str) -> asyncio.Lock:
@@ -153,6 +155,7 @@ class ImMessageRouter:
             self.session_factory,
             self._persona_for(event),
             self.conversation_id(event.chat_type, event.chat_id),
+            agent_runtime=self.agent_runtime,
         )
 
     async def _handle_question(self, event: MessageEvent) -> None:
@@ -166,7 +169,7 @@ class ImMessageRouter:
             return
         try:
             result = await asyncio.to_thread(
-                self.agent_service.query, event.content, context
+                self._agent_runner().query, event.content, context
             )
         except Exception:
             logger.exception("im agent query failed")
@@ -248,7 +251,7 @@ class ImMessageRouter:
         try:
             context = self._context(event)
             result = await asyncio.to_thread(
-                self.agent_service.resume, context, "conversation", approved
+                self._agent_runner().resume, context, "conversation", approved
             )
         except Exception:
             logger.exception("im agent resume failed")

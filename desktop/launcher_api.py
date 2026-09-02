@@ -7,6 +7,7 @@ import webbrowser
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from desktop.browser import app_url, open_app, setup_fragment
 from desktop.docker_manager import DockerManager
 from desktop.launcher_progress_server import LauncherProgressServer
 from desktop.server_manager import ServerManager
@@ -29,6 +30,7 @@ class LauncherApi:
         self._window_closed = False
         self._exiting = False
         self._keep_services_after_close = False
+        self._browser_opened = False
         self._start_thread: threading.Thread | None = None
         self._start_done = False
         self._start_result: dict | None = None
@@ -164,6 +166,7 @@ class LauncherApi:
             step["detail"] = "准备中"
         self._start_done = False
         self._start_result = None
+        self._browser_opened = False
         self._start_thread = threading.Thread(
             target=self._start_worker, daemon=True, name="yumeno-start"
         )
@@ -249,6 +252,8 @@ class LauncherApi:
 
     def _milvus_port(self) -> int:
         try:
+            if self.settings.milvus_uri.startswith("./"):
+                return 0
             return urlsplit(self.settings.milvus_uri).port or 19530
         except Exception:
             return 19530
@@ -370,6 +375,7 @@ class LauncherApi:
             self._start_reranker_if_needed()
             self._start_gpt_sovits_if_needed()
             self._start_result = {"ok": True, "url": self.server.url}
+            self.show_main()
         except Exception as exc:
             self._fail_running_steps(str(exc))
             self._start_result = {"ok": False, "error": str(exc)}
@@ -419,9 +425,18 @@ class LauncherApi:
         except Exception as exc:
             self._set_step("gpt_sovits", "ok", f"GPT-SoVITS 启动失败：{exc}（可稍后手动启动）")
 
+    def app_launch_url(self) -> str:
+        fragment = setup_fragment(
+            getattr(self.settings, "openai_api_key", ""),
+            getattr(self.settings, "openai_base_url", ""),
+        )
+        return app_url(port=self.settings.app_port, fragment=fragment)
+
     def show_main(self) -> None:
-        if self._window is not None and not self._window_closed:
-            self._window.load_url(f"{self.server.url}/static/index.html")
+        if self._browser_opened:
+            return
+        self._browser_opened = True
+        open_app(self.app_launch_url())
 
     def show_launcher(self) -> None:
         if self._window is not None and not self._window_closed:

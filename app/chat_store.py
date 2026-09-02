@@ -10,7 +10,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from app.models import ConversationMessage
+from sqlalchemy import select
+
+from app.models import ConversationAttachment, ConversationMessage, ConversationMessageAttachment
 
 
 def persist_text_message(
@@ -21,11 +23,11 @@ def persist_text_message(
     conversation_id: str,
     role: str,
     content: str,
+    attachment_ids: list[str] | tuple[str, ...] = (),
 ) -> None:
     session = session_factory()
     try:
-        session.add(
-            ConversationMessage(
+        message = ConversationMessage(
                 workspace_id=workspace_id,
                 persona_id=persona_id,
                 conversation_id=conversation_id,
@@ -34,7 +36,21 @@ def persist_text_message(
                 content=content or "",
                 status="completed",
             )
-        )
+        session.add(message)
+        session.flush()
+        requested_ids = tuple(dict.fromkeys(str(item) for item in attachment_ids if item))
+        if requested_ids:
+            valid_ids = set(session.scalars(
+                select(ConversationAttachment.id).where(
+                    ConversationAttachment.id.in_(requested_ids),
+                    ConversationAttachment.workspace_id == workspace_id,
+                    ConversationAttachment.conversation_id == conversation_id,
+                    ConversationAttachment.status == "ready",
+                )
+            ))
+            for attachment_id in requested_ids:
+                if attachment_id in valid_ids:
+                    session.add(ConversationMessageAttachment(message_id=message.id, attachment_id=attachment_id))
         session.commit()
     finally:
         session.close()

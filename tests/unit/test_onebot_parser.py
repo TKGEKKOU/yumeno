@@ -1,10 +1,11 @@
-from integrations.onebot11.parser import OneBotMessage, parse_message_event
+from integrations.onebot11.parser import parse_message_event
 
 
 def test_private_message_with_text():
     payload = {
         "post_type": "message",
         "message_type": "private",
+        "message_id": 12345,
         "self_id": 10001,
         "user_id": 20001,
         "message": [{"type": "text", "data": {"text": "你好"}}],
@@ -18,12 +19,14 @@ def test_private_message_with_text():
     assert event.self_id == "10001"
     assert event.text == "你好"
     assert event.is_at is False
+    assert event.message_id == "12345"
 
 
 def test_group_message_with_at_detection():
     payload = {
         "post_type": "message",
         "message_type": "group",
+        "message_id": 67890,
         "self_id": 10001,
         "user_id": 20001,
         "group_id": 30001,
@@ -38,6 +41,7 @@ def test_group_message_with_at_detection():
     assert event.group_id == "30001"
     assert event.text == " 介绍一下自己"
     assert event.is_at is True
+    assert event.message_id == "67890"
 
 
 def test_non_message_post_type_returns_none():
@@ -59,3 +63,4 @@ def test_string_message_and_cq_at_fallback():
     assert event is not None
     assert event.text == "hello [CQ:at,qq=10001]"
     assert event.is_at is True
+    assert event.message_id == ""

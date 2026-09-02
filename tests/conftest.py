@@ -28,8 +28,12 @@ def db_session() -> Session:
 @pytest.fixture
 def client(db_session: Session):
     app = create_app(initialize_database=False)
-    app.state.session_factory = lambda: db_session
-
+    # 后台 Worker 与请求线程必须各自持有 Session；共享同一个 Session
+    # 会触发 SQLAlchemy 的 identity map/transaction 并发状态错误。
+    app.state.session_factory = sessionmaker(
+        bind=db_session.get_bind(),
+        expire_on_commit=False,
+    )
     def override_session():
         yield db_session
 

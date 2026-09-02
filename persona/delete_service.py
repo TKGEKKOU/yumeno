@@ -16,6 +16,9 @@ from app.models import (
     Persona,
     PersonaDraft,
     PersonaMemory,
+    RagEvaluationRun,
+    RagQueryFeedback,
+    RagQueryRecord,
 )
 from ingestion.document_jobs import DATA_DIR
 from ingestion.milvus_store import KnowledgeSpaceScope, MilvusRagStore
@@ -100,6 +103,10 @@ class PersonaDeletionService:
                 )
             )
             session.execute(delete(PersonaMemory).where(PersonaMemory.persona_id == persona_id))
+            query_ids = select(RagQueryRecord.id).where(RagQueryRecord.persona_id == persona_id)
+            session.execute(delete(RagQueryFeedback).where(RagQueryFeedback.query_id.in_(query_ids)))
+            session.execute(delete(RagQueryRecord).where(RagQueryRecord.persona_id == persona_id))
+            session.execute(delete(RagEvaluationRun).where(RagEvaluationRun.persona_id == persona_id))
             session.execute(
                 delete(PersonaDraft).where(
                     or_(

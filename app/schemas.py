@@ -106,6 +106,7 @@ class DocumentJobResponse(BaseModel):
     markdown_filename: str
     markdown_preview: str | None
     status: str
+    run_id: str | None = None
     error_message: str | None
     created_at: datetime
     updated_at: datetime
@@ -128,6 +129,7 @@ class RagQueryPayload(BaseModel):
 
 
 class RagQueryResponse(BaseModel):
+    query_id: str | None = None
     answer: str
     evidence: list[dict[str, Any]]
     confidence: float
@@ -136,7 +138,131 @@ class RagQueryResponse(BaseModel):
     grounded: bool
     useful: bool
     missing_points: list[str]
+    error_code: str | None = None
+    error_message: str | None = None
     interaction_mode: Literal["conversation", "capability", "knowledge", "web"] = "knowledge"
+
+
+class RagFeedbackPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    helpful: bool
+    note: str = Field(default="", max_length=2000)
+
+    @field_validator("note")
+    @classmethod
+    def strip_feedback_note(cls, value: str) -> str:
+        return value.strip()
+
+
+class RagQueryRecordResponse(BaseModel):
+    id: str
+    persona_id: str
+    conversation_id: str | None
+    question: str
+    answer: str
+    interaction_mode: str
+    confidence: float
+    used_web_search: bool
+    grounded: bool
+    useful: bool
+    evidence: list[dict[str, Any]]
+    trace: list[dict[str, Any]]
+    missing_points: list[str]
+    error_code: str | None = None
+    error_message: str | None = None
+    retrieval_config: dict[str, Any]
+    feedback: dict[str, Any] | None = None
+    created_at: datetime
+
+
+class RagQualityReportResponse(BaseModel):
+    persona_id: str
+    knowledge_space_id: str
+    window: int
+    query_count: int
+    feedback_count: int
+    helpful_rate: float | None
+    grounded_rate: float | None
+    useful_rate: float | None
+    average_confidence: float | None
+    web_fallback_rate: float
+    top_trace_nodes: list[dict[str, Any]]
+    document_versions: list[dict[str, Any]]
+    retrieval_config: dict[str, Any]
+
+
+class RagEvaluationRunSummary(BaseModel):
+    id: str
+    persona_id: str
+    status: str
+    config: dict[str, Any]
+    metrics: dict[str, Any]
+    analysis: str
+    error_message: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class WorkflowNodeResponse(BaseModel):
+    """用户可见的流程节点；不包含内部图节点或本地路径。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+    description: str = ""
+    status: Literal["pending", "waiting_input", "running", "completed", "failed", "cancelled", "skipped"]
+    progress: float = Field(default=0.0, ge=0.0, le=100.0)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_seconds: float | None = Field(default=None, ge=0.0)
+    error: str | None = None
+
+
+class WorkflowEdgeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    from_: str = Field(alias="from")
+    to: str
+
+
+class WorkflowResponse(BaseModel):
+    """Agent workflow 的公开视图，普通任务可以不返回。"""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    flow_id: str
+    title: str
+    # 专项 worker 是公开工作流合同的一部分：前端只能在 Agent
+    # 正式 handoff 后据此激活对应工作区，不能从标题或用户文本猜测。
+    worker: str | None = None
+    kind: Literal["workflow", "sequence", "lifecycle", "data-flow"] = "workflow"
+    status: Literal["idle", "running", "waiting_input", "completed", "failed", "cancelled"]
+    current_node: str | None = None
+    progress: float = Field(default=0.0, ge=0.0, le=100.0)
+    nodes: list[WorkflowNodeResponse] = Field(default_factory=list)
+    edges: list[WorkflowEdgeResponse] = Field(default_factory=list)
+    waiting_inputs: list[dict[str, Any]] = Field(default_factory=list)
+    # RVC worker metadata is optional and only exposed after a formal Agent handoff.
+    # These are stable managed identifiers; local paths must never cross this boundary.
+    rvc_session_id: str | None = None
+    source_file_id: str | None = None
+    session_id: str | None = None
+    task_id: str | None = None
+    attachment_ids: list[str] = Field(default_factory=list)
+    input_refs: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowUpdateEvent(BaseModel):
+    """流式传输的流程更新事件。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["workflow_update"] = "workflow_update"
+    task_id: str | None = None
+    flow: WorkflowResponse
 
 
 class AgentQueryPayload(BaseModel):
@@ -144,6 +270,7 @@ class AgentQueryPayload(BaseModel):
 
     question: str = Field(min_length=1, max_length=2000)
     conversation_id: str = Field(min_length=1, max_length=255)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=32)
 
     @field_validator("question", "conversation_id")
     @classmethod
@@ -158,22 +285,44 @@ class AgentResumePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     conversation_id: str = Field(min_length=1, max_length=255)
-    specialist: Literal["conversation", "web", "memory", "management"]
-    approved: bool
+    # specialist/approved 保留旧确认 API；新流程优先使用 worker/task_id/input_values。
+    specialist: Literal["conversation", "web", "memory", "management"] = "management"
+    approved: bool | None = None
+    worker: str | None = Field(default=None, min_length=1, max_length=64)
+    task_id: str | None = Field(default=None, min_length=1, max_length=255)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=32)
+    input_values: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentTurnResponse(BaseModel):
-    status: Literal["completed", "pending_confirmation"]
+    status: Literal["completed", "pending_confirmation", "waiting_input", "failed", "degraded"]
     answer: str
     specialist: Literal["conversation", "web", "memory", "management"]
+    worker: str | None = None
     pending_action: dict[str, Any] | None = None
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    worker_results: list[dict[str, Any]] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    uncertainties: list[str] = Field(default_factory=list)
     trace: list[dict[str, Any]] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    requires_approval: bool = False
+    error: dict[str, Any] | None = None
+    error_code: str | None = None
+    error_message: str | None = None
     duration_seconds: float = 0.0
     loaded_skills: list[str] = Field(default_factory=list)
     events: list[dict[str, Any]] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
+    workflow: WorkflowResponse | None = None
+    task_type: str | None = None
+    input_refs: dict[str, Any] = Field(default_factory=dict)
+    selected_options: dict[str, Any] = Field(default_factory=dict)
+    waiting_inputs: list[dict[str, Any]] = Field(default_factory=list)
+    result_refs: list[dict[str, Any]] = Field(default_factory=list)
+    task_id: str | None = None
 
 
 class LocalSettingsUpdate(BaseModel):
@@ -245,9 +394,13 @@ class ApiKeyRevealResponse(BaseModel):
 
 
 class LocalSettingsResponse(BaseModel):
+    # 设置页是 localhost-only 管理面板；按用户要求直接返回当前明文 Key。
+    # 生产部署仍不应把该接口暴露到公网。
+    openai_api_key: str = ""
     openai_api_key_configured: bool
     openai_base_url: str
     openai_model: str
+    embedding_api_key: str = ""
     embedding_api_key_configured: bool
     embedding_provider: str
     embedding_model_source: str
@@ -259,6 +412,7 @@ class LocalSettingsResponse(BaseModel):
     chunk_size: int
     chunk_overlap: int
     web_search_provider: str
+    web_search_api_key: str = ""
     web_search_api_key_configured: bool
     web_search_base_url: str
     enable_web_fallback: bool
@@ -267,6 +421,23 @@ class LocalSettingsResponse(BaseModel):
 
 class TranscriptionResponse(BaseModel):
     text: str
+
+
+class ConversationAttachmentResponse(BaseModel):
+    file_id: str
+    name: str
+    mime_type: str
+    kind: str
+    size: int
+    duration: float | None = None
+    width: int | None = None
+    height: int | None = None
+    status: str
+    source: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    url: str
+    created_at: datetime
+    updated_at: datetime
 
 
 class ConversationMessageResponse(BaseModel):
@@ -279,6 +450,7 @@ class ConversationMessageResponse(BaseModel):
     status: Literal["pending", "transcribing", "completed", "failed"]
     error_message: str | None = None
     created_at: datetime
+    attachments: list[ConversationAttachmentResponse] = Field(default_factory=list)
 
 
 class VoiceMessageTurnResponse(BaseModel):
@@ -411,3 +583,37 @@ class RunApprovalPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     approved: bool
+
+class PersonaVersionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(default="", max_length=255)
+    note: str = Field(default="", max_length=5000)
+
+    @field_validator("label", "note")
+    @classmethod
+    def strip_version_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class PersonaVersionSummary(BaseModel):
+    id: str
+    persona_id: str
+    version_number: int
+    status: Literal["draft", "published", "superseded"]
+    label: str
+    note: str
+    created_at: datetime
+    published_at: datetime | None
+
+
+class PersonaVersionResponse(PersonaVersionSummary):
+    snapshot: dict[str, Any]
+
+
+class PersonaVersionDiffResponse(BaseModel):
+    persona_id: str
+    from_version_id: str
+    to_version_id: str
+    changed: bool
+    changes: list[dict[str, Any]]

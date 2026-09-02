@@ -12,7 +12,7 @@ from voice.resource_directory import open_resource_directory
 
 
 @dataclass(frozen=True)
-class ASRResources:
+class STTResources:
     python: Path | None
     model: Path | None
     ffmpeg: Path | None
@@ -29,7 +29,7 @@ class ASRResources:
         )
 
 
-class ASRResourceManager:
+class STTResourceManager:
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root.resolve()
         self.data_dir = self.project_root / "data" / "asr"
@@ -84,12 +84,12 @@ class ASRResourceManager:
         candidates = [Path(configured).expanduser() if configured else None, managed]
         return next((path.resolve() for path in candidates if path and (path / "config.json").is_file()), None)
 
-    def resolve(self) -> ASRResources:
+    def resolve(self) -> STTResources:
         values = self.config()
-        return ASRResources(
-            python=self._file(values["python_path"] or os.getenv("YUMENO_ASR_PYTHON", ""), self.runtime_python),
-            model=self._model(values["model_path"] or os.getenv("YUMENO_ASR_MODEL", ""), self.managed_model),
-            ffmpeg=self._file(values["ffmpeg_path"] or os.getenv("YUMENO_ASR_FFMPEG", ""), self.managed_ffmpeg, "ffmpeg"),
+        return STTResources(
+            python=self._file(values["python_path"] or os.getenv("YUMENO_STT_PYTHON", os.getenv("YUMENO_ASR_PYTHON", "")), self.runtime_python),
+            model=self._model(values["model_path"] or os.getenv("YUMENO_STT_MODEL", os.getenv("YUMENO_ASR_MODEL", "")), self.managed_model),
+            ffmpeg=self._file(values["ffmpeg_path"] or os.getenv("YUMENO_STT_FFMPEG", os.getenv("YUMENO_ASR_FFMPEG", "")), self.managed_ffmpeg, "ffmpeg"),
         )
 
     def status(self) -> dict:
@@ -143,7 +143,7 @@ class ASRResourceManager:
 
     def _run(self, command: list[str], **options) -> subprocess.CompletedProcess:
         if self._cancel_requested.is_set():
-            raise RuntimeError("ASR 安装已取消")
+            raise RuntimeError("STT 安装已取消")
         process = subprocess.Popen(command, **options)
         with self._lock:
             self._process = process
@@ -151,7 +151,7 @@ class ASRResourceManager:
         with self._lock:
             self._process = None
         if self._cancel_requested.is_set():
-            raise RuntimeError("ASR 安装已取消")
+            raise RuntimeError("STT 安装已取消")
         if process.returncode:
             raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
         return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
@@ -192,7 +192,7 @@ class ASRResourceManager:
                 except subprocess.CalledProcessError as fallback_error:
                     detail = fallback_error.stderr or domestic_error.stderr or "pip install failed"
                     raise RuntimeError(detail[-2000:]) from fallback_error
-            model_id = os.getenv("YUMENO_ASR_MODEL_ID", "Qwen/Qwen3-ASR-0.6B")
+            model_id = os.getenv("YUMENO_STT_MODEL_ID", os.getenv("YUMENO_ASR_MODEL_ID", "Qwen/Qwen3-ASR-0.6B"))
             script = (
                 "from modelscope import snapshot_download; "
                 f"snapshot_download({model_id!r}, local_dir={str(self.managed_model)!r})"
@@ -237,3 +237,8 @@ class ASRResourceManager:
         resources = self.resolve()
         directory = resources.model or self.managed_model
         return {**self.status(), "opened_directory": open_resource_directory(directory)}
+
+
+# 兼容旧安装资源接口；新代码使用 STT 命名。
+ASRResources = STTResources
+ASRResourceManager = STTResourceManager

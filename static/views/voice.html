@@ -68,7 +68,6 @@
         </div>
       </section><section class="panel voice-step is-hidden" data-step-panel="train"><header class="voice-step-head"><div><b>训练</b><p>用已勾选的干净片段训练 GPT-SoVITS 专属模型（后台进行，可先离开页面）。训练完成后，音色会出现在下方「训练音色」列表中，可在角色编辑页绑定。</p><p id="voice-train-entry" class="voice-entry-hint"></p></div><span id="voice-train-state" class="step-state"></span></header><div class="voice-train-options"><label class="field"><span>素材语言</span><select id="voice-train-lang"><option value="zh">中文</option><option value="ja">日文</option><option value="en">英文</option></select></label><label class="field"><span>音色名称</span><input id="voice-train-name" placeholder="例如：秧秧"></label><button id="voice-train-start" class="button button-primary" type="button">开始训练</button></div><p id="voice-train-meta" class="inline-status"></p><progress id="voice-train-progress" class="is-hidden" max="100"></progress><p id="voice-train-status" class="inline-status"></p><div class="voice-step-actions"><span class="inline-status" id="voice-train-hint"></span><button id="voice-train-to-manage" class="button button-secondary is-hidden" type="button">去角色页绑定</button></div></section>
     </div>
-
   <section class="panel voice-library-panel">
     <header class="voice-step-head"><div><b>训练音色（GPT-SoVITS）</b><p>已训练完成的音色会出现在角色编辑页的「声音」选择中。</p></div><span id="voice-library-count" class="status-pill">0 个</span></header>
     <ul id="voice-library" class="voice-library-list"></ul>

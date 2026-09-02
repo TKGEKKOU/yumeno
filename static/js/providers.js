@@ -58,16 +58,19 @@ function renderProvidersByCategory(category) {
     lucide.createIcons();
     return;
   }
-  gridEl.innerHTML = categoryProviders.map(provider => {
+  gridEl.replaceChildren(...categoryProviders.map(provider => {
     const activeClass = provider.is_active ? 'is-active' : '';
     const statusIcon = provider.is_configured ? 'check-circle' : 'circle';
     const statusText = provider.is_configured ? '已配置' : '未配置';
     const statusClass = provider.is_configured ? 'is-configured' : 'is-unconfigured';
-    return `<article class="provider-card ${activeClass}" data-provider-id="${provider.id}">
+    const card = document.createElement("article");
+    card.className = `provider-card ${activeClass}`;
+    card.dataset.providerId = provider.id;
+    card.innerHTML = `
       <div class="provider-card-header">
         <h3 class="provider-name">${escapeHtml(provider.name)}</h3>
-        <label class="provider-toggle" onclick="event.stopPropagation()">
-          <input type="checkbox" ${provider.is_active ? 'checked' : ''} ${!provider.is_configured ? 'disabled' : ''} data-provider-id="${provider.id}">
+        <label class="provider-toggle">
+          <input type="checkbox" ${provider.is_active ? 'checked' : ''} ${!provider.is_configured || !provider.runtime_supported ? 'disabled' : ''} data-provider-id="${provider.id}">
           <span class="toggle-slider"></span>
         </label>
       </div>
@@ -76,8 +79,13 @@ function renderProvidersByCategory(category) {
         <i data-lucide="${statusIcon}"></i>
         <span>${statusText}</span>
       </div>
-    </article>`;
-  }).join('');
+      <div class="provider-runtime-status ${provider.runtime_supported ? 'is-supported' : 'is-not-supported'}" title="${escapeHtml(provider.runtime_note || '')}">
+        <i data-lucide="${provider.runtime_supported ? 'plug-zap' : 'info'}"></i>
+        <span>${provider.runtime_supported ? '运行链路已接入' : '仅保存/测试，未接入运行链路'}</span>
+      </div>
+    `;
+    return card;
+  }));
   lucide.createIcons();
   gridEl.querySelectorAll(".provider-card").forEach(card => {
     card.addEventListener("click", () => openProviderConfig(card.dataset.providerId));
@@ -114,21 +122,20 @@ async function handleToggleChange(providerId, enabled) {
     const payload = {
       provider_type: provider.type,
       provider_id: providerId,
-      api_key: provider.current_api_key || null,
+      api_key: null,
       base_url: provider.current_base_url || null,
       model: provider.current_model || null,
       enabled: enabled
     };
-    const response = await fetch("/api/providers/configure", {
+    await api(fetch("/api/providers/configure", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
       body: JSON.stringify(payload)
-    });
-    if (!response.ok) throw new Error(`HTTP {response.status}`);
+    }));
     await loadProviders();
   } catch (error) {
     console.error("Failed to toggle provider:", error);
-    alert(`切换失败: {error.message}`);
+    alert(`切换失败: ${error.message || "请求失败"}`);
     await loadProviders();
   }
 }
@@ -151,7 +158,7 @@ function openProviderConfig(providerId) {
   // 填充已有配置值
   if (apiKeyInput) {
     apiKeyInput.value = provider.current_api_key || "";
-    apiKeyInput.placeholder = "请输入 API Key";
+    apiKeyInput.placeholder = provider.is_configured ? "已配置，留空保持不变" : "请输入 API Key";
   }
   if (baseUrlInput) {
     baseUrlInput.value = provider.current_base_url || provider.default_base_url || "";
@@ -201,24 +208,25 @@ async function testProviderConnection(provider, formData, modal) {
       base_url: formData.get("base_url") || provider.default_base_url,
       model: formData.get("model") || provider.default_model
     };
-    const response = await fetch("/api/providers/test", {
+    const result = await api(fetch("/api/providers/test", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
       body: JSON.stringify(payload)
-    });
-    const result = await response.json();
+    }));
     if (resultEl) {
       resultEl.classList.remove("is-hidden", "is-success", "is-error");
       resultEl.classList.add(result.ok ? "is-success" : "is-error");
       const latencyText = result.latency_ms ? `<span class="latency">${result.latency_ms}ms</span>` : '';
-      resultEl.innerHTML = `<i data-lucide="${result.ok ? 'check-circle' : 'alert-circle'}"></i><span>${result.message}</span>${latencyText}`;
+      resultEl.innerHTML = `<i data-lucide="${result.ok ? 'check-circle' : 'alert-circle'}"></i><span></span>${latencyText}`;
+      resultEl.querySelector("span").textContent = result.message;
       lucide.createIcons();
     }
   } catch (error) {
     if (resultEl) {
       resultEl.classList.remove("is-hidden", "is-success");
       resultEl.classList.add("is-error");
-      resultEl.innerHTML = `<i data-lucide="alert-circle"></i><span>${error.message || '测试失败'}</span>`;
+      resultEl.innerHTML = '<i data-lucide="alert-circle"></i><span></span>';
+      resultEl.querySelector("span").textContent = error.message || "测试失败";
       lucide.createIcons();
     }
   } finally {
@@ -245,12 +253,11 @@ async function saveProviderConfig(provider, formData, modal) {
       model: formData.get("model") || null,
       enabled: true
     };
-    const response = await fetch("/api/providers/configure", {
+      await api(fetch("/api/providers/configure", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
       body: JSON.stringify(payload)
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      }));
       
       // 显示成功反馈
       const resultEl = modal.querySelector(".test-result");
@@ -270,7 +277,8 @@ async function saveProviderConfig(provider, formData, modal) {
     if (resultEl) {
       resultEl.classList.remove("is-hidden", "is-success");
       resultEl.classList.add("is-error");
-      resultEl.innerHTML = `<i data-lucide="alert-circle"></i><span>${error.message || '保存失败'}</span>`;
+        resultEl.innerHTML = '<i data-lucide="alert-circle"></i><span></span>';
+        resultEl.querySelector("span").textContent = error.message || "保存失败";
       lucide.createIcons();
     }
   } finally {

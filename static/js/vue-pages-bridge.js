@@ -14,6 +14,8 @@ function loadVuePages() {
   if (!vuePagesPromise) vuePagesPromise = import("/static/vue/manage.js");
   return vuePagesPromise;
 }
+async function initProviders() { const module = await loadVuePages(); module.mountProvidersApp("#providers-root"); }
+async function showProviders() { const module = await loadVuePages(); module.mountProvidersApp("#providers-root"); }
 async function initExtensions() { const module = await loadVuePages(); module.mountExtensionsApp("#extensions-app-root"); }
 async function showExtensions() { const module = await loadVuePages(); module.mountExtensionsApp("#extensions-app-root"); module.showExtensionsApp(); }
 async function hideExtensions() { const module = await loadVuePages(); module.hideExtensionsApp(); }
@@ -21,10 +23,10 @@ async function initEvaluation() { const module = await loadVuePages(); module.mo
 async function showEvaluation() { const module = await loadVuePages(); module.mountEvaluationApp("#evaluation-app-root"); module.showEvaluationApp(); }
 async function hideEvaluation() { const module = await loadVuePages(); module.hideEvaluationApp(); }
 async function mountRerankerSettings() { const module = await loadVuePages(); module.mountRerankerSettingsApp("#reranker-settings-root"); }
-async function mountProvidersSettings() { const module = await loadVuePages(); module.mountProvidersApp("#providers-root"); }
-window.PL.vuePages = { ...(window.PL.vuePages || {}), mountRerankerSettings, mountProvidersSettings };
+window.PL.vuePages = { ...(window.PL.vuePages || {}), mountRerankerSettings };
+window.PL.modules.providers = { init: initProviders, onShow: showProviders };
 window.PL.modules.plugins = { init: initExtensions, onShow: showExtensions, onHide: hideExtensions };
 window.PL.modules.test = { init: initEvaluation, onShow: showEvaluation, onHide: hideEvaluation };
 window.addEventListener("pagehide", () => vuePagesPromise?.then((module) => {
-  module.destroyExtensionsApp(); module.destroyEvaluationApp(); module.destroyRerankerSettingsApp();
+  module.destroyProvidersApp(); module.destroyExtensionsApp(); module.destroyEvaluationApp(); module.destroyRerankerSettingsApp();
 }).catch(() => {}));

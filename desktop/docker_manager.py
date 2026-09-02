@@ -10,6 +10,16 @@ class DesktopStartupError(RuntimeError):
     pass
 
 
+_ENGINE_MISSING = (
+    "未检测到 Docker 引擎。请安装 Docker Desktop，并从系统托盘启动引擎；"
+    "本程序不会打开 Docker 仪表板。"
+)
+_ENGINE_NOT_RUNNING = (
+    "Docker 引擎未运行。请从系统托盘启动 Docker（本程序不会打开 Docker 仪表板）。"
+    "建议开启「登录时启动 Docker」，并关闭「启动时打开仪表板」。"
+)
+
+
 class DockerManager:
     def __init__(
         self,
@@ -45,18 +55,15 @@ class DockerManager:
 
     def ensure_ready(self, timeout: int = 120) -> None:
         if not self.docker:
-            raise DesktopStartupError("未检测到 Docker Desktop，请先安装并启动 Docker Desktop。")
+            raise DesktopStartupError(_ENGINE_MISSING)
         if self.is_ready():
             return
-        executable = next((path for path in self.desktop_candidates() if path.is_file()), None)
-        if executable:
-            subprocess.Popen([str(executable)], creationflags=subprocess.CREATE_NO_WINDOW)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.is_ready():
                 return
             time.sleep(2)
-        raise DesktopStartupError("Docker Engine 启动超时，请打开 Docker Desktop 检查状态。")
+        raise DesktopStartupError(_ENGINE_NOT_RUNNING)
 
     def compose_up(self) -> None:
         compose = self.project_root / "docker-compose.yml"

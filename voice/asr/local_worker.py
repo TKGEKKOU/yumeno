@@ -9,24 +9,24 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from voice.asr.base import ASRConfigurationError, ASREmptyResultError, ASRProvider, ASRUpstreamError
-from voice.asr.install import ASRResourceManager
+from voice.asr.base import STTConfigurationError, STTEmptyResultError, STTProvider, STTUpstreamError
+from voice.asr.install import STTResourceManager
 
 if TYPE_CHECKING:
     from settings import Settings
 
 
 WORKER_URL = "http://127.0.0.1:17004"
-_managers: dict[Path, "LocalASRManager"] = {}
+_managers: dict[Path, "LocalSTTManager"] = {}
 
 
-class LocalASRManager:
+class LocalSTTManager:
     def __init__(self, project_root: Path, worker_url: str = WORKER_URL) -> None:
         self.project_root = project_root
         self.worker_url = worker_url
         self.runtime_dir = project_root / ".asr-venv"
         self.requirements = project_root / "voice" / "asr" / "requirements-local.txt"
-        self.resources = ASRResourceManager(project_root)
+        self.resources = STTResourceManager(project_root)
         self.process: subprocess.Popen | None = None
         self.watchdog: subprocess.Popen | None = None
         self._lock = asyncio.Lock()
@@ -47,7 +47,7 @@ class LocalASRManager:
             resolved = self.resources.resolve()
             env = os.environ.copy()
             env["HF_HOME"] = str(self.project_root / "data" / "models")
-            env["YUMENO_ASR_MODEL"] = str(resolved.model)
+            env["YUMENO_STT_MODEL"] = str(resolved.model)
             if resolved.ffmpeg:
                 env["PATH"] = f"{resolved.ffmpeg.parent}{os.pathsep}{env.get('PATH', '')}"
             self.process = subprocess.Popen(
@@ -61,7 +61,7 @@ class LocalASRManager:
                 if await self._healthy():
                     return
                 await asyncio.sleep(1)
-            raise ASRUpstreamError("Local ASR worker did not become ready")
+            raise STTUpstreamError("Local STT worker did not become ready")
 
     def _spawn_watchdog(self) -> None:
         """父进程退出后自动结束 ASR worker，防止遗留孤儿进程。"""
@@ -97,15 +97,15 @@ class LocalASRManager:
     def _ensure_runtime(self) -> None:
         status = self.resources.status()
         if not status["enabled"]:
-            raise ASRConfigurationError("Local ASR is disabled")
+            raise STTConfigurationError("Local STT is disabled")
         if not status["ready"]:
-            raise ASRConfigurationError("Local ASR is not installed")
+            raise STTConfigurationError("Local STT is not installed")
 
 
-class LocalQwenASR(ASRProvider):
+class LocalQwenSTT(STTProvider):
     def __init__(
         self,
-        manager: LocalASRManager | None = None,
+        manager: LocalSTTManager | None = None,
         client: httpx.AsyncClient | None = None,
         worker_url: str = WORKER_URL,
     ) -> None:
@@ -124,25 +124,25 @@ class LocalQwenASR(ASRProvider):
                 async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
                     response = await client.post(f"{self.worker_url}/transcribe", content=audio, headers=headers)
         except httpx.HTTPError as exc:
-            raise ASRUpstreamError("Local ASR worker request failed") from exc
+            raise STTUpstreamError("Local STT worker request failed") from exc
         if not response.is_success:
-            raise ASRUpstreamError(f"Local ASR worker returned HTTP {response.status_code}")
+            raise STTUpstreamError(f"Local STT worker returned HTTP {response.status_code}")
         try:
             text = response.json().get("text", "").strip()
         except (ValueError, AttributeError) as exc:
-            raise ASRUpstreamError("Local ASR worker returned an invalid response") from exc
+            raise STTUpstreamError("Local STT worker returned an invalid response") from exc
         if not text:
-            raise ASREmptyResultError("No speech was recognized")
+            raise STTEmptyResultError("No speech was recognized")
         return text
 
 
-def build_asr_provider(settings: Settings) -> LocalQwenASR:
+def build_local_stt_provider(settings: Settings) -> LocalQwenSTT:
     root = settings.project_root.resolve()
-    manager = _managers.setdefault(root, LocalASRManager(root))
-    return LocalQwenASR(manager=manager)
+    manager = _managers.setdefault(root, LocalSTTManager(root))
+    return LocalQwenSTT(manager=manager)
 
 
-def shutdown_asr_workers() -> None:
+def shutdown_stt_workers() -> None:
     for manager in _managers.values():
         watchdog = manager.watchdog
         if watchdog is not None and watchdog.poll() is None:
@@ -156,3 +156,27 @@ def shutdown_asr_workers() -> None:
             except subprocess.TimeoutExpired:
                 process.kill()
         manager.process = None
+
+
+def build_stt_provider(settings: Settings):
+    """按全局 Provider 配置构造实际 STT 运行时。"""
+    provider_id = getattr(settings, "stt_provider", "local_stt")
+    if provider_id == "mimo_stt":
+        from voice.asr.http_provider import MiMoSTT
+        return MiMoSTT(settings.stt_api_key, settings.stt_base_url, settings.stt_model, settings.project_root)
+    if provider_id in {"whisper_api", "xinference_stt"}:
+        from voice.asr.http_provider import OpenAICompatibleSTT
+        return OpenAICompatibleSTT(settings.stt_api_key, settings.stt_base_url, settings.stt_model)
+    if provider_id != "local_stt":
+        raise STTConfigurationError(f"未接入的 STT Provider: {provider_id}")
+    return build_local_stt_provider(settings)
+
+
+# 兼容旧入口。
+build_asr_provider = build_stt_provider
+shutdown_asr_workers = shutdown_stt_workers
+
+
+# 兼容旧类名。
+LocalASRManager = LocalSTTManager
+LocalQwenASR = LocalQwenSTT

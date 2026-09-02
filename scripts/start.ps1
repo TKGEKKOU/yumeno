@@ -1,15 +1,20 @@
 ﻿# YUMENO 一键从零启动（Windows / PowerShell）
 #
 # 用法：
-#   .\scripts\start.ps1              # 桌面端（默认）：自动准备环境并拉起 Docker + 本地服务
-#   .\scripts\start.ps1 -Server      # 仅启动 FastAPI 服务端，浏览器访问 http://127.0.0.1:17000
+#   .\scripts\start.ps1              # Web 工作台（默认）：本地 milvus-lite + FastAPI，并打开 Edge
+#   .\scripts\start.ps1 -Server      # 同默认（兼容旧参数）
+#   .\scripts\start.ps1 -Desktop     # 启动宿主窗口（进度页），工作台仍在浏览器中打开
 #   .\scripts\start.ps1 -NoInstall   # 跳过依赖安装（环境已就绪时更快）
+#   .\scripts\start.ps1 -NoBrowser   # 不自动打开浏览器
 #
 # 首次运行会自动：创建 .venv、安装依赖、生成 .env；重复运行直接复用。
+# 默认使用嵌入式 milvus-lite，不需要 Docker Desktop。远程 Milvus 通过 .env 配置。
 
 param(
   [switch]$Server,
-  [switch]$NoInstall
+  [switch]$Desktop,
+  [switch]$NoInstall,
+  [switch]$NoBrowser
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,12 +62,12 @@ if (-not $NoInstall) {
     if ($LASTEXITCODE -ne 0) { Write-Host "升级 pip 失败" -ForegroundColor Red; exit 1 }
     & $venvPy -m pip install -e . -r requirements.txt
     if ($LASTEXITCODE -ne 0) { Write-Host "安装依赖失败" -ForegroundColor Red; exit 1 }
-    if (-not $Server) {
-      & $venvPy -m pip install -r requirements-desktop.txt
-      if ($LASTEXITCODE -ne 0) { Write-Host "安装桌面端依赖失败" -ForegroundColor Red; exit 1 }
-    }
   } else {
     Write-Host "     依赖已就绪，跳过安装"
+  }
+  if ($Desktop) {
+    & $venvPy -m pip install -r requirements-desktop.txt
+    if ($LASTEXITCODE -ne 0) { Write-Host "安装桌面端依赖失败" -ForegroundColor Red; exit 1 }
   }
 } else {
   Write-Host "     已跳过依赖安装（-NoInstall）"
@@ -71,41 +76,51 @@ if (-not $NoInstall) {
 # ---- 3. 准备 .env ----
 if (-not (Test-Path (Join-Path $root ".env"))) {
   Copy-Item (Join-Path $root ".env.example") (Join-Path $root ".env")
-  Write-Host "[3/4] 已生成 .env（默认配置，可稍后在设置页修改）"
+  Write-Host "[3/4] 已生成 .env（默认配置，可稍后在提供商配置页修改）"
 } else {
   Write-Host "[3/4] .env 已存在"
 }
 
-# ---- 4. 启动 ----
-if ($Server) {
-  Write-Host "[4/4] 启动 Docker Compose 基础设施 ..."
-  try {
-    & docker version --format "{{.Server.Version}}" 2>$null | Out-Null
-  } catch {
-    Write-Host "错误：未检测到 Docker。请先启动 Docker Desktop。" -ForegroundColor Red
-    exit 1
-  }
-  & docker compose up -d
-  if ($LASTEXITCODE -ne 0) { Write-Host "Docker Compose 启动失败" -ForegroundColor Red; exit 1 }
-  Write-Host "     等待 etcd / Milvus 健康（最多 90 秒）..."
-  $deadline = (Get-Date).AddSeconds(90)
-  $ready = $false
-  while ((Get-Date) -lt $deadline) {
-    $ps = (& docker compose ps --format "{{.Name}}|{{.Status}}" 2>$null) -join "`n"
-    if (($ps -match "etcd.*healthy") -and ($ps -match "standalone.*healthy")) { $ready = $true; break }
-    Start-Sleep -Seconds 3
-  }
-  if (-not $ready) {
-    Write-Host "提示：等待超时，请稍后运行 docker compose ps 检查状态。继续启动应用 ..." -ForegroundColor Yellow
-  } else {
-    Write-Host "     基础设施就绪"
-  }
-  Write-Host ""
-  Write-Host "FastAPI 启动中，浏览器访问 http://127.0.0.1:17000 （Ctrl+C 停止）" -ForegroundColor Green
-  & $venvPy -B main.py
-} else {
-  Write-Host "[4/4] 启动桌面端（首次会自动拉起 Docker 与本地服务）"
-  Write-Host ""
-  Write-Host "窗口打开后即可使用；关闭窗口时会询问退出方式。" -ForegroundColor Green
-  & $venvPy -B desktop_main.py
+function Open-YumenoWorkbench {
+  if ($NoBrowser) { return }
+  & $venvPy -c "from desktop.browser import open_app, app_url, setup_fragment; from settings import Settings; s = Settings.load(); open_app(app_url(port=s.app_port, fragment=setup_fragment(s.openai_api_key, s.openai_base_url)))"
 }
+
+function Test-YumenoRunning {
+  $code = @'
+import httpx
+try:
+    response = httpx.get("http://127.0.0.1:17000/api/health", timeout=1, trust_env=False)
+    raise SystemExit(0 if response.is_success else 1)
+except Exception:
+    raise SystemExit(1)
+'@
+  & $venvPy -c $code | Out-Null
+  return ($LASTEXITCODE -eq 0)
+}
+
+# ---- 4. 启动 ----
+if ($Desktop) {
+  Write-Host "[4/4] 启动宿主窗口（工作台在浏览器中打开）"
+  Write-Host ""
+  Write-Host "关闭宿主窗口将停止本地服务。" -ForegroundColor Green
+  & $venvPy -B desktop_main.py
+  exit $LASTEXITCODE
+}
+
+Write-Host "[4/4] 启动 Web 工作台"
+if (Test-YumenoRunning) {
+  Write-Host "     服务已在 17000 端口运行，正在打开浏览器"
+  Open-YumenoWorkbench
+  exit 0
+}
+
+Write-Host "     使用本地 milvus-lite（无需 Docker）"
+
+if (-not $NoBrowser) {
+  Start-Process -WindowStyle Hidden -FilePath $venvPy -ArgumentList @("-B", "-m", "desktop.browser")
+}
+
+Write-Host ""
+Write-Host "FastAPI 启动中，浏览器访问 http://127.0.0.1:17000/static/index.html （Ctrl+C 停止）" -ForegroundColor Green
+& $venvPy -B main.py

@@ -105,6 +105,11 @@ class BilibiliLiveManager:
             self.connected = False
             await self.broadcast({"type": "status", "status": self.status()})
 
+    async def reconnect(self) -> dict:
+        await self.disconnect()
+        await self.connect()
+        return self.status()
+
     async def disconnect(self) -> None:
         if self.state == "disconnected" and self._client_task is None and self._worker_task is None:
             return

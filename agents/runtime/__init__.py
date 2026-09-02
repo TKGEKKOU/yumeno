@@ -5,13 +5,27 @@
 
 from .errors import RuntimeErrorCode, public_error_message
 from .events import sanitize_event_details
-from .models import AgentResult, AgentRun, RunEvent, RunStatus, allowed_transition
+from .models import (
+    AgentResult,
+    AgentRun,
+    RunEvent,
+    RunStatus,
+    RuntimeStep,
+    RuntimeTask,
+    StepStatus,
+    TaskStatus,
+    allowed_transition,
+)
 
 __all__ = [
     "AgentResult",
     "AgentRun",
     "RunEvent",
     "RunStatus",
+    "RuntimeStep",
+    "RuntimeTask",
+    "StepStatus",
+    "TaskStatus",
     "RuntimeErrorCode",
     "allowed_transition",
     "public_error_message",

@@ -22,6 +22,9 @@ from settings import (
     SUPPORTED_EMBEDDING_SOURCES,
     SUPPORTED_WEB_SEARCH_PROVIDERS,
     Settings,
+    configured_api_key,
+    setting_bool,
+    text_setting,
 )
 
 
@@ -79,34 +82,37 @@ def read_settings(path: Path) -> dict:
 
 def settings_response(path: Path, restart_required: bool = False) -> LocalSettingsResponse:
     values = read_settings(path)
-    legacy_enabled = bool(values.get("enable_web_fallback", False))
-    web_search_provider = str(values.get("web_search_provider") or "") or ("tavily" if legacy_enabled else "off")
+    legacy_enabled = setting_bool(values.get("enable_web_fallback"), False)
+    web_search_provider = text_setting(values.get("web_search_provider")) or ("tavily" if legacy_enabled else "off")
     if web_search_provider not in SUPPORTED_WEB_SEARCH_PROVIDERS:
         web_search_provider = "off"
-    web_search_api_key = str(values.get("web_search_api_key") or values.get("tavily_api_key") or "")
-    embedding_base_url = str(values.get("embedding_base_url") or "")
-    embedding_provider = str(values.get("embedding_provider") or "")
+    web_search_api_key = configured_api_key(values.get("web_search_api_key") or values.get("tavily_api_key"))
+    embedding_base_url = text_setting(values.get("embedding_base_url"))
+    embedding_provider = text_setting(values.get("embedding_provider"))
     if embedding_provider not in SUPPORTED_EMBEDDING_PROVIDERS:
         embedding_provider = "qwen" if "dashscope.aliyuncs.com" in embedding_base_url else "custom" if embedding_base_url else "managed_local"
-    embedding_source = str(values.get("embedding_model_source") or "modelscope")
-    embedding_device = str(values.get("embedding_device") or "auto")
+    embedding_source = text_setting(values.get("embedding_model_source"), "modelscope")
+    embedding_device = text_setting(values.get("embedding_device"), "auto")
     return LocalSettingsResponse(
-        openai_api_key_configured=bool(values.get("openai_api_key")),
-        openai_base_url=str(values.get("openai_base_url") or ""),
-        openai_model=str(values.get("openai_model") or ""),
-        embedding_api_key_configured=bool(values.get("embedding_api_key")),
+        openai_api_key=configured_api_key(values.get("openai_api_key")),
+        openai_api_key_configured=bool(configured_api_key(values.get("openai_api_key"))),
+        openai_base_url=text_setting(values.get("openai_base_url")),
+        openai_model=text_setting(values.get("openai_model")),
+        embedding_api_key=configured_api_key(values.get("embedding_api_key")),
+        embedding_api_key_configured=bool(configured_api_key(values.get("embedding_api_key"))),
         embedding_provider=embedding_provider,
         embedding_model_source=embedding_source if embedding_source in SUPPORTED_EMBEDDING_SOURCES else "modelscope",
         embedding_device=embedding_device if embedding_device in SUPPORTED_EMBEDDING_DEVICES else "auto",
         embedding_base_url=embedding_base_url,
-        embedding_model=str(values.get("embedding_model") or (DEFAULT_LOCAL_EMBEDDING_MODEL if embedding_provider == "managed_local" else "")),
+        embedding_model=text_setting(values.get("embedding_model")) or (DEFAULT_LOCAL_EMBEDDING_MODEL if embedding_provider == "managed_local" else ""),
         embedding_dimensions=int(values.get("embedding_dimensions") or (1024 if embedding_provider == "managed_local" else 512)),
-        embedding_send_dimensions=bool(values.get("embedding_send_dimensions", True)),
+        embedding_send_dimensions=setting_bool(values.get("embedding_send_dimensions"), True),
         chunk_size=int(values.get("chunk_size") or 1000),
         chunk_overlap=int(values.get("chunk_overlap") or 150),
         web_search_provider=web_search_provider,
+        web_search_api_key=web_search_api_key,
         web_search_api_key_configured=bool(web_search_api_key),
-        web_search_base_url=str(values.get("web_search_base_url") or ""),
+        web_search_base_url=text_setting(values.get("web_search_base_url")),
         enable_web_fallback=web_search_provider != "off",
         restart_required=restart_required,
     )
@@ -130,9 +136,25 @@ def delete_local_settings(path: Path) -> None:
         path.unlink()
 
 
+def invalidate_runtime_clients() -> None:
+    """让配置页保存后的下一次请求使用新配置。
+
+    LangChain 客户端、Milvus 检索器可能跨请求缓存；Settings.load() 本身是
+    新快照，但只清配置文件仍会留下旧对象。清缓存不会中断正在执行的请求。
+    """
+    from ingestion.embeddings import clear_embedding_cache
+    from rag.llm import clear_llm_cache
+    from rag.retriever import clear_retriever_cache
+
+    clear_llm_cache()
+    clear_embedding_cache()
+    clear_retriever_cache()
+
+
 @router.get("", response_model=LocalSettingsResponse)
-def get_settings(request: Request) -> LocalSettingsResponse:
+def get_settings(request: Request, response: Response) -> LocalSettingsResponse:
     require_local(request)
+    response.headers["Cache-Control"] = "no-store"
     return settings_response(SETTINGS_PATH)
 
 
@@ -146,7 +168,7 @@ def test_llm_connection(
     if x_yumeno_request != "web":
         raise HTTPException(status_code=403, detail="缺少同源请求标识")
     values = read_settings(SETTINGS_PATH)
-    api_key = payload.api_key or str(values.get("openai_api_key") or "")
+    api_key = configured_api_key(payload.api_key) or configured_api_key(values.get("openai_api_key"))
     if not api_key:
         raise HTTPException(status_code=422, detail="请先填写 API Key，或保存一个已有 Key")
     if not payload.base_url.startswith(("http://", "https://")):
@@ -184,15 +206,16 @@ def reveal_api_key(
         raise HTTPException(status_code=403, detail="Missing same-origin request header")
     response.headers["Cache-Control"] = "no-store"
     values = read_settings(SETTINGS_PATH)
-    value = values.get(payload.field)
+    value = configured_api_key(values.get(payload.field))
     if not value and payload.field == "web_search_api_key":
-        value = values.get("tavily_api_key")
-    return ApiKeyRevealResponse(value=str(value or ""))
+        value = configured_api_key(values.get("tavily_api_key"))
+    return ApiKeyRevealResponse(value=value)
 
 
 @router.patch("", response_model=LocalSettingsResponse)
-def save_settings(payload: LocalSettingsUpdate, request: Request) -> LocalSettingsResponse:
+def save_settings(payload: LocalSettingsUpdate, request: Request, response: Response) -> LocalSettingsResponse:
     require_local(request)
+    response.headers["Cache-Control"] = "no-store"
     submitted = payload.model_dump(exclude_none=True)
     provider = submitted.get("web_search_provider")
     if provider is not None and provider not in SUPPORTED_WEB_SEARCH_PROVIDERS:
@@ -224,13 +247,14 @@ def save_settings(payload: LocalSettingsUpdate, request: Request) -> LocalSettin
     for field, value in submitted.items():
         if isinstance(value, bool) or isinstance(value, int):
             updates[field] = value
-        elif value.strip():
+        elif isinstance(value, str) and value.strip():
             updates[field] = value.strip()
     updates.pop("tavily_api_key", None)
     if provider is not None:
         updates["enable_web_fallback"] = provider != "off"
     if updates:
         update_local_settings(SETTINGS_PATH, updates)
+        invalidate_runtime_clients()
     return settings_response(SETTINGS_PATH, restart_required=False)
 
 
@@ -238,4 +262,5 @@ def save_settings(payload: LocalSettingsUpdate, request: Request) -> LocalSettin
 def reset_settings(request: Request) -> LocalSettingsResponse:
     require_local(request)
     delete_local_settings(SETTINGS_PATH)
+    invalidate_runtime_clients()
     return settings_response(SETTINGS_PATH, restart_required=False)
