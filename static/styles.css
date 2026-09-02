@@ -2767,3 +2767,12 @@ body:has(#chat-view:not(.is-hidden)) .page-shell { width: 100%; max-width: none;
 .rvc-inline-resource-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 .rvc-inline-resource-card .rvc-inline-progress { margin: 2px 0; }
 .rvc-inline-resource-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start; }
+
+
+/* 通用配置 Worker 资源卡：复用 RVC 工作区的轻量青色视觉，但不承担功能业务。 */
+.resource-setup-inline-card { margin-top: 14px; padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--primary, #39C5BB) 34%, transparent); border-radius: 16px; background: color-mix(in srgb, var(--primary, #39C5BB) 7%, transparent); box-shadow: 0 8px 24px rgba(18, 58, 57, .06); }
+.resource-setup-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.resource-setup-heading strong { color: var(--text-primary, #172321); }
+.resource-setup-status { font-size: .78rem; color: var(--primary, #39C5BB); }
+.resource-setup-inline-card p { margin: 8px 0 12px; color: var(--text-secondary, #5b6c69); }
+.resource-setup-actions { display: flex; flex-wrap: wrap; gap: 8px; }

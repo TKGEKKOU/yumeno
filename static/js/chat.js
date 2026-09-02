@@ -1855,6 +1855,46 @@ async function synthesizeAnswer(text, node, options = {}) {
     if (state.voiceStreamAbort === controller) state.voiceStreamAbort = null;
   }
 }
+function findResourceSetup(value, seen = new Set()) {
+  if (!value || typeof value !== "object" || seen.has(value)) return null;
+  seen.add(value);
+  if (value.kind === "resource_setup" && value.resource) return value;
+  for (const child of Object.values(value)) { const found = findResourceSetup(child, seen); if (found) return found; }
+  return null;
+}
+function resourceSetupAction(text) {
+  const input = $("question");
+  if (!input || !String(text || "").trim()) return;
+  input.value = text;
+  resizeComposer();
+  void submitQuestion({ preventDefault() {} });
+}
+function renderResourceSetupCard(node, resource) {
+  if (!node || !resource) return;
+  node.querySelectorAll(".resource-setup-inline-card").forEach((item) => item.remove());
+  const card = document.createElement("section");
+  card.className = "resource-setup-inline-card rvc-inline-workspace";
+  card.dataset.resource = String(resource.resource);
+  const heading = document.createElement("div"); heading.className = "resource-setup-heading";
+  const title = document.createElement("strong"); title.textContent = `${String(resource.resource).toUpperCase()} 运行资源`;
+  const badge = document.createElement("span"); badge.className = "resource-setup-status";
+  const install = resource.install && typeof resource.install === "object" ? resource.install : resource;
+  const status = String(resource.status || install.status || "unknown").toLowerCase();
+  badge.textContent = status === "ok" || status === "ready" || install.ready === true ? "已就绪" : status === "failed" ? "检查失败" : status === "accepted" || status === "running" ? "处理中" : "需要处理";
+  heading.append(title, badge);
+  const detail = document.createElement("p");
+  const missing = Array.isArray(resource.missing) ? resource.missing : (Array.isArray(install.missing) ? install.missing : []);
+  detail.textContent = resource.error || install.error || (missing.length ? `缺少：${missing.join("、")}` : resource.phase || install.phase || "可通过对话查询或管理此资源。");
+  const actions = document.createElement("div"); actions.className = "resource-setup-actions";
+  if (!(status === "ok" || status === "ready" || install.ready === true)) {
+    actions.append(rvcButton("检查状态", () => resourceSetupAction(`请检查 ${resource.resource} 的配置状态`), true));
+    actions.append(rvcButton("开始安装", () => resourceSetupAction(`请安装 ${resource.resource} 所需资源`)));
+  }
+  if (status === "accepted" || status === "running" || install.installing === true) actions.append(rvcButton("取消安装", () => resourceSetupAction(`请取消 ${resource.resource} 的安装`)));
+  card.append(heading, detail, actions);
+  node.append(card);
+}
+
 function applyAgentContextResult(result) {
   const resultFlow = result?.workflow || result?.flow;
   // 只有 Core Agent 返回的完整 workflow.worker 才能激活 RVC；
@@ -1864,6 +1904,11 @@ function applyAgentContextResult(result) {
     String(result?.worker || result?.worker_name || "").trim().toLowerCase() === "rvc_worker"
   );
   const tasks = rvcTaskEntries(result);
+  const resourceSetup = findResourceSetup(result);
+  if (resourceSetup) {
+    const resourceNode = state.realtimeAnswerNode || state.pendingReplyNode || appendMessage("assistant", "正在处理资源配置…");
+    if (resourceNode) renderResourceSetupCard(resourceNode, resourceSetup);
+  }
   // RVC 只能由 Agent 返回的结构化 worker 合同激活。历史兼容 task 不能
   // 在顶部创建旧任务卡，也不能凭 task 字段把普通结果升级成 RVC。
   if (!isRvcResult && !isIsolatedRvcResult) tasks.forEach((entry) => registerChatTask(entry));
@@ -3580,3 +3625,4 @@ async function cancelInlineRvc() {
   renderRvcInline();
   if (errors.length) setText("chat-error", `任务已停止，但 Agent 未确认取消：${errors[0].message || errors[0]}`, true);
 }
+
