@@ -172,7 +172,7 @@ async function loadRvcPageData() {
     rvcRuntimeReady = Boolean(status.ready);
     rvc$("rvc-status-dot")?.classList.toggle("is-ready", rvcRuntimeReady);
     const title = rvc$("rvc-page-title");
-    if (title) title.textContent = rvcRuntimeReady ? "RVC 已就绪" : "RVC 未完成配置";
+    if (title) title.textContent = rvcRuntimeReady ? "RVC 运行环境已就绪" : "RVC 运行环境未完成配置";
     rvc$("rvc-status-dot")?.classList.toggle("is-ready", rvcRuntimeReady);
 
     const data = await rvcApi(await fetch("/api/voice/rvc/models", { cache: "no-store", headers: rvcHeaders }));
@@ -194,10 +194,13 @@ async function loadRvcPageData() {
     selectDefaultRvcIndex(model.value);
     syncRvcButton();
   } catch (error) {
-    rvcRuntimeReady = false;
+    // 状态接口和模型/元数据接口是两件事：后者失败不能覆盖已经确认的
+    // 运行时 ready 状态，否则页面会错误地回退到“未完成配置”。
     const title = rvc$("rvc-page-title");
-    if (title) title.textContent = "RVC 未完成配置";
-    rvcSet("rvc-status", `RVC 状态不可用：${rvcError(error)}`, true);
+    if (title) title.textContent = rvcRuntimeReady ? "RVC 运行环境已就绪" : "RVC 运行环境未完成配置";
+    rvcSet("rvc-status", rvcRuntimeReady
+      ? `RVC 运行资源已就绪，但模型列表读取失败：${rvcError(error)}`
+      : `RVC 状态不可用：${rvcError(error)}`, true);
     syncRvcButton();
   }
 }

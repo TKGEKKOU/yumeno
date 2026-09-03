@@ -1,0 +1,1 @@
+{"verified_at": 1788364276.242935, "requirements": "D:\\CodePython\\YUMENO\\voice\\rvc\\vendor\\requirements-inference-cu128.txt", "torch_version": "2.7.1+cu128", "cuda_available": true, "cuda_version": "12.8", "device": "cuda"}

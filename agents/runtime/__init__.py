@@ -30,4 +30,6 @@ __all__ = [
     "allowed_transition",
     "public_error_message",
     "sanitize_event_details",
+    "NativeAgentLoop",
 ]
+from .native import NativeAgentLoop

@@ -4,6 +4,7 @@ from typing import Any, Callable, TYPE_CHECKING
 
 from agents.context import PersonaAgentContext
 from agents.contracts import resolve_error_fields
+from agents.runtime.native import NativeAgentLoop
 from agents.runtime.errors import RuntimeErrorCode, RuntimeOperationError, public_error_message
 from agents.runtime.events import sanitize_event_details
 from agents.runtime.models import (
@@ -86,6 +87,8 @@ class AgentRuntime:
         self._cancel_handlers: dict[str, Callable[[], None]] = {}
         # Agent 工具执行时可能没有 Starlette request；由应用启动时注入共享 state。
         self.app_state: Any | None = None
+        # 内置执行内核只负责生命周期；Core/Supervisor/Worker 仍负责业务判断与执行。
+        self.engine = NativeAgentLoop(service)
 
     def register_cancel_handler(self, run_id: str, handler: Callable[[], None]) -> None:
         """注册领域任务的取消钩子，让通用 Runtime 能中止进程内 Worker。"""
@@ -476,7 +479,7 @@ class AgentRuntime:
     def query(self, question: str, context: PersonaAgentContext) -> AgentTurnResult:
         run = self.start_run(context, action="chat")
         try:
-            result = self.service.query(question, context)
+            result = self.engine.query(question, context, job_id=run.run_id)
         except Exception as exc:
             self.record_failure(run.run_id, exc)
             raise
@@ -486,7 +489,7 @@ class AgentRuntime:
     def stream_query(self, question: str, context: PersonaAgentContext):
         run = self.start_run(context, action="chat")
         try:
-            for event in self.service.stream_query(question, context):
+            for event in self.engine.stream_query(question, context, job_id=run.run_id):
                 if event.get("kind") == "result":
                     self.record_result(run.run_id, event["result"])
                 yield event
@@ -501,8 +504,8 @@ class AgentRuntime:
     ) -> AgentTurnResult:
         run = self.start_run(context, action="resume")
         try:
-            result = self.service.resume(
-                context, specialist, approved, worker=worker, task_id=task_id,
+            result = self.engine.resume(
+                context, specialist, approved, job_id=run.run_id, worker=worker, task_id=task_id,
                 attachment_ids=attachment_ids, input_values=input_values,
             )
         except Exception as exc:
@@ -518,8 +521,8 @@ class AgentRuntime:
     ):
         run = self.start_run(context, action="resume")
         try:
-            for event in self.service.stream_resume(
-                context, specialist, approved, worker=worker, task_id=task_id,
+            for event in self.engine.stream_resume(
+                context, specialist, approved, job_id=run.run_id, worker=worker, task_id=task_id,
                 attachment_ids=attachment_ids, input_values=input_values,
             ):
                 if event.get("kind") == "result":
@@ -537,6 +540,9 @@ class AgentRuntime:
             return current
         if current.status in {RunStatus.COMPLETED, RunStatus.FAILED}:
             raise RuntimeOperationError(RuntimeErrorCode.RUN_TERMINAL)
+        # 先通知内置执行内核，停止当前 Job 的事件转发；领域钩子随后负责
+        # RVC/session/下载等具体任务的取消。
+        self.engine.cancel(run_id)
         handler = self._cancel_handlers.get(run_id)
         if handler is not None:
             try:

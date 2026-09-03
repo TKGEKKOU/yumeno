@@ -301,8 +301,16 @@ function setSendButton(busy) {
   const button = $("send-question");
   if (!button) return;
   button.classList.toggle("is-stop", busy);
-  const icon = button.querySelector("i");
-  if (icon) icon.dataset.lucide = busy ? "square" : "send-horizontal";
+  // lucide.createIcons() 会把 <i> 替换成 <svg>；只查询 i 会导致
+  // 第二轮以后图标永远停留在箭头。每次状态变化都重建一个语义图标节点。
+  const icon = document.createElement("i");
+  if (icon) {
+    if (typeof icon.setAttribute === "function") icon.setAttribute("data-lucide", busy ? "square" : "arrow-up");
+    else if (icon.dataset) icon.dataset.lucide = busy ? "square" : "arrow-up";
+    const current = button.querySelector("i, svg");
+    if (current?.replaceWith) current.replaceWith(icon);
+    else if (!current && button.append) button.append(icon);
+  }
   button.title = busy ? "停止生成" : "发送";
   button.setAttribute("aria-label", button.title);
   if (window.lucide) window.lucide.createIcons();
@@ -707,9 +715,30 @@ function awaitRealtimeAcknowledgement(question) {
   updateComposerControls();
 }
 function cancelRealtimeTurn() {
+  // 停止键必须立即释放前端锁；不能等待服务端 turn.cancelled，
+  // 否则网络延迟期间发送键仍是 disabled，用户会误以为页面卡死。
   stopVoicePlayback();
   if (state.agentStreamController) { state.agentStreamController.abort(); state.agentStreamController = null; }
   if (state.realtimeTurnId) sendRealtime({ type: "generation.cancel" });
+  clearTimeout(state.realtimeAckTimer);
+  state.realtimeAckTimer = null;
+  state.realtimeTurnId = null;
+  state.realtimeSubmissionPending = false;
+  state.realtimeExecutionPending = false;
+  state.agentRequestPending = false;
+  state.realtimePendingQuestion = "";
+  state.pendingAction = null;
+  state.pendingInput = null;
+  state.pendingInputValues = {};
+  state.confirmationResponded = false;
+  state.realtimeStageEpoch = "closed";
+  finishPendingReplies();
+  state.pendingReplyNode = null;
+  state.realtimeAnswerNode = null;
+  setText("question-status", "已停止本轮回复");
+  setRealtimeBusy(false);
+  renderConfirmation();
+  renderChatContext();
 }
 
 function setReplyStage(node, stage, details = null) {
@@ -734,7 +763,8 @@ function setReplyStage(node, stage, details = null) {
         item.classList.add("is-done");
       }
     });
-    list.append(existing);
+    // 重复阶段只更新原节点，不能重新 append；append 会把旧步骤移到末尾，
+    // 使视觉顺序与真实事件到达顺序相反。
   } else {
     const item = document.createElement("div");
     item.className = "agent-process-item is-active";
@@ -743,6 +773,7 @@ function setReplyStage(node, stage, details = null) {
     item.dataset.group = group;
     item.title = label;
     item.dataset.startedAt = String(performance.now());
+    item.dataset.sequence = String(list.children.length + 1);
     const glyph = document.createElement("span");
     glyph.className = "agent-process-spinner";
     const text = document.createElement("span");
@@ -763,7 +794,8 @@ function setReplyStage(node, stage, details = null) {
     meta.textContent = detail || group;
     item.append(meta);
     list.append(item);
-    while (list.children.length > 6) list.firstElementChild.remove();
+    // 保留事件的原始顺序。过程内容是调试/思考记录，不应通过删除前置步骤
+    // 伪造“最近步骤”顺序；消息本身由中央聊天区统一滚动。
   }
   list.lastElementChild?.scrollIntoView({ block: "nearest" });
   list.scrollTop = list.scrollHeight;
@@ -856,13 +888,19 @@ function observeChatStatus() {
 function updateComposerControls() {
   if (!$("question-form")) return;
   const conversationBusy = isConversationBusy() && !(state.pendingInput && state.rvcInline);
+  const rvcPhase = String(state.rvcInline?.state?.phase || "").toLowerCase();
+  const rvcBusy = Boolean(state.rvcInline && (state.rvcInline.taskId || state.rvcInline.preparePending
+    || ["accepted", "processing", "preparing", "extracting", "normalizing", "separating", "converting", "running"].includes(rvcPhase)));
+  const stopAvailable = Boolean(state.realtimeBusy || state.agentRequestPending || state.realtimeSubmissionPending || state.realtimeExecutionPending || rvcBusy);
   const voiceActive = state.voiceActive;
   $("question-form").classList.toggle("is-voice-active", voiceActive);
   if ($("voice-chat")) {
     $("voice-chat").disabled = !state.asrConfigured || !state.activePersona;
   }
   $("send-question").classList.toggle("is-hidden", voiceActive);
-  $("send-question").disabled = conversationBusy || !state.activePersona;
+  // 忙碌时发送按钮就是停止按钮，必须可点击；只有等待不可编辑的
+  // confirmation/input 状态才保持 disabled。
+  $("send-question").disabled = !state.activePersona || (!stopAvailable && conversationBusy);
   // 等待输入时仍必须允许上传附件；否则 waiting_input 卡片中的“上传文件”无法工作。
   const attachmentBusy = Boolean(state.attachmentUploadPending);
   $("chat-attachment").disabled = attachmentBusy || !state.activePersona;
@@ -999,8 +1037,15 @@ function flushPendingVoiceQuestion() {
   sendQuestionText(question);
 }function togglePersonaDrawer() {
   const menu = $("chat-persona-menu");
+  const toggle = $("chat-persona-toggle");
+  if (!menu || !toggle) return;
   const open = menu.classList.toggle("is-hidden");
-  $("chat-persona-toggle").setAttribute("aria-expanded", String(!open));
+  toggle.setAttribute("aria-expanded", String(!open));
+  if (!open && (!Array.isArray(state.personas) || !state.personas.length)) {
+    const list = $("persona-list");
+    if (list) list.textContent = "正在加载角色…";
+    void loadPersonas();
+  }
 }
 function closePersonaMenu() { $("chat-persona-menu").classList.add("is-hidden"); $("chat-persona-toggle").setAttribute("aria-expanded", "false"); }
 const CHAT_PREFERENCE_KEYS = {
@@ -1188,6 +1233,8 @@ async function selectPersona(personaId = "") {
 async function submitQuestion(event) {
   event.preventDefault(); if (!state.activePersona) return;
   if ($("send-question")?.classList.contains("is-stop")) {
+    // stop 按钮是 form submit 的唯一入口；阻止继续读取 textarea，
+    // 让“停止”永远不会误发一条空/旧消息。
     void cancelActiveChatTask();
     return;
   }
@@ -1886,36 +1933,139 @@ function findResourceSetup(value, seen = new Set()) {
   for (const child of Object.values(value)) { const found = findResourceSetup(child, seen); if (found) return found; }
   return null;
 }
-function resourceSetupAction(text) {
-  const input = $("question");
-  if (!input || !String(text || "").trim()) return;
-  input.value = text;
-  resizeComposer();
-  void submitQuestion({ preventDefault() {} });
+const resourcePhaseLabels = {
+  preparing: "正在准备下载环境", downloading: "正在下载 RVC 运行环境",
+  installing: "正在安装 RVC 运行环境", probing: "正在检查推理依赖",
+  verifying: "正在验证 RVC 运行环境", ready: "RVC 运行环境已就绪",
+  failed: "RVC 运行环境准备失败", idle: "等待操作"
+};
+function findExistingResourceCard(key) {
+  return [...document.querySelectorAll(".resource-setup-inline-card")].find((card) => card.dataset.resource === key)?.parentElement || null;
+}
+async function resourceSetupAction(resource, action) {
+  const key = canonicalResourceKey(resource?.resource || resource || "");
+  const normalized = String(action || "status").trim().toLowerCase();
+  if (!key) return;
+  if (normalized === "clean" && !window.confirm(`确定卸载 ${key} 运行环境吗？用户模型、附件和历史结果不会被删除。`)) return;
+  if ((normalized === "cancel" || normalized === "clean") && window.__yumenoResourceInstallTimer) { clearInterval(window.__yumenoResourceInstallTimer); window.__yumenoResourceInstallTimer = null; }
+  // 卡片上的明确资源动作不再绕一圈生成工具确认卡；它调用同一个受保护
+  // provider API，仍由后端资源管理器执行，避免 Core Agent 在 UI 操作中阻塞。
+  const resourceApiBase = "/api/resources/" + encodeURIComponent(key);
+  const endpointSet = {
+    status: resourceApiBase + "/status",
+    install: resourceApiBase + "/install",
+    cancel: resourceApiBase + "/install/cancel",
+    clean: resourceApiBase + "/install",
+  };
+  const supportedResources = new Set(["rvc", "separator", "asr", "embedding", "gpt_sovits", "ffmpeg"]);
+  const api = supportedResources.has(key) ? endpointSet : null;
+  if (!api) {
+    const input = $("question"); if (!input) return;
+    input.value = `请${({status:"检查",install:"安装/下载",cancel:"取消安装",clean:"卸载"})[normalized] || "检查"} ${key} 受管资源`;
+    resizeComposer(); void submitQuestion({ preventDefault() {} }); return;
+  }
+  const node = state.realtimeAnswerNode?.isConnected ? state.realtimeAnswerNode : (findExistingResourceCard(key) || appendMessage("assistant", ""));
+  try {
+    const options = { method: normalized === "status" ? "GET" : normalized === "clean" || normalized === "cancel" ? "DELETE" : "POST" };
+    let result = await chatRvcApi(api[normalized], options);
+    if (result?.status && typeof result.status === "object") result = { ...result.status, resource: key };
+    if (node) renderResourceSetupCard(node, { ...result, resource: key, kind: "resource_setup", install: result });
+    if (normalized === "install") {
+      if (window.__yumenoResourceInstallTimer) clearInterval(window.__yumenoResourceInstallTimer);
+      const timer = setInterval(async () => {
+        try {
+          result = await chatRvcApi(api.status, { cache: "no-store" });
+          if (result?.status && typeof result.status === "object") result = { ...result.status, resource: key };
+          if (node) renderResourceSetupCard(node, { ...result, resource: key, kind: "resource_setup", install: result });
+          const phase = String(result.phase || "").toLowerCase();
+          const terminal = !result.installing && !["preparing", "downloading", "installing", "running"].includes(phase);
+          if (terminal) {
+            clearInterval(timer);
+            window.__yumenoResourceInstallTimer = null;
+            const success = result.ready === true || (result.installed === true && !(result.missing || []).length);
+            if (!node.dataset.resourceCompletionNotified) {
+              node.dataset.resourceCompletionNotified = "1";
+              appendMessage("assistant", success ? `${resourceSetupDescriptor(key).title}已准备完成。` : `${resourceSetupDescriptor(key).title}准备失败：${result.error || result.detail || "请检查资源状态后重试。"}`);
+            }
+            if (node) renderResourceSetupCard(node, { ...result, resource: key, kind: "resource_setup", install: result });
+          }
+        } catch (error) {
+          clearInterval(timer);
+          appendMessage("assistant", `${resourceSetupDescriptor(key).title}状态查询失败：${error?.message || error}`);
+        }
+      }, 500);
+      window.__yumenoResourceInstallTimer = timer;
+    }
+  } catch (error) {
+    if (node) renderResourceSetupCard(node, { resource: key, kind: "resource_setup", status: "failed", error: error?.message || String(error) });
+  }
+}
+function canonicalResourceKey(resourceKey) {
+  const raw = String(resourceKey || "").trim().toLowerCase().replace(/-/g, "_");
+  if (["gpt_sovits", "gptsovits", "gsv_tts_local", "gpt_sovits_runtime", "gpt_sovits_resource"].includes(raw)) return "gpt_sovits";
+  if (["rvc", "rvc_runtime", "rvc_resource"].includes(raw)) return "rvc";
+  return raw;
+}
+function resourceSetupDescriptor(resourceKey) {
+  const key = canonicalResourceKey(resourceKey);
+  const descriptors = {
+    rvc: { title: "RVC 运行环境", ready: "已就绪，可用于 RVC 变声处理。", fallback: "用于 RVC 音频变声、音轨处理和最终音频生成。" },
+    gpt_sovits: { title: "GPT-SoVITS 运行环境", ready: "已就绪，可用于 GPT-SoVITS 音色克隆与语音合成。", fallback: "用于 GPT-SoVITS 运行、音色处理和语音合成。" },
+    separator: { title: "人声分离模型", ready: "已就绪，可用于人声与伴奏分离。", fallback: "用于音频人声与伴奏分离。" },
+    asr: { title: "语音识别资源", ready: "已就绪，可用于语音转文字。", fallback: "用于语音识别和音频转写。" },
+    embedding: { title: "Embedding 本地模型", ready: "已就绪，可用于知识库向量化。", fallback: "用于文档向量化和知识库检索。" },
+    ffmpeg: { title: "FFmpeg 音视频处理资源", ready: "已就绪，可用于音视频处理。", fallback: "用于音轨提取和格式转换。" },
+  };  return descriptors[key] || {
+    title: `${String(resourceKey || "应用")} 运行资源`,
+    ready: "已就绪，可用于当前应用功能。",
+    fallback: "由配置 Worker 管理的应用运行资源。",
+  };
 }
 function renderResourceSetupCard(node, resource) {
   if (!node || !resource) return;
   node.querySelectorAll(".resource-setup-inline-card").forEach((item) => item.remove());
+  const key = canonicalResourceKey(resource.resource);
+  const descriptor = resourceSetupDescriptor(key);
   const card = document.createElement("section");
-  card.className = "resource-setup-inline-card rvc-inline-workspace";
-  card.dataset.resource = String(resource.resource);
-  const heading = document.createElement("div"); heading.className = "resource-setup-heading";
-  const title = document.createElement("strong"); title.textContent = `${String(resource.resource).toUpperCase()} 运行资源`;
-  const badge = document.createElement("span"); badge.className = "resource-setup-status";
+  card.className = "resource-setup-inline-card";
+  card.dataset.resource = key;
+  const heading = document.createElement("div");
+  heading.className = "resource-setup-heading";
+  const title = document.createElement("strong");
+  title.textContent = descriptor.title;
+  const badge = document.createElement("span");
+  badge.className = "resource-setup-status";
   const install = resource.install && typeof resource.install === "object" ? resource.install : resource;
   const status = String(resource.status || install.status || "unknown").toLowerCase();
-  badge.textContent = status === "ok" || status === "ready" || install.ready === true ? "已就绪" : status === "failed" ? "检查失败" : status === "accepted" || status === "running" ? "处理中" : "需要处理";
+  const ready = install.ready === true || status === "ok" || status === "ready";
+  const installing = status === "accepted" || status === "running" || install.installing === true;
+  badge.textContent = installing ? "安装中" : ready ? "已就绪" : status === "failed" ? "安装失败" : "未就绪";
   heading.append(title, badge);
   const detail = document.createElement("p");
   const missing = Array.isArray(resource.missing) ? resource.missing : (Array.isArray(install.missing) ? install.missing : []);
-  detail.textContent = resource.error || install.error || (missing.length ? `缺少：${missing.join("、")}` : resource.phase || install.phase || "可通过对话查询或管理此资源。");
-  const actions = document.createElement("div"); actions.className = "resource-setup-actions";
-  if (!(status === "ok" || status === "ready" || install.ready === true)) {
-    actions.append(rvcButton("检查状态", () => resourceSetupAction(`请检查 ${resource.resource} 的配置状态`), true));
-    actions.append(rvcButton("开始安装", () => resourceSetupAction(`请安装 ${resource.resource} 所需资源`)));
+  const message = [resource.error, install.error, resource.detail, resource.message, install.detail, install.message]
+    .find((value) => String(value || "").trim());
+  detail.textContent = message || (missing.length ? `缺少：${missing.join("、")}` : (ready ? descriptor.ready : descriptor.fallback));
+  card.append(heading, detail);
+  const progress = Number(install.progress_percent ?? install.progress);
+  if (installing) {
+    const progressWrap = document.createElement("div");
+    progressWrap.className = "resource-setup-progress";
+    const phase = String(install.phase || "preparing").toLowerCase();
+    const phaseText = resourcePhaseLabels[phase] || `正在准备${descriptor.title}`;
+    const hasProgress = Number.isFinite(progress) && progress >= 0;
+    progressWrap.innerHTML = `<div class="resource-setup-progress-head"><span>${phaseText}</span><b>${hasProgress ? `${Math.max(0, Math.min(100, progress))}%` : "处理中"}</b></div><div class="resource-setup-progress-track"><i style="width:${hasProgress ? Math.max(0, Math.min(100, progress)) : 35}%"></i></div>`;
+    card.append(progressWrap);
   }
-  if (status === "accepted" || status === "running" || install.installing === true) actions.append(rvcButton("取消安装", () => resourceSetupAction(`请取消 ${resource.resource} 的安装`)));
-  card.append(heading, detail, actions);
+  const actions = document.createElement("div");
+  actions.className = "resource-setup-actions";
+  const capabilities = resource.capabilities || install.capabilities || {};
+  const canClean = capabilities.clean === true || capabilities.uninstall === true || ["rvc", "asr", "ffmpeg", "embedding", "gpt_sovits"].includes(key) || key === "separator";
+  card.append(Object.assign(document.createElement("p"), { className: "resource-setup-note", textContent: "这是受管资源吗？用户模型、附件和历史结果不会被删除。" }));
+  if (installing) actions.append(rvcButton("停止", () => resourceSetupAction(resource, "cancel")));
+  else if (!ready) actions.append(rvcButton("检测", () => resourceSetupAction(resource, "status"), true), rvcButton("下载/安装", () => resourceSetupAction(resource, "install")));
+  else if (canClean) actions.append(rvcButton("卸载", () => resourceSetupAction(resource, "clean")));
+  card.append(actions);
   node.append(card);
 }
 
@@ -2879,7 +3029,12 @@ async function cancelActiveChatTask() {
   // RVC 主工作区不再写入 currentWorkflow；新消息/停止按钮必须先走同一
   // 个内嵌取消入口，否则旧 Agent turn 会继续占用 checkpoint 和轮询。
   if (state.rvcInline && !state.rvcInline.cancelling) {
+    const inline = state.rvcInline;
     await cancelInlineRvc();
+    // 取消卡保留在历史气泡中，但不再作为活动 workflow；下一条消息
+    // 必须从干净状态开始，且不能复活旧上传入口。
+    inline.workflowActive = false;
+    inline.cancelled = true;
     state.rvcInline = null;
     state.pendingAction = null;
     state.pendingInput = null;
@@ -3226,8 +3381,15 @@ function appendRvcCompletionPrompt(data) {
   state.pendingAction = null;
   state.pendingReplyNode = null;
   state.realtimeTurnId = null;
+  state.currentWorkflow = null;
+  state.currentTaskStatus = null;
+  data.workflowActive = false;
+  data.completed = true;
   data.completionPromptShown = true;
   appendMessage("assistant", "最终音频已经生成，请检查试听结果。本次 RVC 任务是否完成？如果需要重新开始、重新分离，或返回模型与参数配置，请直接告诉我。", undefined, []);
+  setRealtimeBusy(false);
+  renderConfirmation();
+  renderChatContext();
 }
 function rvcRuntimeReady(status) {
   if (!status || status.installing) return false;
@@ -3295,8 +3457,9 @@ function cancelRvcResourceInstall() {
 }
 function renderRvcResourceCard(box, status) {
   const card = document.createElement("section"); card.className = "rvc-inline-resource-card";
-  const title = document.createElement("strong"); title.textContent = status?.installing ? "正在准备 RVC 运行环境" : (status?.error ? "RVC 运行环境准备失败" : "RVC 尚未完成配置");
-  const detail = document.createElement("p"); detail.textContent = status?.installing ? rvcResourceStatusLabel(status) : (status?.error || "首次使用需要下载推理运行时和基础资源。下载完成后即可继续当前对话。");
+  const ready = rvcRuntimeReady(status);
+  const title = document.createElement("strong"); title.textContent = status?.installing ? "正在准备 RVC 运行环境" : (status?.error ? "RVC 运行环境准备失败" : (ready ? "RVC 运行环境已就绪" : "RVC 尚未完成配置"));
+  const detail = document.createElement("p"); detail.textContent = status?.installing ? rvcResourceStatusLabel(status) : (status?.error || (ready ? "运行环境与基础资源均已检测通过。" : "首次使用需要下载推理运行时和基础资源。下载完成后即可继续当前对话。"));
   const progress = document.createElement("progress"); progress.max = 100; progress.value = Math.max(0, Math.min(100, Number(status?.progress_percent) || 0)); progress.className = "rvc-inline-progress";
   const actions = document.createElement("div"); actions.className = "rvc-inline-resource-actions";
   if (status?.installing) { const cancel = rvcButton(status?.cancelling ? "正在取消…" : "取消下载", () => cancelRvcResourceInstall()); cancel.disabled = Boolean(status?.cancelling); actions.append(cancel); }
@@ -3628,7 +3791,21 @@ async function pollInlineRvcTask() {
 }
 async function cancelInlineRvc() {
   const data = state.rvcInline; if (!data || data.cancelling) return;
-  data.cancelling = true; data.generation += 1; clearTimeout(data.pollTimer); data.pollTimer = null; renderRvcInline();
+  const shouldResumeAgent = Boolean(state.pendingInput || state.pendingAction);
+  const realtimeTurnWasActive = Boolean(state.realtimeTurnId);
+  data.cancelling = true; data.generation += 1; clearTimeout(data.pollTimer); data.pollTimer = null;
+  // 先释放浏览器侧回合锁，再等待 session DELETE / Agent resume；否则
+  // 长音频取消期间停止键和输入框都会被旧 pending 状态锁死。
+  state.realtimeBusy = false;
+  state.agentRequestPending = false;
+  state.realtimeSubmissionPending = false;
+  state.realtimeExecutionPending = false;
+  state.realtimeTurnId = null;
+  state.pendingAction = null;
+  state.pendingInput = null;
+  state.pendingInputValues = {};
+  setRealtimeBusy(false);
+  renderRvcInline();
   const errors = [];
   // RVC 的活动状态由 Agent checkpoint 所有；浏览器只能提交取消动作，
   // 不再直接删除 session/task，避免前端状态与 rvc_worker 分叉。
@@ -3637,10 +3814,10 @@ async function cancelInlineRvc() {
     // 取消作为后台补充确认，不阻塞新消息和输入框恢复。
     if (data.sessionId) await chatRvcApi(`/api/voice/rvc/sessions/${encodeURIComponent(data.sessionId)}`, { method: "DELETE" });
   } catch (error) { errors.push(error); }
-  if (state.pendingInput || state.pendingAction) {
-    state.pendingInputValues = { ...(state.pendingInputValues || {}), action: "cancel" };
+  if (shouldResumeAgent) {
+    state.pendingInputValues = { action: "cancel" };
     void resumeAgent(null, { forceHttp: true }).catch((error) => setText("chat-error", `Agent 取消确认失败：${error.message || error}`, true));
-  } else if (state.realtimeTurnId) {
+  } else if (realtimeTurnWasActive) {
     if (!sendRealtime({ type: "generation.cancel" })) errors.push(new Error("实时连接不可用"));
   }
   data.taskId = null;
@@ -3649,4 +3826,3 @@ async function cancelInlineRvc() {
   renderRvcInline();
   if (errors.length) setText("chat-error", `任务已停止，但 Agent 未确认取消：${errors[0].message || errors[0]}`, true);
 }
-

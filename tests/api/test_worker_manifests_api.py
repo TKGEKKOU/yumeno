@@ -15,7 +15,7 @@ def test_worker_manifest_list_returns_public_manifests(client):
         "voice",
         "rvc_worker",
         "live2d",
-        "config",
+        "config_worker",
     ]
     assert payload["items"]
     first = payload["items"][0]

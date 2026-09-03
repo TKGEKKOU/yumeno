@@ -21,12 +21,15 @@ def _guard(request: Request, header: str) -> None:
         raise HTTPException(status_code=403, detail="Missing same-origin request header")
 
 def _resource(request: Request, provider_id: str):
+    provider_id = {"stt": "asr", "local_stt": "asr", "local_embedding": "embedding", "local_rerank": "reranker", "tts": "gpt_sovits", "gsv_tts_local": "gpt_sovits"}.get(provider_id, provider_id)
     mapping = {
         "embedding": "embedding_resources", "local_embedding": "embedding_resources",
         "reranker": "reranker_resources", "local_rerank": "reranker_resources",
         "stt": "asr_resources", "local_stt": "asr_resources",
         "gsv_tts_local": "gpt_sovits_install", "tts": "gpt_sovits_install",
         "rvc": "rvc_resources", "separator": "separator_resources",
+        "ffmpeg": "ffmpeg_resources", "asr": "asr_resources", "stt": "asr_resources",
+        "gpt_sovits": "gpt_sovits_install",
     }
     attr = mapping.get(provider_id)
     value = getattr(request.app.state, attr, None) if attr else None
@@ -135,12 +138,25 @@ def _install(request: Request, provider_id: str, payload: dict[str, Any] | None 
         row = ProviderDownloadTask(id=str(uuid4()), provider_id=provider_id, resource_kind=provider_id, operation="install", status="preparing", phase="preparing", parameters_json=payload)
         session.add(row); session.commit(); session.refresh(row)
     try:
-        if provider_id in {"embedding", "local_embedding", "reranker", "local_rerank"}:
-            resource.start_install(payload.get("model_id", ""), payload.get("source", "modelscope"), payload.get("device", "auto"))
-        elif provider_id in {"gsv_tts_local", "tts"}:
-            resource.start_install(payload.get("url"))
+        if provider_id in {"embedding", "reranker"}:
+            current = _status(resource)
+            resource.start_install(payload.get("model_id") or current.get("model_id", ""), payload.get("source", current.get("source", "modelscope")), payload.get("device", current.get("device", "auto")))
+        elif provider_id == "gpt_sovits":
+            current = _status(resource)
+            url = payload.get("url") or current.get("download_url")
+            if not url:
+                raise ValueError("GPT-SoVITS 尚未配置下载源")
+            resource.start_install(url)
+        elif provider_id == "ffmpeg":
+            installer = getattr(resource, "start_install", None) or getattr(resource, "install", None)
+            if not callable(installer):
+                raise ValueError("FFmpeg 当前没有可用的受管安装器")
+            installer()
         else:
-            resource.start_install()
+            installer = getattr(resource, "start_install", None) or getattr(resource, "install", None)
+            if not callable(installer):
+                raise ValueError(f"资源 {provider_id} 当前没有可用的安装器")
+            installer()
     except Exception as exc:
         with request.app.state.session_factory() as session:
             current = session.get(ProviderDownloadTask, row.id)
@@ -217,6 +233,59 @@ def retry_task(task_id: str, request: Request, x_yumeno_request: str = Header(de
         provider_id, params = row.provider_id, dict(row.parameters_json or {})
         params["retry_count"] = int(params.get("retry_count", 0)) + 1
     return _install(request, provider_id, params)
+
+@router.get("")
+def resource_catalog(request: Request, x_yumeno_request: str = Header(default="")):
+    """返回可由 config_worker 管理的本地资源，不把 API provider 或用户模型混入目录。"""
+    _guard(request, x_yumeno_request)
+    definitions = [
+        ("rvc", "RVC 运行环境"),
+        ("separator", "人声分离模型"),
+        ("asr", "语音识别资源"),
+        ("gpt_sovits", "GPT-SoVITS 运行环境"),
+        ("ffmpeg", "FFmpeg 音视频处理资源"),
+        ("embedding", "Embedding 本地模型"),
+    ]
+    items = []
+    for provider_id, title in definitions:
+        try:
+            manager = _resource(request, provider_id)
+            status = _status(manager)
+        except HTTPException:
+            continue
+        clean = any(callable(getattr(manager, name, None)) for name in ("remove_managed", "remove_models", "remove_install", "remove_model", "remove"))
+        install = any(callable(getattr(manager, name, None)) for name in ("start_install", "install"))
+        items.append({"provider_id": provider_id, "resource_kind": provider_id, "title": title, "status": status, "capabilities": {"status": True, "install": install, "cancel": callable(getattr(manager, "cancel_install", None)), "clean": clean}})
+    return {"items": items}
+
+@router.get("/{provider_id}/status")
+def resource_status(provider_id: str, request: Request, x_yumeno_request: str = Header(default="")):
+    _guard(request, x_yumeno_request)
+    return {"provider_id": provider_id, "resource_kind": provider_id, "status": _status(_resource(request, provider_id))}
+
+@router.delete("/{provider_id}/install/cancel", status_code=202)
+def cancel_resource_install(provider_id: str, request: Request, x_yumeno_request: str = Header(default="")):
+    _guard(request, x_yumeno_request)
+    resource = _resource(request, provider_id)
+    status = _status(resource)
+    if not status.get("installing"):
+        return {"provider_id": provider_id, "resource_kind": provider_id, "status": status}
+    cancel = getattr(resource, "cancel_install", None)
+    if not callable(cancel):
+        raise HTTPException(status_code=405, detail="该资源不支持停止安装")
+    cancel()
+    return {"provider_id": provider_id, "resource_kind": provider_id, "status": _status(resource)}
+
+@router.delete("/{provider_id}/install")
+def remove_resource(provider_id: str, request: Request, x_yumeno_request: str = Header(default="")):
+    _guard(request, x_yumeno_request)
+    resource = _resource(request, provider_id)
+    if _status(resource).get("installing"):
+        raise HTTPException(status_code=409, detail="资源正在安装，请先停止安装")
+    method = getattr(resource, "remove_managed", None) or getattr(resource, "remove_models", None) or getattr(resource, "remove_install", None) or getattr(resource, "remove_model", None) or getattr(resource, "remove", None)
+    if not callable(method):
+        raise HTTPException(status_code=405, detail="该资源不支持卸载")
+    return {"provider_id": provider_id, "resource_kind": provider_id, "status": method()}
 
 for _router in (legacy_router,):
     _router.add_api_route("/{provider_id}/install", install, methods=["POST"], status_code=202)

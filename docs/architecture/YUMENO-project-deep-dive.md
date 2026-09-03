@@ -261,7 +261,7 @@ Supervisor 提示词和节点在 [`agents/graph/supervisor.py`](../../agents/gra
 图内 Worker 是：
 
 - knowledge（Planner + 确定性 retrieve/fallback）
-- memory / document / profile / voice_clone / config（受限工具 LLM 子 Agent）
+- memory / document / profile / voice / config_worker（受限工具 LLM 子 Agent）
 
 HTTP 仍映射到旧四值 specialist（conversation / web / memory / management），那是 resume 兼容层，不是图内节点。
 
@@ -310,7 +310,7 @@ flowchart LR
     M --> FM["finalize_memory"] --> SUP
     SUP -. handoff .-> D["document_worker"]
     D --> FD["finalize_document"] --> SUP
-    SUP -. handoff .-> P["profile / voice_clone / config"]
+    SUP -. handoff .-> P["profile / voice / config_worker"]
     P --> FP["finalize_*"] --> SUP
 ```
 

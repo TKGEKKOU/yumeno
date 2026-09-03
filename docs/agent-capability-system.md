@@ -57,7 +57,7 @@ YUMENO 的 Worker 能力边界由 `WorkerManifest` 描述。Manifest 不是第�
 - `profile`：角色档案和会话导出。
 - `voice`：音色素材、分析、训练、进度和绑定。
 - `live2d`：Live2D 模型、参数与 VTube Studio 配置。
-- `config`：配置读取以及确认后的配置变更。
+- `config_worker`：配置读取以及确认后的配置变更。
 
 每个 Manifest 声明：
 

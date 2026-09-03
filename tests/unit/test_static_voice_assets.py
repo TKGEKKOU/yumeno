@@ -177,6 +177,19 @@ def test_resource_install_buttons_explain_ready_and_installing_states():
     assert "markEmbeddingSelectionChanged" not in script
 
 
+def test_chat_resource_card_exposes_safe_management_actions():
+    script = read_script("chat")
+    assert 'rvcButton("检测"' in script
+    assert 'rvcButton("下载/安装"' in script
+    assert 'rvcButton("卸载"' in script
+    assert 'resourceSetupAction(resource, "clean")' in script
+    assert '["rvc", "asr", "ffmpeg", "embedding", "gpt_sovits"].includes(key)' in script
+    assert "这是受管资源吗？用户模型、附件和历史结果不会被删除。" in script
+    assert 'GPT-SoVITS 运行环境' in script
+    assert '用于 GPT-SoVITS 运行、音色处理和语音合成。' in script
+    assert 'resource-setup-inline-card rvc-inline-workspace' not in script
+
+
 def test_primary_navigation_uses_collapsible_sidebar_with_chat_first():
     html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
     script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
@@ -315,7 +328,8 @@ def test_chat_process_bubble_shows_node_workflow():
     assert "agent-process-list" in script and styles
     assert "agent-process-spinner" in script and styles
     assert "agent-process-check" in script and styles
-    assert "while (list.children.length > 6)" in script
+    assert "item.dataset.sequence" in script
+    assert "list.append(existing)" not in script
     assert "item.title = label" in script
     assert "agent-process-details summary::after" in styles
 

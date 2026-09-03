@@ -5,6 +5,21 @@
 [![Tests](https://img.shields.io/badge/tests-970%20collected-informational)](https://github.com/TKGEKKOU/yumeno)
 
 > 曾用名 PersonaLive；代码、容器名、API 校验头等内部标识仍沿用 `personalive` 前缀，作为工程别名保留。
+## 内置 Agent Runtime（2026-09-03）
+
+YUMENO 现在将 Harness 的核心运行抽象内置在项目自身的 Python Runtime 中，不要求下载或维护多套 runtime，也不依赖外部 Harness 源码、Node runtime 或 runtime executable。内置层提供 Session、Job、流式 Event、Cancel、Resume 和 RunStore 生命周期；Core Agent 继续负责意图识别，Supervisor 继续负责业务路由与 Worker 生命周期，RVC/config/RAG/GPT-SoVITS 等 Worker 继续负责具体业务。
+
+推荐启动方式：
+
+```powershell
+.\.venv\Scripts\python.exe -m agents.runtime serve
+# 或
+pip install -e .
+yumeno serve
+```
+
+详细边界见 [`docs/HARNESS_RUNTIME.md`](docs/HARNESS_RUNTIME.md)。
+
 ## 当前版本说明（2026-09-02）
 
 当前工作重点是先把 **Web 对话页、会话文件和 Agent 运行时**整理成稳定基础，再逐步接入更多 Worker。RVC 已作为首个真实文件型 Worker 样板：对话页通过会话附件取得受管 `attachment_id`，由 Agent/Worker 调度共享 RVC session 与 task 服务，前端只展示状态、进度、分离结果和最终音频，不传递浏览器临时路径。
@@ -109,7 +124,7 @@ knowledge 子图 与六个领域 Worker，通过质量门与有界纠错机制�
 
 - 1 个对外 `persona_supervisor`（LLM + 工具循环）
 - 1 个 `knowledge` Planner 子图（单次策略决策 + 受控的完整 RAG/SQL/web 管线，**不是** `create_agent`）
-- 6 个领域 Worker：`memory` / `document` / `profile` / `voice` / `live2d` / `config`，均通过受限工具执行
+- 6 个领域 Worker：`memory` / `document` / `profile` / `voice` / `live2d` / `config_worker`，均通过受限工具执行
 
 Worker 不互调，也不直达父图 END。`knowledge` 负责知识检索与结构化查询，但不负责最终用户表达；所有领域结果经 `finalize_*` 合同校验后回到 Supervisor，由它结合人设说话。
 
@@ -309,7 +324,7 @@ knowledge 走 Planner + 确定性管线，其余 5 个 Worker 才是 `create_age
 | profile | `create_agent` | 人设资料变更，写操作走 HITL |
 | voice | `create_agent` | 音色素材、训练与绑定 |
 | live2d | `create_agent` | Live2D 模型与 VTube Studio 配置 |
-| config | `create_agent` | 运行时配置，写操作走 HITL |
+| config_worker | `create_agent` | 运行时配置，写操作走 HITL |
 
 **Agent 间通信（Handoff）**：为每个 Worker 动态创建 `delegate_to_*` handoff 工具，通过
 `Command(PARENT, goto=worker_node, update=...)` 将控制权从 Supervisor 子图交还父图对应节点；

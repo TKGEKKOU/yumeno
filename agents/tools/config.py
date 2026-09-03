@@ -1,5 +1,6 @@
 """配置管理 Worker 工具集"""
 from __future__ import annotations
+import inspect
 import logging
 from typing import Any, Literal
 from langchain.tools import ToolRuntime, tool
@@ -232,8 +233,27 @@ def _resource_managers(runtime: ToolRuntime[PersonaAgentContext]) -> dict[str, A
         "asr": getattr(app_state, "asr_resources", None),
         "embedding": getattr(app_state, "embedding_resources", None),
         "gpt_sovits": getattr(app_state, "gpt_sovits_install", None),
+        "separator": getattr(app_state, "separator_resources", None),
     }
 
+
+def _normalized_resource_status(key: str, value: Any) -> dict[str, Any]:
+    raw = dict(value) if isinstance(value, dict) else {"detail": str(value)}
+    progress = raw.get("progress_percent", raw.get("progress"))
+    if progress is None and raw.get("total_bytes"):
+        progress = round(float(raw.get("downloaded_bytes", 0)) * 100 / float(raw["total_bytes"]))
+    raw.update({
+        "resource": key,
+        "ready": bool(raw.get("ready", False)),
+        "installed": bool(raw.get("installed", False)),
+        "installing": bool(raw.get("installing", False)),
+        "cancelling": bool(raw.get("cancelling", False)),
+        "progress_percent": progress,
+        "phase": str(raw.get("phase") or ("ready" if raw.get("ready") else "idle")),
+        "detail": str(raw.get("detail") or raw.get("message") or ""),
+        "error": str(raw.get("error") or ""),
+    })
+    return raw
 
 @tool
 def get_resource_install_status(
@@ -246,8 +266,14 @@ def get_resource_install_status(
     if manager is None or not hasattr(manager, "status"):
         return {"status": "failed", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": "status", "error": "不支持或不可用的受管资源"}
     try:
-        install = manager.status()
-        return {"status": "ok", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": "status", "install": install, "phase": (install or {}).get("phase") if isinstance(install, dict) else None, "progress_percent": (install or {}).get("progress_percent", (install or {}).get("progress", 0)) if isinstance(install, dict) else 0, "missing": (install or {}).get("missing", []) if isinstance(install, dict) else []}
+        install = _normalized_resource_status(key, manager.status())
+        capabilities = {
+            "status": True,
+            "install": callable(getattr(manager, "start_install", None)) or callable(getattr(manager, "install", None)),
+            "cancel": callable(getattr(manager, "cancel_install", None)),
+            "clean": callable(getattr(manager, "remove_managed", None)) or callable(getattr(manager, "remove_install", None)) or callable(getattr(manager, "remove", None)),
+        }
+        return {"status": "ok", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": "status", "install": install, "capabilities": capabilities, "phase": (install or {}).get("phase") if isinstance(install, dict) else None, "progress_percent": (install or {}).get("progress_percent", (install or {}).get("progress", 0)) if isinstance(install, dict) else 0, "missing": (install or {}).get("missing", []) if isinstance(install, dict) else []}
     except Exception as exc:
         return {"status": "failed", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": "status", "error": str(exc)}
 
@@ -268,7 +294,22 @@ def manage_resource_install(
             method = getattr(manager, "start_install", None) or getattr(manager, "install", None)
             if method is None:
                 return {"status": "failed", "resource": key, "error": "该资源没有安装器"}
-            result = method()
+            # 不同受管资源的安装器合同不同：RVC/ASR/FFmpeg 无参数，
+            # GPT-SoVITS 需要下载地址。优先复用管理器自身状态中的默认地址，
+            # 避免卡片上的“下载/安装”按钮只能触发一个参数错误。
+            required = [
+                parameter for parameter in inspect.signature(method).parameters.values()
+                if parameter.default is inspect.Parameter.empty
+                and parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            ]
+            if required:
+                current = manager.status() if callable(getattr(manager, "status", None)) else {}
+                url = current.get("download_url") if isinstance(current, dict) else None
+                if not url:
+                    return {"status": "failed", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": action, "error": "该资源需要先提供下载地址"}
+                result = method(url)
+            else:
+                result = method()
         elif action == "cancel":
             method = getattr(manager, "cancel_install", None)
             if method is None:
@@ -279,7 +320,7 @@ def manage_resource_install(
             if method is None:
                 return {"status": "failed", "resource": key, "error": "该资源不支持安全清理"}
             result = method()
-        return {"status": "accepted", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": action, "install": result if isinstance(result, dict) else None, "phase": (result or {}).get("phase") if isinstance(result, dict) else "accepted", "progress_percent": (result or {}).get("progress_percent", (result or {}).get("progress", 0)) if isinstance(result, dict) else 0}
+        return {"status": "accepted", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": action, "install": result if isinstance(result, dict) else None, "capabilities": {"status": True, "install": True, "cancel": callable(getattr(manager, "cancel_install", None)), "clean": callable(getattr(manager, "remove_managed", None)) or callable(getattr(manager, "remove_install", None)) or callable(getattr(manager, "remove", None))}, "phase": (result or {}).get("phase") if isinstance(result, dict) else "accepted", "progress_percent": (result or {}).get("progress_percent", (result or {}).get("progress", 0)) if isinstance(result, dict) else 0}
     except Exception as exc:
         logger.exception("resource action failed: %s/%s", key, action)
         return {"status": "failed", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": action, "error": str(exc)}

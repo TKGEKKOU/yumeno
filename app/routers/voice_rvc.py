@@ -111,10 +111,11 @@ def provider_install_cancel(request: Request, x_yumeno_request: str = Header(def
 @provider_router.delete("/install")
 def provider_install_remove(request: Request, x_yumeno_request: str = Header(default="")):
     guard(request, x_yumeno_request)
-    if manager(request)._state.get("installing"): raise HTTPException(status_code=409, detail="请先取消安装")
-    # 仅删除 YUMENO 自己创建的运行时/目录，不触碰外部源码或用户模型。
-    shutil.rmtree(manager(request).runtime_root, ignore_errors=True)
-    return manager(request).status()
+    try:
+        # 与 config_worker 共用同一安全清理实现，保持页面和对话页行为一致。
+        return manager(request).remove_managed()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 @provider_router.get("/directory")
 def provider_directory(request: Request, x_yumeno_request: str = Header(default="")):

@@ -463,13 +463,18 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 .composer { padding: 14px clamp(24px,8vw,120px) 16px; display: grid; grid-template-columns: 40px minmax(0,1fr) 40px 44px; align-items: center; gap: 8px; background: transparent; }
 .visually-hidden-input { width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; position: absolute; }
 .composer textarea { height: 44px; min-height: 44px; max-height: 120px; padding: 10px 14px; border-radius: 2px; resize: none; line-height: 1.5; overflow-y: hidden; }
-.composer .icon-button, .send-button { width: 40px; height: 44px; min-height: 44px; border-radius: 0; }
+.composer .icon-button, .send-button { width: 44px; height: 44px; min-height: 44px; border-radius: 50%; }
 .composer .icon-button.is-recording { border-color: var(--danger); background: var(--danger-tint); color: var(--danger); }
 .composer .icon-button.is-transcribing svg { animation: spin .8s linear infinite; }
-.send-button { border: 1px solid var(--ink); display: grid; place-items: center; background: var(--ink); color: var(--bg); }
+.send-button { position: relative; border: 1px solid var(--ink); display: grid; place-items: center; background: var(--ink); color: var(--bg); }
+.send-button svg { width: 18px; height: 18px; stroke-width: 2.4; }
 .send-button:hover { background: var(--ink-hover); border-color: var(--ink-hover); }
-.send-button.is-stop { border-color: var(--danger); background: var(--danger); color: #ffffff; }
-.send-button.is-stop:hover { background: var(--danger-dark); border-color: var(--danger-dark); }
+.send-button.is-stop { border-color: var(--line-dark); background: var(--surface); color: var(--ink); }
+.send-button.is-stop:hover { border-color: var(--ink); background: var(--surface-strong); }
+/* 停止态使用真正的实心方块，而不是 Lucide 的空心 square 图标。
+   伪元素与按钮的 grid 定位保持同一个几何中心。 */
+.send-button.is-stop svg { display: none; }
+.send-button.is-stop::before { content: ""; width: 12px; height: 12px; border-radius: 2px; background: #000; }
 .chat-feedback { min-height: 20px; padding: 0 clamp(12px,5vw,62px) 5px; }
 .audio-status, .question-status, .chat-error { min-height: 0; margin: 0; font-size: 10px; }
 .audio-status:empty, .question-status:empty, .chat-error:empty { display: none; }
@@ -2441,7 +2446,12 @@ body:has(#chat-view:not(.is-hidden)) .page-shell { width: 100%; max-width: none;
 #chat-layout .composer .icon-button,
 #chat-layout .composer .send-button { border: 0; background: transparent; box-shadow: none; }
 #chat-layout .composer .send-button { width: 34px; height: 34px; min-width: 34px; min-height: 34px; aspect-ratio: 1; flex: 0 0 34px; padding: 0; display: grid; place-items: center; border-radius: 50%; background: var(--primary); color: #102221; }
+#chat-layout .composer .send-button svg { width: 17px; height: 17px; stroke-width: 2.5; }
 #chat-layout .composer .send-button:disabled { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--muted); }
+#chat-layout .composer .send-button.is-stop { background: var(--surface); border: 1px solid var(--line-dark); color: var(--ink); }
+#chat-layout .composer .send-button.is-stop:hover { background: var(--surface-strong); border-color: var(--ink); }
+#chat-layout .composer .send-button.is-stop svg { display: none; }
+#chat-layout .composer .send-button.is-stop::before { content: ""; width: 11px; height: 11px; border-radius: 2px; background: #000; }
 
 /* Each rail floats independently; opening one never resizes or recenters the chat. */
 #chat-layout .chat-files-sidebar,
@@ -2754,7 +2764,7 @@ body:has(#chat-view:not(.is-hidden)) .page-shell { width: 100%; max-width: none;
 
 /* Chat remains one continuous, light workspace: no visible separator above the composer. */
 #chat-layout .chat-footer { border-top: 0; background: transparent; }
-#chat-layout .composer { border-color: color-mix(in srgb, var(--ink) 7%, transparent); background: color-mix(in srgb, var(--surface) 22%, transparent); box-shadow: 0 2px 10px rgb(22 54 61 / 4%); }
+#chat-layout .composer { border-radius: 22px; border-color: color-mix(in srgb, var(--ink) 7%, transparent); background: color-mix(in srgb, var(--surface) 22%, transparent); box-shadow: 0 2px 10px rgb(22 54 61 / 4%); }
 #chat-layout .composer:focus-within { border-color: color-mix(in srgb, var(--primary) 32%, transparent); background: color-mix(in srgb, var(--surface) 30%, transparent); box-shadow: 0 3px 12px rgb(22 54 61 / 5%); }
 #chat-layout .composer textarea { border-color: color-mix(in srgb, var(--ink) 6%, transparent); background: color-mix(in srgb, var(--surface) 28%, transparent); box-shadow: none; }
 #chat-layout .composer textarea:focus { border-color: color-mix(in srgb, var(--primary) 28%, transparent); box-shadow: none; outline: none; }
@@ -2776,3 +2786,6 @@ body:has(#chat-view:not(.is-hidden)) .page-shell { width: 100%; max-width: none;
 .resource-setup-status { font-size: .78rem; color: var(--primary, #39C5BB); }
 .resource-setup-inline-card p { margin: 8px 0 12px; color: var(--text-secondary, #5b6c69); }
 .resource-setup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.resource-setup-components{display:grid;gap:4px;margin:10px 0;color:var(--muted,#6d7778);font-size:12px}.resource-setup-component{display:flex;justify-content:space-between;gap:12px}.resource-setup-component .is-ready{color:#39a99f}.resource-setup-component .is-missing{color:#9a6b45}.resource-setup-progress{margin:10px 0}.resource-setup-progress-head{display:flex;justify-content:space-between;font-size:12px;color:var(--muted,#6d7778);margin-bottom:5px}.resource-setup-progress-track{height:5px;border-radius:99px;background:#dcebea;overflow:hidden}.resource-setup-progress-track i{display:block;height:100%;border-radius:inherit;background:#39c5bb;transition:width .35s ease}
+/* 资源管理卡片：固定信息区高度，避免下载阶段因文案变化上下跳动。 */
+.resource-setup-inline-card{height:188px;min-height:188px;box-sizing:border-box;display:flex;flex-direction:column}.resource-setup-inline-card .resource-setup-actions{margin-top:auto}.resource-setup-progress-head span{max-width:78%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

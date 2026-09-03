@@ -7,6 +7,9 @@ name = "persona-live"
 version = "0.2.0"
 requires-python = ">=3.11,<3.12"
 
+[project.scripts]
+yumeno = "agents.runtime.cli:main"
+
 [tool.setuptools]
 py-modules = ["settings"]
 

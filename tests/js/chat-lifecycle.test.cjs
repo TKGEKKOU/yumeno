@@ -371,3 +371,32 @@ assert.match(
   "session status resume must release the previous confirmation lock before resuming Agent",
 );
 console.log("ok: RVC session status resume releases the prior confirmation lock");
+
+
+(() => {
+  const replaced = [];
+  const button = {
+    classList: { toggle() {} },
+    querySelector: () => ({ replaceWith(node) { replaced.push(node); } }),
+    setAttribute() {},
+  };
+  const sandbox = {
+    window: { PL: { modules: {} } }, console,
+    document: { createElement: () => ({ dataset: {} }) },
+    $: (id) => id === "send-question" ? button : null,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync("static/js/chat.js", "utf8"), sandbox);
+  vm.runInContext("setSendButton(true)", sandbox);
+  assert.strictEqual(replaced[0].dataset.lucide, "square", "busy send button must render a square stop icon");
+  assert.strictEqual(button.title, "停止生成", "busy send button must expose stop semantics");
+  console.log("ok: busy send button renders a clickable stop icon");
+})();
+
+assert.match(
+  chatSource,
+  /const stopAvailable = Boolean\([\s\S]*?rvcBusy[\s\S]*?\);[\s\S]*?send-question\"\)\.disabled = !state\.activePersona \|\| \(!stopAvailable && conversationBusy\)/,
+  "the composer must keep the stop button enabled while a turn or RVC task is active",
+);
+assert.match(chatSource, /resourceSetupDescriptor|descriptor\.ready/, "resource cards must use resource-specific ready descriptions");
+console.log("ok: composer and resource-card regression contracts");

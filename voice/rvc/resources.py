@@ -158,7 +158,7 @@ class RVCResourceManager:
         indices = self.index_paths()
         components = {
             "source": {"ready": source_component_ready, "label": "YUMENO 内置 RVC 核心", "path": str(self.core_root)},
-            "runtime": {"ready": runtime_ready, "label": "独立 Python 运行时", "path": str(self.runtime_root)},
+            "runtime": {"ready": runtime_ready, "label": "RVC 运行环境", "path": str(self.runtime_root)},
             "hubert": {"ready": hubert is not None, "label": "Hubert", "path": str(hubert) if hubert else ""},
             "rmvpe": {"ready": rmvpe is not None, "label": "RMVPE", "path": str(rmvpe) if rmvpe else ""},
             "voice_models": {"ready": bool(models), "label": ".pth 音色模型", "count": len(models), "path": str(self.weights_dir)},
@@ -225,6 +225,26 @@ class RVCResourceManager:
             process = self._process
         if process is not None and process.poll() is None:
             process.kill()
+        return self.status()
+
+    def remove_managed(self) -> dict:
+        """安全卸载 YUMENO 自己创建的 RVC 运行时，不触碰外部源码和用户资源。"""
+        with self._lock:
+            if self._state.get("installing"):
+                raise RuntimeError("请先取消安装")
+            process = self._process
+        if process is not None and process.poll() is None:
+            raise RuntimeError("RVC 运行时仍在使用中，请稍后重试")
+        runtime_root = self.runtime_root.resolve()
+        expected_parent = (self.project_root / "runtime").resolve()
+        if runtime_root.parent != expected_parent or runtime_root.name != "rvc":
+            raise RuntimeError("拒绝清理异常的 RVC 运行时路径")
+        shutil.rmtree(runtime_root, ignore_errors=True)
+        self._cancel.clear()
+        self._process = None
+        self._set(installing=False, cancelling=False, phase="idle", progress_percent=0,
+                  detail="RVC 运行时已卸载", error="", started_at=None, current_file="",
+                  downloaded_bytes=0, total_bytes=0, speed_bytes_per_second=0, eta_seconds=None)
         return self.status()
 
     def _check_cancelled(self) -> None:
@@ -434,4 +454,3 @@ class RVCResourceManager:
             self._set(installing=False, phase="cancelled", detail="安装已取消", cancelling=False, eta_seconds=None)
         except Exception as exc:
             self._set(installing=False, phase="failed", error=str(exc), detail="RVC 运行时准备失败", cancelling=False)
-
