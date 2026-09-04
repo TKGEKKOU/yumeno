@@ -23,35 +23,39 @@ _WORKER_NODES = {
 
 
 def parent_graph_mermaid() -> str:
-    """Complete parent-graph topology, including handoff edges LangGraph omits."""
+    """Return the documented parent graph topology from ``build_persona_workflow``.
+
+    ``intent_route`` remains a compatibility/helper node in the implementation,
+    but the compiled workflow starts at ``persona_supervisor``.  Handoff edges
+    are represented explicitly because LangGraph's native parent export cannot
+    show Command-based transitions clearly.
+    """
 
     lines = [
-        "%% YUMENO 完整 Multi-Agent 父图",
-        "%% 强意图由 intent_route 直达 Worker；其余交给 Supervisor",
+        "%% YUMENO Supervisor-centric 父图（与 build_persona_workflow 对齐）",
         "flowchart TD",
-        "  START([START]) --> R[intent_route]",
-        "  R -->|模糊 / knowledge / web| S[persona_supervisor]",
-        "  S -->|直接回答| END([父图 END])",
-        "  S -->|需要执行| D[supervisor_dispatch]",
-        "  D -->|收集必要输入| C[supervisor_collect]",
+        "  START([START]) --> S[persona_supervisor\nCore + Supervisor]",
+        "  S -->|普通对话 / 已有答案| END([END])",
+        "  S -->|需要结构化任务| D[supervisor_dispatch]",
+        "  D -->|缺少必要输入| C[supervisor_collect]",
         "  C --> S",
     ]
-    handoffs: list[str] = ["  R -->|强意图| S"]
-    finalizes: list[str] = []
-    returns: list[str] = []
-    for worker in WORKERS:
-        node_id, label = _WORKER_NODES.get(worker, (worker, f"{worker} Worker"))
-        handoffs.append(f"  D -->|delegate_to_{worker}| {node_id}[{label}]")
-        finalize_id = f"F{node_id}"
-        finalizes.append(f"  {node_id} --> {finalize_id}[finalize_{worker}]")
-        returns.append(f"  {finalize_id} --> S")
-    # RVC 的异步 session 在 finalize 后经过显式边界节点；它是编译父图的
-    # 真实节点，必须出现在文档拓扑中，避免 README 图与运行时漂移。
-    lines.extend(handoffs)
-    lines.extend(finalizes)
-    lines.extend(returns)
-    lines.append("  FRV --> RW[rvc_wait_boundary]")
-    lines.append("  RW --> S")
+    for index, worker in enumerate(WORKERS):
+        node_id, label = _WORKER_NODES.get(worker, (f"W{index}", f"{worker} Worker"))
+        dispatch_id = f"DISPATCH_{index}"
+        finalize_id = f"FINALIZE_{index}"
+        lines.append(f"  D -->|delegate_to_{worker}| {dispatch_id}[{label}]")
+        lines.append(f"  {dispatch_id} --> {finalize_id}[finalize_{worker}]")
+        if worker == "rvc_worker":
+            lines.append(f"  {finalize_id} --> RW[rvc_wait_boundary]")
+            lines.append("  RW -->|终态结果| S")
+            lines.append("  RW -.->|等待输入 / 失败结果| END")
+        else:
+            lines.append(f"  {finalize_id} --> S")
+    lines.extend([
+        "  S -.-> IR[intent_route\n兼容性意图线索与安全门禁]",
+        "  IR -.-> S",
+    ])
     return "\n".join(lines) + "\n"
 
 
@@ -59,16 +63,17 @@ def knowledge_subgraph_mermaid() -> str:
     """Human-readable knowledge subgraph plus its contract return to Supervisor."""
 
     return (
-        "%% knowledge：Planner + 确定性执行，不是 create_agent 工具循环\n"
+        "%% knowledge_worker 是 Planner + 确定性检索子图\n"
         "flowchart TD\n"
-        "  START([子图 START]) --> P[planner 选择 RAG 或 SQL]\n"
-        "  P --> R[retrieve 执行管线]\n"
-        "  R --> F[fallback 不足才升级]\n"
-        "  F --> SE([子图 END])\n"
-        "  SE --> FK[finalize_knowledge]\n"
-        "  FK --> S[persona_supervisor]\n"
-        "  R -.-> RAG[RAG / 只读 SQL]\n"
-        "  F -.-> WEB[拒绝 / HITL / web]\n"
+        "  START([子图 START]) --> P[knowledge_planner\n选择 RAG / SQL / 回退]\n"
+        "  P --> R[knowledge_retrieve\n作用域检索管线]\n"
+        "  R --> F[knowledge_fallback\n证据不足时策略处理]\n"
+        "  F --> END([子图 END])\n"
+        "  R --> VEC[(Milvus Lite\nDense / Sparse 向量)]\n"
+        "  R --> SQL[(SQLite\n元数据与查询记录)]\n"
+        "  F -.-> WEB[联网搜索 / HITL / 拒答]\n"
+        "  END --> FINAL[finalize_knowledge_worker]\n"
+        "  FINAL --> SUP[persona_supervisor]\n"
     )
 
 

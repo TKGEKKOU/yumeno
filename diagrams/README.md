@@ -1,173 +1,212 @@
 # YUMENO 架构图
 
-全部用 Markdown mermaid 画，可直接在 GitHub / 编辑器预览。不要再导出 PNG。
+这里集中维护与当前代码核对过的 Mermaid 架构图。README 只展示最能说明产品主线的 5 张图；本页补充 RVC 长任务和资源边界等实现细节。
 
-口径：
+## 阅读口径
 
-- 这是 **hybrid Supervisor-centric**：1 个对外 Supervisor + 1 个 knowledge 子图 + 7 个领域 Worker。
-- knowledge **是** LangGraph 子图，**不是** `create_agent` 工具循环。
-- Worker 不直达父图 END，也不互相调用。
-- 父图拓扑见 `agents.graph.diagram.parent_graph_mermaid()`；LangGraph 原生父图导出缺 handoff 边。
+- 我们采用 **Supervisor-centric Agent Architecture**：`persona_supervisor` 是唯一面向用户组织最终回复的节点。
+- `knowledge_worker` 是 Planner + 确定性检索子图，不是自由的 `create_agent` 工具循环。
+- 领域 Worker 不互相调用，也不直接向父图 `END` 输出未经收口的用户答案。
+- `config_worker` 负责应用受管资源；业务 Worker 负责使用资源。
+- Native Runtime 是进程内生命周期内核；它记录运行状态和事件，但不替代业务 Agent 图，也不是外部调度集群。
+- 架构图中的“Milvus”默认指 Milvus Lite；远程 Milvus 是可选部署方式。
 
-## 系统上下文
+## 1. 系统上下文
 
 ```mermaid
-%% YUMENO 系统上下文：接入层如何进入 Agent 图与存储
+%% YUMENO 系统上下文：多入口进入同一套角色 Agent 服务
 flowchart LR
-  Web[Web 前端] --> API[FastAPI]
-  QQ[QQ / OneBot] --> API
-  Bili[B站] --> API
-  API --> Svc[PersonaAgentService]
-  Svc --> Graph[LangGraph 父图]
-  Graph --> RAG[RAG / SQL]
-  Graph --> DB[(SQLite 检查点与记忆)]
-  RAG --> Vec[(Milvus)]
-  Svc --> HITL[HITL 确认]
-  Graph --> Voice[TTS / Live2D]
+  U[用户] --> WEB[Web / Desktop]
+  QQ[QQ / OneBot] --> API[FastAPI 应用层]
+  BILI[B站接入] --> API
+  WEB --> API
+  API --> SVC[PersonaAgentService]
+  SVC --> GRAPH[LangGraph Persona Workflow]
+  GRAPH --> DOMAIN[领域 Worker 与工具]
+  DOMAIN --> FILES[(文件系统
+附件 / 模型 / 结果)]
+  DOMAIN --> SQL[(SQLite
+控制面与元数据)]
+  DOMAIN --> MILVUS[(Milvus Lite
+向量数据面)]
+  DOMAIN --> EXT[外部服务
+LLM / TTS / 搜索 / 接入]
 ```
 
-## 完整 Multi-Agent 父图
+多个入口最终进入同一个 FastAPI 和 `PersonaAgentService`，不会为 Web、QQ、B站分别复制一套 Agent 业务逻辑。
+
+## 2. Agent 编排主流程
 
 ```mermaid
-%% YUMENO 完整 Multi-Agent 父图
-%% 强意图由 intent_route 直达 Worker；其余交给 Supervisor
+%% YUMENO Supervisor-centric 父图（与 build_persona_workflow 对齐）
 flowchart TD
-  START([START]) --> R[intent_route]
-  R -->|模糊 / knowledge / web| S[persona_supervisor]
-  S -->|直接回答| END([父图 END])
-  S -->|需要执行| D[supervisor_dispatch]
-  D -->|收集必要输入| C[supervisor_collect]
+  START([START]) --> S[persona_supervisor
+Core + Supervisor]
+  S -->|普通对话 / 已有答案| END([END])
+  S -->|需要结构化任务| D[supervisor_dispatch]
+  D -->|缺少必要输入| C[supervisor_collect]
   C --> S
-  R -->|强意图| S
-  D -->|delegate_to_knowledge_worker| K[knowledge_worker 子图]
-  D -->|delegate_to_memory_worker| M[memory_worker]
-  D -->|delegate_to_document_worker| D[document_worker]
-  D -->|delegate_to_profile_worker| P[profile_worker]
-  D -->|delegate_to_voice_worker| V[voice_worker]
-  D -->|delegate_to_rvc_worker| RV[rvc_worker Worker]
-  D -->|delegate_to_live2d_worker| L[live2d_worker]
-  D -->|delegate_to_config_worker| C[config_worker Worker]
-  K --> FK[finalize_knowledge_worker]
-  M --> FM[finalize_memory_worker]
-  D --> FD[finalize_document_worker]
-  P --> FP[finalize_profile_worker]
-  V --> FV[finalize_voice_worker]
-  RV --> FRV[finalize_rvc_worker]
-  L --> FL[finalize_live2d_worker]
-  C --> FC[finalize_config_worker]
-  FK --> S
-  FM --> S
-  FD --> S
-  FP --> S
-  FV --> S
-  FRV --> S
-  FL --> S
-  FC --> S
-  FRV --> RW[rvc_wait_boundary]
-  RW --> S
+  D -->|delegate_to_knowledge_worker| DISPATCH_0[knowledge_worker 子图]
+  DISPATCH_0 --> FINALIZE_0[finalize_knowledge_worker]
+  FINALIZE_0 --> S
+  D -->|delegate_to_memory_worker| DISPATCH_1[memory_worker]
+  DISPATCH_1 --> FINALIZE_1[finalize_memory_worker]
+  FINALIZE_1 --> S
+  D -->|delegate_to_document_worker| DISPATCH_2[document_worker]
+  DISPATCH_2 --> FINALIZE_2[finalize_document_worker]
+  FINALIZE_2 --> S
+  D -->|delegate_to_profile_worker| DISPATCH_3[profile_worker]
+  DISPATCH_3 --> FINALIZE_3[finalize_profile_worker]
+  FINALIZE_3 --> S
+  D -->|delegate_to_voice_worker| DISPATCH_4[voice_worker]
+  DISPATCH_4 --> FINALIZE_4[finalize_voice_worker]
+  FINALIZE_4 --> S
+  D -->|delegate_to_rvc_worker| DISPATCH_5[rvc_worker Worker]
+  DISPATCH_5 --> FINALIZE_5[finalize_rvc_worker]
+  FINALIZE_5 --> RW[rvc_wait_boundary]
+  RW -->|终态结果| S
+  RW -.->|等待输入 / 失败结果| END
+  D -->|delegate_to_live2d_worker| DISPATCH_6[live2d_worker]
+  DISPATCH_6 --> FINALIZE_6[finalize_live2d_worker]
+  FINALIZE_6 --> S
+  D -->|delegate_to_config_worker| DISPATCH_7[config_worker Worker]
+  DISPATCH_7 --> FINALIZE_7[finalize_config_worker]
+  FINALIZE_7 --> S
+  S -.-> IR[intent_route
+兼容性意图线索与安全门禁]
+  IR -.-> S
 ```
 
-## knowledge 子图
+工作流的真实入口是 `START → persona_supervisor`。`intent_route` 目前保留为兼容性意图线索和安全门禁，不应被理解为绕过 Supervisor 的独立主路由。
+
+## 3. Worker 注册与最小权限
 
 ```mermaid
-
-%% knowledge：Planner + 确定性执行，不是 create_agent 工具循环
-flowchart TD
-  START([子图 START]) --> P[planner 选择 RAG 或 SQL]
-  P --> R[retrieve 执行管线]
-  R --> F[fallback 不足才升级]
-  F --> SE([子图 END])
-  SE --> FK[finalize_knowledge]
-  FK --> S[persona_supervisor]
-  R -.-> RAG[RAG / 只读 SQL]
-  F -.-> WEB[拒绝 / HITL / web]
-```
-
-## 意图与权限
-
-```mermaid
-%% 意图是分层信号 + 硬门禁，不是单一路由器
-flowchart TD
-  Q[用户问题] --> Cap{"能力自检?"}
-  Cap -->|是| List[直接返回能力清单]
-  Cap -->|否| Funnel[确定性漏斗]
-  Funnel --> Inherit[省略句继承]
-  Inherit --> Dec[intent_decision]
-  Dec --> Hint[Supervisor prompt 顾问]
-  Dec --> Gate[web_authorized 硬门禁]
-  Hint --> Del[delegate_to 选择 Worker]
-  Gate --> Mid[registry + capability]
-  Mid --> Act[拒绝 / HITL / 执行]
-```
-
-## 分层记忆与 HITL
-
-```mermaid
-%% 分层记忆 + HITL 绑定 checkpoint
+%% Worker 注册表、manifest 与最小权限工具集合
 flowchart LR
-  subgraph Mem[分层记忆]
-    CK[checkpoint 工作记忆]
-    SUM[对话摘要]
-    PM[角色 / 工作区记忆]
-    KS[知识空间 RAG/SQL]
-  end
-  S[Supervisor / Worker] --> CK
-  CK --> S
-  SUM --> S
-  PM --> MW[memory Worker]
-  KS --> KW[knowledge 子图]
-  Write[写操作 / 联网确认] --> INT[interrupt]
-  INT --> User[用户确认]
-  User -->|resume| CK
+  REG[agents/registry.py
+canonical names + aliases] --> MAN[Worker manifest]
+  MAN --> SPEC[ToolSpec 过滤]
+  SPEC --> K[knowledge_worker
+最小工具集]
+  SPEC --> M[memory_worker
+最小工具集]
+  SPEC --> D[document_worker
+最小工具集]
+  SPEC --> V[voice_worker
+最小工具集]
+  SPEC --> R[rvc_worker
+最小工具集]
+  SPEC --> C[config_worker
+最小工具集]
+  SPEC --> O[其它领域 Worker]
+  MCP[MCP 服务] -. 外部扩展工具 .-> SCOPE[运行时权限边界]
+  K --> SCOPE
+  M --> SCOPE
+  D --> SCOPE
+  V --> SCOPE
+  R --> SCOPE
+  C --> SCOPE
 ```
 
-## 宏观到微观同构
+注册表统一维护 canonical name、兼容别名、manifest、执行默认值和工具集合。这样 Worker 可以按领域获得最小权限，而不是共享全部工具。
+
+## 4. Native Runtime 生命周期
 
 ```mermaid
-%% 宏观父图与微观 knowledge 子图遵守同一套分层
-flowchart TB
-  subgraph Macro[宏观 父图]
-    S[Supervisor 选择]
-    W[Worker 执行]
-    F[finalize 校验]
-    A[Supervisor 表达]
-  end
-  subgraph Micro[微观 knowledge]
-    P[planner 选择]
-    R[retrieve 执行]
-    FB[fallback / HITL]
-    FK[finalize 校验]
-  end
-  S -.-> P
-  W -.-> R
-  F -.-> FK
-  A -.-> OUT[只对外说话]
+%% Native Runtime 是进程内生命周期内核，不是独立分布式调度服务
+flowchart TD
+  SESSION[Session
+会话作用域] --> RUN[AgentRun
+持久化运行记录]
+  RUN --> JOB[Native Runtime Job
+进程内控制句柄]
+  JOB --> Q[queued]
+  Q --> R[running]
+  R --> WAIT[waiting_approval / paused]
+  WAIT -->|resume| R
+  R --> DONE[completed]
+  R --> FAIL[failed]
+  R --> CANCEL[cancelled]
+  JOB -.事件流 / 进度 / 取消.-> STORE[RunStore]
+  STORE --> SQL[(SQLite
+运行摘要与事件)]
 ```
 
-## RAG 检索管线
+Session 表示会话作用域，`AgentRun` 是可持久化的运行记录，Native Runtime Job 是进程内控制句柄。确认、补充输入、取消和恢复都通过运行合同和事件反馈给前端。
+
+## 5. knowledge_worker 子图
 
 ```mermaid
-%% knowledge_retrieve 内部的 RAG 管线，不是完整 Multi-Agent 图
+%% knowledge_worker 是 Planner + 确定性检索子图
+flowchart TD
+  START([子图 START]) --> P[knowledge_planner
+选择 RAG / SQL / 回退]
+  P --> R[knowledge_retrieve
+作用域检索管线]
+  R --> F[knowledge_fallback
+证据不足时策略处理]
+  F --> END([子图 END])
+  R --> VEC[(Milvus Lite
+Dense / Sparse 向量)]
+  R --> SQL[(SQLite
+元数据与查询记录)]
+  F -.-> WEB[联网搜索 / HITL / 拒答]
+  END --> FINAL[finalize_knowledge_worker]
+  FINAL --> SUP[persona_supervisor]
+```
+
+文档导入由 `document_worker` 负责，检索和回答证据处理由 `knowledge_worker` 负责；两者通过知识空间、文档和来源引用关联，不把所有知识逻辑塞进一个 Worker。
+
+## 6. RVC 文件型长任务
+
+```mermaid
+%% RVC 文件型长任务：引用 ID 在各阶段传递，不暴露本地路径
 flowchart LR
-    Q[用户问题] --> S[Supervisor / 角色作用域]
-    S --> R[意图路由]
-    R -->|闲聊/能力| A[直接回答]
-    R -->|知识问题| H[SQLite checkpoint\n不跨角色]
-    H --> D[Dense Embedding + BM25]
-    D --> F[RRF 融合召回]
-    F --> U[内容去重\n精确 + 近似]
-    U --> K[候选 K]
-    K --> X[Qwen3-Reranker-0.6B\n常驻预热]
-    X -->|最高分 < 0.1| N[快速拒答\n资料不足]
-    X -->|保留相关候选| T[Token Budget\n主片段 + 邻居片段]
-    T --> G[生成回答]
-    G --> C[质量门]
-    C -->|通过| Z[最终答案]
-    C -->|失败且未超限| P[有界修正]
-    P --> G
-    C -->|超限| N
-    N --> Z
-    D -.向量存储.- M[(Milvus)]
-    H -.会话状态.- L[(SQLite)]
-    G -.custom stage.- UI[前端过程气泡]
+  MSG[对话请求] --> SUP[persona_supervisor]
+  SUP --> W[rvc_worker]
+  ATT[attachment_id] --> PRE[音频标准化 / 视频音轨提取]
+  W --> PRE
+  PRE --> SEP[人声与伴奏分离]
+  SEP --> APPROVE{用户确认音轨}
+  APPROVE -->|resume| MODEL[选择模型 / Index / 参数]
+  MODEL --> TASK[创建 conversion task]
+  TASK --> EVENT[任务事件与进度]
+  EVENT --> RESULT[成功：结果引用
+失败/取消：真实状态]
+  RESULT --> SUP
+  CFG[config_worker] -.安装并检查 Separator.-> SEP
 ```
+
+RVC 是 YUMENO 文件型任务和恢复边界的验证场景。各阶段传递 `attachment_id`、session、task 和 result reference，不向前端暴露或依赖浏览器临时路径。
+
+## 7. 受管资源边界
+
+```mermaid
+%% config_worker 的资源边界
+flowchart TD
+  C[config_worker] --> MANAGED[应用受管资源]
+  MANAGED --> ENV[RVC / GPT-SoVITS / ASR / FFmpeg]
+  MANAGED --> MODELS[Separator / Embedding / Reranker]
+  C --> ACTION[检查 / 下载 / 停止 / 卸载]
+  ACTION --> ROOT[受管目录边界]
+  C -.不可管理 / 不得误删.-> USER[用户模型
+.pth / .index]
+  C -.-> ATT[会话附件 / 历史音频]
+  C -.-> DOC[用户知识文档 / 历史任务结果]
+```
+
+我们只允许 `config_worker` 操作应用受管目录。用户音色模型、附件、知识文档、历史结果和非受管路径不进入资源卸载逻辑。
+
+## 代码对应关系
+
+| 图 | 主要代码 |
+| --- | --- |
+| Agent 编排 | `agents/graph/build.py`、`agents/graph/supervisor.py` |
+| Worker 注册 | `agents/registry.py`、`agents/graph/state.py` |
+| Runtime | `agents/runtime/native.py`、`agents/runtime/runner.py`、`agents/runtime/models.py` |
+| RAG | `agents/graph/knowledge.py`、`rag/`、`ingestion/` |
+| RVC | `agents/tools/rvc.py`、`voice/`、相关 API 路由 |
+| 资源管理 | `agents/tools/config.py`、`app/routers/providers.py`、`app/routers/resources.py` |
+
+修改这些代码的拓扑或状态合同时，应同步更新对应 `.mmd` 文件和架构图测试。

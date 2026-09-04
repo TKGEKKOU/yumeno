@@ -1,36 +1,37 @@
-%% YUMENO 完整 Multi-Agent 父图
-%% 强意图由 intent_route 直达 Worker；其余交给 Supervisor
+%% YUMENO Supervisor-centric 父图（与 build_persona_workflow 对齐）
 flowchart TD
-  START([START]) --> R[intent_route]
-  R -->|模糊 / knowledge / web| S[persona_supervisor]
-  S -->|直接回答| END([父图 END])
-  S -->|需要执行| D[supervisor_dispatch]
-  D -->|收集必要输入| C[supervisor_collect]
+  START([START]) --> S[persona_supervisor
+Core + Supervisor]
+  S -->|普通对话 / 已有答案| END([END])
+  S -->|需要结构化任务| D[supervisor_dispatch]
+  D -->|缺少必要输入| C[supervisor_collect]
   C --> S
-  R -->|强意图| S
-  D -->|delegate_to_knowledge_worker| K[knowledge_worker 子图]
-  D -->|delegate_to_memory_worker| M[memory_worker]
-  D -->|delegate_to_document_worker| D[document_worker]
-  D -->|delegate_to_profile_worker| P[profile_worker]
-  D -->|delegate_to_voice_worker| V[voice_worker]
-  D -->|delegate_to_rvc_worker| RV[rvc_worker Worker]
-  D -->|delegate_to_live2d_worker| L[live2d_worker]
-  D -->|delegate_to_config_worker| C[config_worker Worker]
-  K --> FK[finalize_knowledge_worker]
-  M --> FM[finalize_memory_worker]
-  D --> FD[finalize_document_worker]
-  P --> FP[finalize_profile_worker]
-  V --> FV[finalize_voice_worker]
-  RV --> FRV[finalize_rvc_worker]
-  L --> FL[finalize_live2d_worker]
-  C --> FC[finalize_config_worker]
-  FK --> S
-  FM --> S
-  FD --> S
-  FP --> S
-  FV --> S
-  FRV --> S
-  FL --> S
-  FC --> S
-  FRV --> RW[rvc_wait_boundary]
-  RW --> S
+  D -->|delegate_to_knowledge_worker| DISPATCH_0[knowledge_worker 子图]
+  DISPATCH_0 --> FINALIZE_0[finalize_knowledge_worker]
+  FINALIZE_0 --> S
+  D -->|delegate_to_memory_worker| DISPATCH_1[memory_worker]
+  DISPATCH_1 --> FINALIZE_1[finalize_memory_worker]
+  FINALIZE_1 --> S
+  D -->|delegate_to_document_worker| DISPATCH_2[document_worker]
+  DISPATCH_2 --> FINALIZE_2[finalize_document_worker]
+  FINALIZE_2 --> S
+  D -->|delegate_to_profile_worker| DISPATCH_3[profile_worker]
+  DISPATCH_3 --> FINALIZE_3[finalize_profile_worker]
+  FINALIZE_3 --> S
+  D -->|delegate_to_voice_worker| DISPATCH_4[voice_worker]
+  DISPATCH_4 --> FINALIZE_4[finalize_voice_worker]
+  FINALIZE_4 --> S
+  D -->|delegate_to_rvc_worker| DISPATCH_5[rvc_worker Worker]
+  DISPATCH_5 --> FINALIZE_5[finalize_rvc_worker]
+  FINALIZE_5 --> RW[rvc_wait_boundary]
+  RW -->|终态结果| S
+  RW -.->|等待输入 / 失败结果| END
+  D -->|delegate_to_live2d_worker| DISPATCH_6[live2d_worker]
+  DISPATCH_6 --> FINALIZE_6[finalize_live2d_worker]
+  FINALIZE_6 --> S
+  D -->|delegate_to_config_worker| DISPATCH_7[config_worker Worker]
+  DISPATCH_7 --> FINALIZE_7[finalize_config_worker]
+  FINALIZE_7 --> S
+  S -.-> IR[intent_route
+兼容性意图线索与安全门禁]
+  IR -.-> S

@@ -1,0 +1,15 @@
+%% RVC 文件型长任务：引用 ID 在各阶段传递，不暴露本地路径
+flowchart LR
+  MSG[对话请求] --> SUP[persona_supervisor]
+  SUP --> W[rvc_worker]
+  ATT[attachment_id] --> PRE[音频标准化 / 视频音轨提取]
+  W --> PRE
+  PRE --> SEP[人声与伴奏分离]
+  SEP --> APPROVE{用户确认音轨}
+  APPROVE -->|resume| MODEL[选择模型 / Index / 参数]
+  MODEL --> TASK[创建 conversion task]
+  TASK --> EVENT[任务事件与进度]
+  EVENT --> RESULT[成功：结果引用
+失败/取消：真实状态]
+  RESULT --> SUP
+  CFG[config_worker] -.安装并检查 Separator.-> SEP

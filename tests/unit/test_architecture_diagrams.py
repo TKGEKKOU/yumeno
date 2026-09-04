@@ -1,7 +1,3 @@
-"""README mermaid stays aligned with the compiled graph and checked-in diagrams."""
-
-from __future__ import annotations
-
 from pathlib import Path
 
 from agents.graph.diagram import (
@@ -18,12 +14,13 @@ DIAGRAM_README = (ROOT / "diagrams" / "README.md").read_text(encoding="utf-8")
 DIAGRAM_STEMS = (
     "yumeno-system-context",
     "yumeno-multi-agent",
+    "yumeno-worker-registry",
+    "yumeno-runtime-lifecycle",
     "yumeno-knowledge-subgraph",
-    "yumeno-intent-permission",
-    "yumeno-memory-hitl",
-    "yumeno-isomorphic-layers",
-    "yumeno-rag-current-architecture",
+    "yumeno-rvc-workflow",
+    "yumeno-resource-boundary",
 )
+README_STEMS = DIAGRAM_STEMS[:5]
 
 
 def _mmd(stem: str) -> str:
@@ -46,13 +43,21 @@ def test_checked_in_parent_mmd_matches_generator():
     assert knowledge_subgraph_mermaid().strip() == _mmd("yumeno-knowledge-subgraph")
 
 
-def test_readme_embeds_all_mermaid_diagrams():
-    assert README.count("```mermaid") == 7
-    assert DIAGRAM_README.count("```mermaid") == 7
+def test_readme_and_diagram_index_have_expected_layers():
+    assert README.count("```mermaid") == len(README_STEMS)
+    assert DIAGRAM_README.count("```mermaid") == len(DIAGRAM_STEMS)
+    for stem in README_STEMS:
+        assert _mmd(stem) in README, stem
     for stem in DIAGRAM_STEMS:
-        body = _mmd(stem)
-        assert body in README, stem
-        assert body in DIAGRAM_README, stem
+        assert _mmd(stem) in DIAGRAM_README, stem
+
+
+def test_architecture_files_use_unique_parent_node_ids():
+    mermaid = parent_graph_mermaid()
+    assert "D[document_worker]" not in mermaid
+    assert "C[config_worker]" not in mermaid
+    assert "START([START]) --> S[persona_supervisor" in mermaid
+    assert "START([START]) --> R[intent_route" not in mermaid
 
 
 def test_native_knowledge_export_matches_compiled_subgraph():

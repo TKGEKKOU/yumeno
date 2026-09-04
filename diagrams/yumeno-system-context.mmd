@@ -1,12 +1,17 @@
-%% YUMENO 系统上下文：接入层如何进入 Agent 图与存储
+%% YUMENO 系统上下文：多入口进入同一套角色 Agent 服务
 flowchart LR
-  Web[Web 前端] --> API[FastAPI]
-  QQ[QQ / OneBot] --> API
-  Bili[B站] --> API
-  API --> Svc[PersonaAgentService]
-  Svc --> Graph[LangGraph 父图]
-  Graph --> RAG[RAG / SQL]
-  Graph --> DB[(SQLite 检查点与记忆)]
-  RAG --> Vec[(Milvus)]
-  Svc --> HITL[HITL 确认]
-  Graph --> Voice[TTS / Live2D]
+  U[用户] --> WEB[Web / Desktop]
+  QQ[QQ / OneBot] --> API[FastAPI 应用层]
+  BILI[B站接入] --> API
+  WEB --> API
+  API --> SVC[PersonaAgentService]
+  SVC --> GRAPH[LangGraph Persona Workflow]
+  GRAPH --> DOMAIN[领域 Worker 与工具]
+  DOMAIN --> FILES[(文件系统
+附件 / 模型 / 结果)]
+  DOMAIN --> SQL[(SQLite
+控制面与元数据)]
+  DOMAIN --> MILVUS[(Milvus Lite
+向量数据面)]
+  DOMAIN --> EXT[外部服务
+LLM / TTS / 搜索 / 接入]
