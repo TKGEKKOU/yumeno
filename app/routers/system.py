@@ -2,6 +2,7 @@ import os
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
@@ -9,6 +10,8 @@ from app.routers.settings import require_local
 from app.schemas import DockerSettingsPayload, ShutdownPayload
 from extensions.storage import read_json, write_json
 from settings import Settings
+from ingestion.status import get_system_status
+from voice.resource_directory import open_resource_directory
 
 
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -45,6 +48,35 @@ def _mcp_manager(request: Request):
     if manager is None:
         raise HTTPException(status_code=503, detail="MCP 管理器尚未就绪")
     return manager
+
+
+@router.get("/diagnostics")
+def diagnostics(request: Request) -> dict:
+    """只读系统诊断；单纯查询，不修改任何用户数据。"""
+    require_local(request)
+    return get_system_status()
+
+
+@router.post("/open-directory/{location}")
+def open_diagnostics_directory(location: str, request: Request) -> dict:
+    """只允许打开系统诊断中明确列出的本地目录，不接受任意路径。"""
+    require_local(request)
+    settings = Settings.load()
+    milvus_path = Path(settings.milvus_uri)
+    if not milvus_path.is_absolute():
+        milvus_path = settings.project_root / milvus_path
+    locations = {
+        "project": settings.project_root,
+        "data": settings.project_root / "data",
+        "runtime": settings.project_root / "runtime",
+        "models": settings.project_root / "models",
+        "sqlite": settings.sqlite_path.parent,
+        "milvus": milvus_path.parent,
+    }
+    target = locations.get(location)
+    if target is None:
+        raise HTTPException(status_code=404, detail="未知的诊断目录")
+    return {"opened_directory": open_resource_directory(Path(target))}
 
 
 @router.get("/docker-settings")

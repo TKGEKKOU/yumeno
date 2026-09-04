@@ -195,7 +195,7 @@ def test_primary_navigation_uses_collapsible_sidebar_with_chat_first():
     html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
     script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
     styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
-    assert html.index('id="nav-chat"') < html.index('id="nav-create"') < html.index('id="nav-manage"') < html.index('id="nav-test"') < html.index('id="nav-settings"')
+    assert html.index('id="nav-chat"') < html.index('id="nav-role"') < html.index('id="nav-voice"') < html.index('id="nav-knowledge"') < html.index('id="nav-system"')
     assert 'id="sidebar-toggle"' in html
     assert "setSidebarPinned" in script
     assert "personalive:sidebar-collapsed" not in script
@@ -300,7 +300,7 @@ def test_chat_upload_uses_persistent_shared_voice_session_bridge():
     assert "uploadChatVoiceMaterial" in script
     assert "音色素材上传失败" in script
     assert "resumeChatVoiceCloneSession" in voice
-    assert "voice: { view: \"voice\", init: window.PL.modules.voice?.init, onShow: window.PL.modules.voice?.onShow }" in app
+    assert "voice: { view: \"voice-workbench\", init: initVoiceWorkbench, onShow: showVoiceWorkbench }" in app
 
 
 def test_view_switch_keeps_chat_realtime_connected():
@@ -308,9 +308,10 @@ def test_view_switch_keeps_chat_realtime_connected():
 
     assert "if (view !== \"chat\") {" not in app
     assert "closeRealtime();" not in app
-    assert "window.PL?.modules?.[previousView]?.onHide?.();" in app
-    assert "if (module?.init) module.init();" in app
-    assert "if (module?.onShow) module.onShow();" in app
+    assert "const previousEntry = MODULES[previousView];" in app
+    assert "await previousEntry?.onHide?.();" in app
+    assert "await entry.init?.();" in app
+    assert "await entry.onShow?.();" in app
 
 
 def test_settings_page_keeps_three_navigation_groups_and_safety_confirmation():

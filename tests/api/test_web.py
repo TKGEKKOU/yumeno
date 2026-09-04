@@ -8,16 +8,16 @@ def test_root_redirects_to_web_workbench(client):
 def test_web_workbench_exposes_shell_and_module_views(client):
     response = client.get("/static/index.html")
     assert response.status_code == 200
-    assert 'href="/static/styles.css"' in response.text
-    assert 'src="/static/js/app.js"' in response.text
+    assert 'href="/static/styles.css' in response.text
+    assert 'src="/static/js/app.js' in response.text
     for element_id in (
-        "nav-create",
-        "nav-manage",
         "nav-chat",
-        "nav-test",
-        "nav-settings",
+        "nav-role",
+        "nav-voice",
+        "nav-knowledge",
         "nav-integrations",
-        "nav-plugins",
+        "nav-capabilities",
+        "nav-system",
         "theme-toggle",
         "view-root",
         "preview-drawer",
@@ -108,7 +108,7 @@ def test_web_workbench_exposes_shell_and_module_views(client):
 
     scripts = {
         "/static/js/app.js": (
-            'fetch(`/static/views/${entry.view}.html`)',
+            'fetch(`/static/views/${entry.view}.html`, { headers: { Accept: "text/html" } })',
             'switchView("chat")',
         ),
         "/static/js/personas.js": (
@@ -155,7 +155,7 @@ def test_web_workbench_exposes_shell_and_module_views(client):
     assert "https://dashscope.aliyuncs.com/compatible-mode/v1" in client.get("/static/js/common.js").text
     shell = client.get("/static/index.html").text
     assert 'class="nav-index"' not in shell
-    assert shell.count('class="nav-label"') == 11
+    assert shell.count('class="nav-label"') == 7
     assert 'id="nav-live2d"' not in shell
     assert '/static/js/live2d-manager.js' not in shell
     assert client.get("/static/views/live2d.html").status_code == 404

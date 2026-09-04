@@ -38,7 +38,7 @@ async function previewVoice() {
   } catch (reason) { workbench.error.value = reason instanceof Error ? reason.message : String(reason); }
 }
 function openVoiceStudio() { (document.querySelector('[data-view="voice"]') as HTMLButtonElement | null)?.click(); }
-function openRagEval() { (document.querySelector('[data-view="test"]') as HTMLButtonElement | null)?.click(); }
+function openRagEval() { window.location.hash = "#knowledge-eval"; }
 function toggleVersionPanel() {
   if (!workbench.draft.value || busy.value) return;
   versionPanelOpen.value = !versionPanelOpen.value;

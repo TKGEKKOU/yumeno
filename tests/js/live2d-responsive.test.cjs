@@ -5,7 +5,7 @@ const css = fs.readFileSync("static/styles.css", "utf8");
 
 assert.match(
   css,
-  /@media \(max-width: 680px\)[\s\S]*?\.app-shell \{ display: block; min-width: 0; padding-left: 58px; \}/,
+  /@media \(max-width: 880px\)[\s\S]*?\.app-shell \{[^}]*display:\s*block;[^}]*min-width:\s*0;[^}]*padding-left:\s*58px;[^}]*\}/,
   "the narrow app shell releases its desktop minimum width so the shared Live2D stage fits the viewport",
 );
 

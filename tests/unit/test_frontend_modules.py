@@ -47,11 +47,12 @@ def test_role_inspector_keeps_rag_parameters_without_resource_installer():
 
 def test_shell_registers_new_module_entries():
     script = (ROOT / "static" / "js" / "app.js").read_text(encoding="utf-8")
-    assert 'integrations: { view: "integrations"' in script
-    assert 'plugins: { view: "plugins"' in script
-    assert 'create: { view: "create"' in script
-    assert 'manage: { view: "manage"' in script
-    assert 'test: { view: "test"' in script
+    assert 'integrations: { view: "integrations-workbench"' in script
+    assert 'capabilities: { view: "capabilities"' in script
+    assert 'role: { view: "role", init: initRoleWorkbench }' in script
+    assert 'knowledge: { view: "knowledge", init: initKnowledgeWorkbench' in script
+    assert 'await callModule("create")' in script
+    assert 'await callModule("manage")' in script
     assert 'upload: { view: "personas"' not in script
 
 

@@ -39,7 +39,6 @@ runtime/reranker/
 .pytest-*/
 .tmp-*/
 tmp*.py
-diagrams/
 # Local diagnostic/runtime artifacts
 _startup.*
 _workflow_startup.*
@@ -55,3 +54,6 @@ logs/
 
 # JavaScript dependencies (install with npm ci)
 node_modules/
+
+# Local working scratch files
+.tmp/

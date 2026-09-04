@@ -1,0 +1,10 @@
+%% knowledge：Planner + 确定性执行，不是 create_agent 工具循环
+flowchart TD
+  START([子图 START]) --> P[planner 选择 RAG 或 SQL]
+  P --> R[retrieve 执行管线]
+  R --> F[fallback 不足才升级]
+  F --> SE([子图 END])
+  SE --> FK[finalize_knowledge]
+  FK --> S[persona_supervisor]
+  R -.-> RAG[RAG / 只读 SQL]
+  F -.-> WEB[拒绝 / HITL / web]

@@ -1,0 +1,219 @@
+<section id="integrations-view" class="view is-hidden workbench-view integrations-workbench-page" data-workbench="integrations">
+  <nav class="workspace-tabs" aria-label="接入工作台"><button class="workspace-tab is-active" type="button" data-workbench-tab="integration-qq">QQ / NapCat</button><button class="workspace-tab" type="button" data-workbench-tab="integration-bili">B站直播</button></nav>
+  <div class="workbench-panel" data-workbench-panel="integration-bili"><div class="live-console">
+    <header class="live-console-head">
+      <div class="live-console-title">
+        <h2>B 站直播控制台</h2>
+        <p id="bili-room-title">尚未读取直播间标题</p>
+      </div>
+      <div class="live-console-status" aria-live="polite">
+        <span id="bili-dot" class="live-dot"></span>
+        <strong id="bili-state">未连接</strong>
+        <span id="bili-live-state" class="live-status-label">开播状态未知</span>
+        <span id="bili-channel" data-tone="muted">等待连接</span>
+        <span id="bili-queue-count">等待 0</span>
+      </div>
+    </header>
+
+    <div class="live-console-grid">
+      <section class="live-feed-pane" aria-labelledby="bili-feed-title">
+        <div class="live-pane-head">
+          <div><strong id="bili-feed-title">直播事件流</strong><small id="bili-room-label">等待连接直播间</small></div>
+          <button id="bili-clear-feed" class="icon-button" type="button" title="清空事件显示" aria-label="清空事件显示"><i data-lucide="list-x"></i></button>
+        </div>
+        <div id="bili-event-feed" class="live-event-feed selectable"><p class="empty-state">连接后，普通弹幕和进场消息会按时间进入队列</p></div>
+      </section>
+
+      <section class="live-character-pane" aria-labelledby="bili-stage-title">
+        <div class="live-pane-head">
+          <div><strong id="bili-stage-title">角色舞台</strong><small id="bili-processing">当前空闲</small></div>
+          <span id="bili-processed">已完成 0</span>
+        </div>
+        <div id="bili-live2d-host" class="bili-live2d-host"></div>
+        <article id="bili-current" class="bili-current-item is-empty">
+          <div class="bili-current-label"><span>当前处理项</span><span>FIFO</span></div>
+          <strong id="bili-current-user">等待下一条消息</strong>
+          <p id="bili-current-content">队列会按接收顺序逐条交给角色。</p>
+          <div id="bili-current-audio" class="bili-current-audio" aria-live="polite"></div>
+        </article>
+      </section>
+
+      <section class="live-replies-pane" aria-labelledby="bili-replies-title">
+        <div class="live-pane-head">
+          <div><strong id="bili-replies-title">已发出的回复</strong><small>仅保留文本记录，最多 100 条</small></div>
+          <span>TEXT LOG</span>
+        </div>
+        <div id="bili-reply-list" class="live-reply-list"><p class="empty-state">角色完成回复后，会在这里留下独立记录</p></div>
+      </section>
+    </div>
+
+    <form id="bili-config-form" class="live-console-controls">
+      <label class="field"><span>直播间号</span><input id="bili-room-id" inputmode="numeric" pattern="[0-9]*" placeholder="输入直播间号" required></label>
+      <label class="field"><span>回复角色</span><select id="bili-persona"><option value="">选择角色</option></select></label>
+      <label class="toggle-field"><input id="bili-danmaku" type="checkbox" checked><span>普通弹幕</span></label>
+      <label id="bili-enter-control" class="toggle-field live-capability-control"><input id="bili-enter" type="checkbox" checked><span>进场消息</span><small id="bili-enter-capability" data-tone="muted">等待连接</small></label>
+      <label class="toggle-field"><input id="bili-auto-voice" type="checkbox" checked><span>自动语音</span></label>
+      <div class="live-console-actions">
+        <button id="bili-connect" class="button button-primary" type="submit"><i data-lucide="radio"></i><span>连接直播间</span></button>
+        <button id="bili-pause" class="button button-secondary" type="button" disabled><i data-lucide="pause"></i><span>暂停</span></button>
+        <button id="bili-disconnect" class="button button-secondary" type="button" disabled><i data-lucide="power"></i><span>断开</span></button>
+        <button id="bili-clear-queue" class="icon-button" type="button" title="仅清空等待队列" aria-label="仅清空等待队列" disabled><i data-lucide="trash-2"></i></button>
+        <button id="bili-clear-session" class="button button-danger" type="button" title="停止当前语音并清空本次直播的队列、事件、回复和角色记忆"><i data-lucide="eraser"></i><span>清空本次直播</span></button>
+      </div>
+      <p id="bili-notice" class="live-channel-notice" aria-live="polite"></p>
+      <p id="bili-action-feedback" class="live-action-feedback" aria-live="polite"></p>
+      <p id="bili-error" class="inline-error" role="alert"></p>
+    </form>
+  </div></div>
+  <div class="workbench-panel is-active" data-workbench-panel="integration-qq"><div class="napcat-console">
+    <header class="napcat-page-head">
+      <div>
+        <h1>QQ 接入</h1>
+        <p>NapCat 独立运行，YUMENO 负责连接控制、角色回复和消息发送。</p>
+      </div>
+      <div class="napcat-status-compact" aria-live="polite">
+        <span id="napcat-dot" class="live-dot"></span>
+        <strong id="napcat-state">未连接</strong>
+        <span id="napcat-uin">未识别账号</span>
+      </div>
+    </header>
+
+    <section class="integration-panel napcat-connection-panel">
+      <div class="napcat-panel-heading">
+        <div>
+          <h2>连接 NapCat</h2>
+          <p>在 NapCat 的反向 WebSocket 客户端中填入此地址，然后启用并保存。</p>
+        </div>
+        <span id="napcat-token-state" class="status-pill">Token 未配置</span>
+      </div>
+      <div class="napcat-connection-form">
+        <div class="napcat-connection-fields">
+          <label class="field">
+            <span>WebSocket 地址</span>
+            <div class="napcat-url-row">
+              <input id="napcat-ws-url" readonly value="ws://127.0.0.1:17000/api/onebot/ws">
+              <button id="napcat-copy" class="icon-button" type="button" title="复制连接地址" aria-label="复制连接地址"><i data-lucide="copy"></i></button>
+            </div>
+          </label>
+          <label class="field">
+            <span>访问 Token（可选）</span>
+            <input id="napcat-token" type="password" autocomplete="new-password" placeholder="默认不使用 Token">
+          </label>
+        </div>
+        <div class="napcat-connection-actions">
+          <button id="napcat-save" class="button button-primary" type="button"><i data-lucide="plug"></i><span>启用并保存</span></button>
+          <button id="napcat-test" class="button button-secondary" type="button"><i data-lucide="badge-check"></i><span>连接测试</span></button>
+          <button id="napcat-refresh" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i><span>刷新状态</span></button>
+          <button id="napcat-disconnect" class="button button-danger" type="button"><i data-lucide="plug-zap"></i><span>关闭连接</span></button>
+          <button id="napcat-clear-token" class="button button-quiet" type="button"><i data-lucide="key-round"></i><span>清除 Token</span></button>
+        </div>
+      </div>
+      <div class="napcat-connection-meta">
+        <span><b>连接数</b><strong id="napcat-clients">0</strong></span>
+        <span><b>最近事件</b><strong id="napcat-event-time">暂无</strong></span>
+        <span><b>最近错误</b><strong id="napcat-error-time">暂无</strong></span>
+      </div>
+      <div class="napcat-resource-row">
+        <span>NapCat 需独立运行</span>
+        <a href="https://github.com/NapNeko/NapCatQQ-Desktop/releases" target="_blank" rel="noopener noreferrer"><i data-lucide="download"></i><span>下载 NapCatQQ Desktop</span></a>
+        <small>关闭连接后的 403 表示 NapCat 正在自动重连。</small>
+      </div>
+      <p id="napcat-feedback" class="live-action-feedback" aria-live="polite"></p>
+      <p id="napcat-error" class="inline-error" role="alert"></p>
+    </section>
+
+    <section class="integration-panel napcat-message-panel">
+      <div class="napcat-panel-heading">
+        <div>
+          <h2>消息配置</h2>
+          <p>先选择角色，再设置自动回复策略和主动回复频率。</p>
+        </div>
+      </div>
+      <div class="napcat-message-grid">
+        <section class="napcat-config-column" aria-labelledby="napcat-base-title">
+          <div class="napcat-config-section-head"><h3 id="napcat-base-title">基础设置</h3><p>角色、触发条件与文字处理。</p></div>
+          <label class="field">
+            <span>回复角色</span>
+            <select id="napcat-persona"><option value="">请选择角色</option></select>
+          </label>
+          <label class="napcat-setting-row">
+            <span><b>启用自动回复</b><small>处理私聊和明确触发的群聊消息。</small></span>
+            <input id="napcat-auto-reply" type="checkbox">
+          </label>
+          <label class="napcat-setting-row">
+            <span><b>中文文字</b><small>文字转为中文，语音保留原始语言。</small></span>
+            <input id="napcat-chinese-text" type="checkbox">
+          </label>
+          <label class="field">
+            <span>群聊触发方式</span>
+            <select id="napcat-group-trigger"><option value="at">被 @ 时回复</option><option value="prefix">使用前缀时回复</option></select>
+          </label>
+          <label id="napcat-prefix-field" class="field" hidden>
+            <span>群聊前缀</span>
+            <input id="napcat-prefix" maxlength="30" placeholder="例如：角色，">
+          </label>
+        </section>
+        <section class="napcat-policy-column" aria-labelledby="napcat-policy-title">
+          <div class="napcat-config-section-head"><h3 id="napcat-policy-title">回复策略</h3><p>选择发送形式与授权群聊的主动回复频率。</p></div>
+          <fieldset class="napcat-reply-mode">
+            <legend>回复内容</legend>
+            <div class="napcat-choice-row napcat-choice-row-three">
+              <label><span><b>仅文字</b><small>发送角色文字回复</small></span><input type="radio" name="napcat-reply-mode" value="text" checked></label>
+              <label><span><b>文字 + 语音</b><small>文字后逐段发送语音</small></span><input type="radio" name="napcat-reply-mode" value="text_voice"></label>
+              <label><span><b>仅语音</b><small>只发送生成的语音</small></span><input type="radio" name="napcat-reply-mode" value="voice_only"></label>
+            </div>
+          </fieldset>
+          <fieldset class="napcat-frequency">
+            <legend>群聊主动回复频率</legend>
+            <p>仅对已授权观察的群聊生效；命中后仍会判断内容是否适合回复。</p>
+            <div class="napcat-choice-row napcat-choice-row-four">
+              <label><span><b>不主动回复</b><small>0%</small></span><input type="radio" name="napcat-frequency" value="0"></label>
+              <label><span><b>低频</b><small>5%</small></span><input type="radio" name="napcat-frequency" value="0.05" checked></label>
+              <label><span><b>高频</b><small>30%</small></span><input type="radio" name="napcat-frequency" value="0.3"></label>
+              <label class="is-warning"><span><b>总是回复</b><small>100%</small></span><input type="radio" name="napcat-frequency" value="1"></label>
+            </div>
+          </fieldset>
+        </section>
+      </div>
+    </section>
+
+    <section class="integration-panel napcat-target-panel">
+      <div class="napcat-panel-heading">
+        <div>
+          <h2>消息工作区</h2>
+          <p>选择一个私聊或群聊窗口，发送测试消息、授权主动观察或清理该窗口记忆。</p>
+        </div>
+        <button id="napcat-refresh-targets" class="button button-secondary" type="button"><i data-lucide="users-round"></i><span>刷新联系人</span></button>
+      </div>
+      <div class="napcat-target-grid">
+        <label class="field"><span>窗口类型</span><select id="napcat-target-type"><option value="private">私聊</option><option value="group">群聊</option></select></label>
+        <label class="field"><span>联系人</span><select id="napcat-target"><option value="">手动输入或刷新联系人</option></select></label>
+        <label class="field"><span>目标 ID</span><input id="napcat-target-id" inputmode="numeric" placeholder="QQ 号或群号"></label>
+      </div>
+      <div class="napcat-target-actions">
+        <button id="napcat-authorize-observation" class="button button-secondary" type="button" disabled><i data-lucide="eye"></i><span>允许主动观察</span></button>
+        <button id="napcat-clear-memory" class="button button-danger" type="button" disabled><i data-lucide="eraser"></i><span>清空窗口记忆</span></button>
+      </div>
+      <div class="napcat-composer">
+        <label class="field napcat-text-field"><span>发送文字</span><textarea id="napcat-text" rows="3" maxlength="10000" placeholder="输入测试文字或手动回复"></textarea></label>
+        <label class="field"><span>语音文件路径</span><input id="napcat-record-path" placeholder="NapCat 可访问的 .wav / .silk 路径"></label>
+        <div class="napcat-send-actions">
+          <button id="napcat-send-text" class="button button-primary" type="button" disabled><i data-lucide="send"></i><span>发送文字</span></button>
+          <button id="napcat-send-record" class="button button-secondary" type="button" disabled><i data-lucide="mic"></i><span>发送语音</span></button>
+          <button id="napcat-send-both" class="button button-secondary" type="button" disabled><i data-lucide="send-horizontal"></i><span>文字 + 语音</span></button>
+        </div>
+      </div>
+    </section>
+
+    <section class="integration-panel napcat-recent-panel">
+      <div class="napcat-panel-heading napcat-recent-heading">
+        <div><h2>最近发送记录</h2><p>只保留实际发送成功的文字内容；纯语音消息不会展示。</p></div>
+        <button id="napcat-clear-log" class="button button-quiet" type="button"><i data-lucide="list-x"></i><span>清空记录</span></button>
+      </div>
+      <div id="napcat-log" class="napcat-log"><p class="empty-state">暂无已发送文字</p></div>
+    </section>
+
+    <input id="napcat-auto-voice" type="checkbox" hidden>
+    <input id="napcat-voice-only" type="checkbox" hidden>
+  </div></div>
+</section>

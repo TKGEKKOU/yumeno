@@ -1,0 +1,10 @@
+<section id="system-view" class="view is-hidden workbench-view system-workbench-page" data-workbench="system">
+  <nav class="workspace-tabs" aria-label="系统工作台"><button class="workspace-tab is-active" type="button" data-workbench-tab="system-overview">总览</button><button class="workspace-tab" type="button" data-workbench-tab="system-providers">服务供应商</button></nav>
+  <div class="workbench-panel is-active" data-workbench-panel="system-overview">
+    <section class="system-diagnostics" aria-live="polite">
+      <div class="diagnostics-header"><div><div id="system-health-state" class="diagnostics-state">检查中</div><div id="system-health-summary" class="diagnostics-summary">正在读取本机服务与数据状态</div></div><div class="diagnostics-actions"><button id="export-system-diagnostics" class="button button-secondary" type="button">导出 Markdown</button><button id="refresh-status" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>刷新诊断</button></div></div>
+      <div id="settings-system-status" class="system-diagnostics-status"><div id="system-diagnostics-root" class="diagnostics-grid"><div class="diagnostics-loading">正在读取诊断信息…</div></div><div id="system-storage-root" class="is-hidden" aria-hidden="true"></div></div>
+    </section>
+  </div>
+  <div class="workbench-panel" data-workbench-panel="system-providers"><div id="providers-root"></div></div>
+</section>

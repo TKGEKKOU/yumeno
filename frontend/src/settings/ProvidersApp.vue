@@ -390,15 +390,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="providers-settings">
-    <header class="settings-header">
-      <div>
-        <p class="eyebrow">RUNTIME / PROVIDERS</p>
-        <h2>供应商配置</h2>
-        <p class="settings-help">管理真正会被系统调用的 API 与本地资源。</p>
-      </div>
-      <button class="refresh-button" type="button" @click="fetchProviders" :disabled="loading" aria-label="刷新供应商列表"><RefreshCw :size="16" :class="{ spin: loading }" />刷新</button>
-    </header>
-
     <nav class="provider-tabs" role="tablist" aria-label="供应商类型">
       <button v-for="tab in tabs" :key="tab.id" :class="['tab-button', { active: activeTab === tab.id }]" role="tab" :aria-selected="activeTab === tab.id" @click="activeTab = tab.id">
         <span>{{ tab.label }}</span>
@@ -445,7 +436,6 @@ onBeforeUnmount(() => {
     </section>
 
     <main v-if="activeTab !== 'audio'" class="providers-main">
-      <div class="section-heading"><div><span class="section-label">{{ tabs.find(tab => tab.id === activeTab)?.label }}</span><h3>供应商</h3></div><span class="section-note">点击卡片查看配置</span></div>
       <div v-if="loading && providers.length === 0" class="loading-state"><RefreshCw :size="22" class="spin" /><p>加载中...</p></div>
       <div v-else-if="error && providers.length === 0" class="error-state"><X :size="22" /><p>{{ error }}</p><button class="button button-primary" @click="fetchProviders">重试</button></div>
       <div v-else-if="filteredProviders.length === 0" class="empty-state"><p>这个分类暂时没有可用供应商。</p></div>

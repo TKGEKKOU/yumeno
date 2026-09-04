@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from pymilvus import MilvusClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 
 from app.database import database_url
 from ingestion.local_embedding.resources import LocalEmbeddingResourceManager
@@ -177,6 +177,62 @@ def _resource_status(builder) -> dict:
         return {"ready": False, "error": str(exc)}
 
 
+def _sqlite_diagnostics(settings: Settings) -> dict:
+    path = settings.sqlite_path
+    result = {"type": "SQLite", "path": str(path), "exists": path.is_file(), "size_bytes": path.stat().st_size if path.is_file() else 0, "status": "not_initialized"}
+    if not path.is_file():
+        return result
+    engine = create_engine(database_url(settings), connect_args={"check_same_thread": False})
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+            tables = inspect(connection).get_table_names()
+            counts = {}
+            for table in tables:
+                if table.startswith("sqlite_"):
+                    continue
+                try:
+                    counts[table] = int(connection.execute(text(f'SELECT COUNT(*) FROM "{table.replace(chr(34), chr(34) * 2)}"')).scalar() or 0)
+                except Exception:
+                    counts[table] = None
+            result.update({
+                "status": "ok", "tables": len(tables), "counts": counts,
+                "journal_mode": str(connection.execute(text("PRAGMA journal_mode")).scalar() or "unknown"),
+                "last_modified": path.stat().st_mtime,
+            })
+    except Exception as exc:
+        result.update({"status": "error", "error": str(exc)})
+    finally:
+        engine.dispose()
+    return result
+
+
+def _milvus_diagnostics(settings: Settings) -> dict:
+    result = {"uri": settings.milvus_uri, "collection": settings.collection_name, "status": "not_configured", "collections": 0, "vectors": None}
+    if not settings.milvus_uri:
+        return result
+    client = None
+    try:
+        args = {"uri": settings.milvus_uri, "timeout": 2}
+        if settings.milvus_user and settings.milvus_password:
+            args.update({"user": settings.milvus_user, "password": settings.milvus_password})
+        client = MilvusClient(**args)
+        collections = client.list_collections(timeout=2)
+        vectors = None
+        if settings.collection_name in collections:
+            try:
+                vectors = int(client.get_collection_stats(settings.collection_name).get("row_count", 0))
+            except Exception:
+                pass
+        result.update({"status": "ok" if settings.collection_name in collections else "collection_missing", "collections": len(collections), "vectors": vectors})
+    except Exception as exc:
+        result.update({"status": "error", "error": str(exc)})
+    finally:
+        if client is not None:
+            client.close()
+    return result
+
+
 def get_system_status() -> dict:
     settings = Settings.load()
     result = {"sqlite": "unavailable", "milvus": "unavailable"}
@@ -244,6 +300,7 @@ def get_system_status() -> dict:
             "ports_listening": {name: _port_open(port) for name, port in ports.items()},
             "gpu": _gpu_status(),
             "config": _config_summary(settings),
+            "database": {"sqlite": _sqlite_diagnostics(settings), "milvus": _milvus_diagnostics(settings)},
             "collection": settings.collection_name,
             "resources": {
                 "embedding": _resource_status(

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>YUMENO</title>
   <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=20260904-workbench-tabs-6">
   <script src="/static/js/theme.js"></script>
   <script src="/static/vendor/lucide.min.js" defer></script>
   <script src="/static/js/voice-stream.js" defer></script>
@@ -14,6 +14,7 @@
   <script src="/static/js/voice-studio.js" defer></script>
   <script src="/static/js/rvc-studio.js" defer></script>
   <script src="/static/js/settings.js" defer></script>
+<script src="/static/js/system-workbench.js?v=20260904" defer></script>
   <script src="/static/js/providers.js" defer></script>
   <script src="/static/js/integrations.js" defer></script>
   <script src="/static/js/napcat.js" defer></script>
@@ -23,7 +24,8 @@
   <script src="/static/live2d/vts.js" defer></script>
   <script src="/static/live2d/live2d-panel.js" defer></script>
   <script src="/static/js/common.js" defer></script>
-  <script src="/static/js/app.js" defer></script>
+  <script src="/static/js/knowledge-workbench.js" defer></script>
+<script src="/static/js/app.js?v=20260904-workbench-tabs-6" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#view-root">跳到主要内容</a>
@@ -31,17 +33,13 @@
   <aside class="site-sidebar">
     <div class="sidebar-inner">
       <nav class="primary-nav" aria-label="主导航">
-        <button id="nav-chat" class="nav-item" type="button" data-view="chat" title="对话"><i data-lucide="message-circle"></i><span class="nav-label">对话</span></button>
-        <button id="nav-create" class="nav-item" type="button" data-view="create" title="创建角色"><i data-lucide="user-plus"></i><span class="nav-label">创建角色</span></button>
-        <button id="nav-manage" class="nav-item" type="button" data-view="manage" title="管理角色、资料与能力"><i data-lucide="library"></i><span class="nav-label">管理</span></button>
-        <button id="nav-voice" class="nav-item" type="button" data-view="voice" title="声音"><i data-lucide="mic-vocal"></i><span class="nav-label">声音</span></button>
-        <button id="nav-rvc" class="nav-item" type="button" data-view="rvc" title="RVC 音频生产"><i data-lucide="audio-lines"></i><span class="nav-label">RVC</span></button>
-        <button id="nav-integrations" class="nav-item" type="button" data-view="integrations" title="B站直播"><i data-lucide="radio-tower"></i><span class="nav-label">B站直播</span></button>
-        <button id="nav-napcat" class="nav-item" type="button" data-view="napcat" title="QQ 接入"><i data-lucide="message-square-more"></i><span class="nav-label">QQ 接入</span></button>
-                <button id="nav-providers" class="nav-item" type="button" data-view="providers" title="提供商配置"><i data-lucide="layers"></i><span class="nav-label">提供商配置</span></button>
-<button id="nav-plugins" class="nav-item" type="button" data-view="plugins" title="Skill、MCP 与 Tool 能力扩展"><i data-lucide="puzzle"></i><span class="nav-label">能力扩展</span></button>
-        <button id="nav-test" class="nav-item" type="button" data-view="test" title="RAG 评测"><i data-lucide="flask-conical"></i><span class="nav-label">RAG 评测</span></button>
-        <button id="nav-settings" class="nav-item" type="button" data-view="settings" title="系统设置"><i data-lucide="settings-2"></i><span class="nav-label">系统设置</span></button>
+        <button id="nav-chat" class="nav-item" type="button" data-view="chat" title="与当前角色对话"><i data-lucide="message-circle"></i><span class="nav-label">对话</span></button>
+        <button id="nav-role" class="nav-item" type="button" data-view="role" title="创建和管理角色"><i data-lucide="user-round-cog"></i><span class="nav-label">角色</span></button>
+        <button id="nav-voice" class="nav-item" type="button" data-view="voice" title="语音服务、音色和 RVC"><i data-lucide="mic-vocal"></i><span class="nav-label">声音</span></button>
+        <button id="nav-knowledge" class="nav-item" type="button" data-view="knowledge" title="文档、知识库、检索和 RAG 评测"><i data-lucide="library-big"></i><span class="nav-label">知识</span></button>
+        <button id="nav-integrations" class="nav-item" type="button" data-view="integrations" title="QQ、NapCat 和 B站直播"><i data-lucide="radio-tower"></i><span class="nav-label">接入</span></button>
+        <button id="nav-capabilities" class="nav-item" type="button" data-view="capabilities" title="Skills、MCP、工具与权限"><i data-lucide="puzzle"></i><span class="nav-label">能力</span></button>
+        <button id="nav-system" class="nav-item" type="button" data-view="system" title="运行状态、供应商和数据存储"><i data-lucide="settings-2"></i><span class="nav-label">系统</span></button>
       </nav>
       <div class="sidebar-footer">
         <button id="theme-toggle" class="sidebar-toggle" type="button" aria-pressed="false" title="切换主题" aria-label="切换主题"><i class="theme-icon-sun" data-lucide="sun"></i><i class="theme-icon-moon" data-lucide="moon"></i></button>
@@ -52,9 +50,9 @@
 
   <main id="app-main" class="page-shell" tabindex="-1">
     <div id="setup-cue" class="setup-cue" hidden>
-      <p>尚未配置大模型。请到「提供商配置」粘贴 API Key，即可开始对话。</p>
+      <p>尚未配置大模型。请到「系统 → 服务供应商」粘贴 API Key，即可开始对话。</p>
       <div class="setup-cue-actions">
-        <button class="button button-warning" type="button" data-view="providers">去配置</button>
+        <button class="button button-warning" type="button" data-view="system">去配置</button>
         <button id="setup-cue-dismiss" class="button button-secondary" type="button">稍后</button>
       </div>
     </div>

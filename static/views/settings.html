@@ -3,7 +3,7 @@
   <section class="system-status-panel" aria-labelledby="system-status-title">
     <div class="system-status-heading">
       <div class="system-status-title-group">
-        <h2 id="system-status-title">系统设置</h2>
+        <h2 id="system-status-title">运行状态</h2>
         <p class="system-status-subtitle">本地引擎管理 · 系统监控 · 高级配置</p>
       </div>
       <div class="system-status-actions">
@@ -13,16 +13,16 @@
     </div>
     <div id="settings-system-status" class="system-status-cards" role="status" aria-live="polite">
       <div class="status-card-stack">
-        <div class="status-card" data-service-status="llm"><div class="status-card-head"><i class="status-dot" aria-hidden="true"></i><b data-status-label>LLM</b><span data-status-value>未配置</span></div><div class="status-card-detail" data-status-detail><a href="#providers" class="status-card-text-link">前往配置</a></div></div>
-        <div class="status-card" data-service-status="embedding"><div class="status-card-head"><i class="status-dot" aria-hidden="true"></i><b data-status-label>Embedding</b><span data-status-value>检查中</span></div><div class="status-card-detail" data-status-detail><a href="#providers" class="status-card-text-link">前往配置</a></div></div>
+        <div class="status-card" data-service-status="llm"><div class="status-card-head"><i class="status-dot" aria-hidden="true"></i><b data-status-label>LLM</b><span data-status-value>未配置</span></div><div class="status-card-detail" data-status-detail><a href="#system-providers" class="status-card-text-link">前往配置</a></div></div>
+        <div class="status-card" data-service-status="embedding"><div class="status-card-head"><i class="status-dot" aria-hidden="true"></i><b data-status-label>Embedding</b><span data-status-value>检查中</span></div><div class="status-card-detail" data-status-detail><a href="#system-providers" class="status-card-text-link">前往配置</a></div></div>
       </div>
       <div class="status-card-stack">
         <div class="status-card" data-service-status="sqlite"><div class="status-card-head"><i class="status-dot" aria-hidden="true"></i><b data-status-label>SQLite</b><span data-status-value>检查中</span></div><div class="status-card-detail" data-status-detail><a id="settings-open-sqlite" class="status-card-text-link" href="http://127.0.0.1:17000/sqlite/" target="_blank" rel="noopener noreferrer">打开管理</a></div></div>
         <div class="status-card" data-service-status="milvus"><div class="status-card-head"><i class="status-dot" aria-hidden="true"></i><b data-status-label>Milvus</b><span data-status-value>检查中</span></div><div class="status-card-detail" data-status-detail><a id="settings-open-milvus" class="status-card-text-link" href="http://127.0.0.1:17003" target="_blank" rel="noopener noreferrer">打开 Milvus 服务器</a></div></div>
       </div>
       <div class="status-card-stack">
-        <div class="status-card" data-service-status="asr"><div class="status-card-head"><i class="status-dot" aria-hidden="true"></i><b data-status-label>STT</b><span data-status-value>检查中</span></div><div class="status-card-detail" data-status-detail><a href="#providers" class="status-card-text-link">前往配置</a></div></div>
-        <div class="status-card" data-service-status="tts"><div class="status-card-head"><i class="status-dot" aria-hidden="true"></i><b data-status-label>TTS</b><span data-status-value>检查中</span></div><div class="status-card-detail" data-status-detail><a href="#providers" class="status-card-text-link">前往配置</a></div></div>
+        <div class="status-card" data-service-status="asr"><div class="status-card-head"><i class="status-dot" aria-hidden="true"></i><b data-status-label>STT</b><span data-status-value>检查中</span></div><div class="status-card-detail" data-status-detail><a href="#system-providers" class="status-card-text-link">前往配置</a></div></div>
+        <div class="status-card" data-service-status="tts"><div class="status-card-head"><i class="status-dot" aria-hidden="true"></i><b data-status-label>TTS</b><span data-status-value>检查中</span></div><div class="status-card-detail" data-status-detail><a href="#system-providers" class="status-card-text-link">前往配置</a></div></div>
       </div>
       <div class="status-card-stack status-card-stack-wide">
         <div class="status-card" data-service-status="machine"><div class="status-card-head"><i class="status-dot" aria-hidden="true"></i><b data-status-label>本机</b><span data-status-value>—</span></div><div class="status-card-detail" data-status-detail></div></div>
@@ -40,7 +40,7 @@
 
       <section id="section-model" class="settings-group" aria-labelledby="section-model-title">
         <h3 id="section-model-title" class="settings-group-title">模型与联网</h3>
-        <p class="settings-help provider-resource-notice">大语言模型和联网搜索统一在<a href="#providers">供应商配置</a>中管理、测试和全局应用；此处保留隐藏兼容表单以兼容旧脚本。</p>
+        <p class="settings-help provider-resource-notice">大语言模型和联网搜索统一在<a href="#system-providers">服务供应商</a>中管理、测试和全局应用；此处保留隐藏兼容表单以兼容旧脚本。</p>
         <details class="panel settings-section provider-managed-resource" data-collapsible>
           <summary class="settings-summary"><span class="settings-summary-title"><strong>OpenAI 兼容模型</strong><span class="settings-summary-meta">文本对话 · Chat Completions · 可替换供应商</span></span><span class="section-toggle-label">展开</span></summary>
           <div class="settings-grid settings-grid-form">
@@ -70,7 +70,7 @@
 
       <section id="section-knowledge" class="settings-group" aria-labelledby="section-knowledge-title">
         <h3 id="section-knowledge-title" class="settings-group-title">知识与检索</h3>
-        <p class="settings-help provider-resource-notice">Embedding、Reranker 等模型资源统一在<a href="#providers">供应商配置</a>中选择、下载、删除和应用。</p>
+        <p class="settings-help provider-resource-notice">Embedding、Reranker 等模型资源统一在<a href="#system-providers">服务供应商</a>中选择、下载、删除和应用。</p>
         <div id="reranker-settings-root"></div>
 
         <!-- 文档切分参数 -->
@@ -88,8 +88,8 @@
 
       <section id="section-voice" class="settings-group" aria-labelledby="section-voice-title">
         <h3 id="section-voice-title" class="settings-group-title">语音引擎</h3>
-        <p class="settings-help provider-resource-notice">本地 STT、GPT-SoVITS 与其它语音 Provider 统一在<a href="#providers">供应商配置</a>中管理。</p>
-        <p class="settings-help">STT、GPT-SoVITS、人声分离与 RVC 的本地资源、安装和服务状态已统一到<a href="#providers">供应商配置</a>；本页仅保留系统级运行偏好。</p>
+        <p class="settings-help provider-resource-notice">本地 STT、GPT-SoVITS 与其它语音 Provider 统一在<a href="#system-providers">服务供应商</a>中管理。</p>
+        <p class="settings-help">STT、GPT-SoVITS、人声分离与 RVC 的本地资源、安装和服务状态已统一到<a href="#system-providers">服务供应商</a>；本页仅保留系统级运行偏好。</p>
       </section>
 
       <!-- 旧脚本/插件兼容锚点：资源管理已迁移到供应商页，以下节点不呈现给用户。 -->

@@ -36,9 +36,10 @@ assert.match(css, /#chat-layout \.chat-context-sidebar[\s\S]*?position:\s*absolu
 assert.match(css, /#chat-layout \.chat-settings-sidebar[\s\S]*?position:\s*absolute/);
 assert.match(css, /chat-settings-backdrop[\s\S]*?background:\s*transparent/);
 assert.match(js, /function setChatSettingsOpen/);
-assert.doesNotMatch(js, /function setChatSettingsOpen[\s\S]*?if \(state\.chatContextOpen\) setChatContextOpen\(false\)/);
-assert.doesNotMatch(js, /function setChatSettingsOpen[\s\S]*?if \(state\.chatAttachmentsOpen\) setChatAttachmentsDrawer\(false\)/);
-assert.doesNotMatch(js, /function setChatContextOpen[\s\S]*?if \(open && state\.chatAttachmentsOpen\) setChatAttachmentsDrawer\(false\)/);
+const settingsBody = js.match(/function setChatSettingsOpen\(open\) \{([\s\S]*?)\n\}\nfunction renderChatSettingsStatus/)?.[1] || "";
+const contextBody = js.match(/function setChatContextOpen\(open\) \{([\s\S]*?)\n\}\n/)?.[1] || "";
+assert.doesNotMatch(settingsBody, /state\.chatContextOpen|state\.chatAttachmentsOpen/);
+assert.doesNotMatch(contextBody, /open && state\.chatAttachmentsOpen/);
 assert.match(css, /#chat-layout \.chat-toolbar-inner[\s\S]*?display:\s*flex/);
 assert.match(css, /#chat-layout:has\(\.chat-context-sidebar[^}]*\) \.chat-settings-sidebar \{ right:\s*366px/);
 assert.match(css, /\.chat-settings-scroll, \.chat-context-scroll[\s\S]*?overflow:\s*hidden/);
