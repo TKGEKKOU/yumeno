@@ -19,6 +19,20 @@ YUMENO 是一个**本地优先的角色 Agent 工作台**。它把角色对话�
 
 与“聊天页 + 一组互相独立的设置页”不同，YUMENO 的对话不仅用于回答问题，也可以作为实际操作入口：用户可以直接提出“检查资源”“安装模型”“启动 GPT-SoVITS”“把资料加入知识库”或“用这段音频做 RVC 变声”，系统会根据真实状态完成检查、配置、执行和结果回收，并在对话中展示可继续操作的任务卡片。
 
+## 界面预览
+
+YUMENO 将角色对话、资源管理与长任务控制放在同一个工作区中。
+
+![对话工作台](docs/images/yumeno-conversation-workbench.png)
+
+<details>
+<summary>查看 RVC 任务与系统状态</summary>
+
+![RVC 任务卡片](docs/images/yumeno-rvc-task.png)
+
+![系统状态](docs/images/yumeno-system-status.png)
+
+</details>
 核心使用主线：
 
 ```text

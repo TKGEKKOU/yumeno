@@ -6,6 +6,7 @@
   "scripts": {
     "build:frontend": "vite build",
     "test": "vitest run",
+    "capture:readme": "node ../scripts/capture-readme-screenshots.mjs",
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "@vitejs/plugin-vue": "5.2.1",
     "@vue/test-utils": "2.4.6",
     "jsdom": "25.0.1",
+    "playwright": "^1.55.0",
     "typescript": "5.7.2",
     "vite": "5.4.11",
     "vitest": "2.1.8",
