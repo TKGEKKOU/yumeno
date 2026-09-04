@@ -118,13 +118,13 @@ def _handoff_tool(worker: Worker):
         try:
             writer = get_stream_writer()
             stage_names = {
-                "knowledge": "正在检索知识库",
-                "memory": "正在查询记忆",
-                "document": "正在管理文档",
-                "profile": "正在管理人设",
-                "voice": "正在准备声音系统流程",
+                "knowledge_worker": "正在检索知识库",
+                "memory_worker": "正在查询记忆",
+                "document_worker": "正在管理文档",
+                "profile_worker": "正在管理人设",
+                "voice_worker": "正在准备声音系统流程",
                 "rvc_worker": "正在准备 RVC 音频生产流程",
-                "live2d": "正在准备 Live2D 流程",
+                "live2d_worker": "正在准备 Live2D 流程",
                 "config_worker": "正在处理系统配置",
             }
             writer({"kind": "stage", "stage": stage_names.get(worker, f"正在调用 {worker}")})
@@ -150,13 +150,13 @@ def _handoff_tool(worker: Worker):
 
 
 _TASK_TYPES_BY_WORKER = {
-    "knowledge": {"search_knowledge", "search_web", "query_structured_data", "legacy_request"},
-    "memory": {"save_memory", "recall_memory", "legacy_request"},
-    "document": {"ingest_document", "manage_document", "legacy_request"},
-    "profile": {"update_profile", "legacy_request"},
-    "voice": {"voice_asset", "voice_clone", "legacy_request"},
+    "knowledge_worker": {"search_knowledge", "search_web", "query_structured_data", "legacy_request"},
+    "memory_worker": {"save_memory", "recall_memory", "legacy_request"},
+    "document_worker": {"ingest_document", "manage_document", "legacy_request"},
+    "profile_worker": {"update_profile", "legacy_request"},
+    "voice_worker": {"voice_asset", "voice_clone", "voice_status", "voice_training", "voice_synthesize", "voice_transcribe", "voice_reference", "legacy_request"},
     "rvc_worker": {"convert_audio_with_rvc", "mix_rvc_instrumental", "prepare_rvc_source", "separate_rvc_vocals", "cancel_rvc_task", "legacy_request"},
-    "live2d": {"manage_live2d", "legacy_request"},
+    "live2d_worker": {"manage_live2d", "legacy_request"},
     "config_worker": {"update_config", "resource_status", "resource_install", "legacy_request"},
 }
 
@@ -179,6 +179,23 @@ _RVC_REFERENCE_KEYS = frozenset({
     "audio_file_id", "input_file_id", "model_id", "index_id",
 })
 
+_VOICE_ACTIONS = frozenset({
+    "analyze", "session_status", "confirm_segments", "save_voice", "upload_segments",
+    "synthesize", "transcribe", "bind", "train", "cancel",
+})
+_VOICE_ACTION_ALIASES = {
+    "confirm_processing": "analyze",
+    "prepare": "analyze",
+    "segments": "confirm_segments",
+    "tts": "synthesize",
+    "asr": "transcribe",
+}
+
+_VOICE_REFERENCE_KEYS = frozenset({
+    "session_id", "voice_session_id", "asset_id", "voice_asset_id", "audio_file_id",
+    "source_file_id", "source_attachment_id", "attachment_id",
+})
+
 
 def _merge_rvc_refs(refs: dict[str, object], values: dict[str, object]) -> None:
     """Merge managed RVC identifiers without allowing aliases to diverge.
@@ -197,6 +214,21 @@ def _merge_rvc_refs(refs: dict[str, object], values: dict[str, object]) -> None:
         refs["rvc_session_id"] = str(session_id)
 
 
+def _merge_voice_refs(refs: dict[str, object], values: dict[str, object]) -> None:
+    """Keep voice session/asset aliases aligned without mixing RVC identifiers."""
+    for key, value in values.items():
+        if key in _VOICE_REFERENCE_KEYS and value is not None:
+            refs[key] = value
+    session_id = refs.get("session_id") or refs.get("voice_session_id")
+    if session_id:
+        refs["session_id"] = str(session_id)
+        refs["voice_session_id"] = str(session_id)
+    asset_id = refs.get("asset_id") or refs.get("voice_asset_id")
+    if asset_id:
+        refs["asset_id"] = str(asset_id)
+        refs["voice_asset_id"] = str(asset_id)
+
+
 def _rvc_action(request: dict[str, object]) -> str | None:
     options = request.get("options")
     options = options if isinstance(options, dict) else {}
@@ -207,12 +239,23 @@ def _rvc_action(request: dict[str, object]) -> str | None:
     return action
 
 
+def _voice_action(request: dict[str, object]) -> str | None:
+    options = request.get("options")
+    options = options if isinstance(options, dict) else {}
+    raw = request.get("action") or options.get("action")
+    if raw is None:
+        return None
+    action = _VOICE_ACTION_ALIASES.get(str(raw).strip().lower(), str(raw).strip().lower())
+    return action
+
+
 def _normalize_dispatch_request(request: dict[str, object]) -> dict[str, object]:
     """将 RVC action 固定在受校验的 options 中，避免 Worker 从自由文本猜动作。"""
     normalized = dict(request)
-    if str(normalized.get("worker") or "") == "rvc_worker":
+    worker = str(normalized.get("worker") or "")
+    if worker in {"rvc_worker", "voice_worker"}:
         options = dict(normalized.get("options") or {}) if isinstance(normalized.get("options"), dict) else {}
-        action = _rvc_action(normalized)
+        action = _rvc_action(normalized) if worker == "rvc_worker" else _voice_action(normalized)
         if action is not None:
             options["action"] = action
             normalized["options"] = options
@@ -258,6 +301,14 @@ def _dispatch_request_error(request: object, worker: str) -> str | None:
             refs = request.get("input_refs") or {}
             if not isinstance(refs, dict) or not (refs.get("task_id") or refs.get("session_id")):
                 return "RVC cancel 缺少 task_id 或 session_id"
+    if worker == "voice_worker":
+        action = _voice_action(request)
+        if action is not None and action not in _VOICE_ACTIONS:
+            return f"voice 不支持 action={action}"
+        if action == "cancel":
+            refs = request.get("input_refs") or {}
+            if not isinstance(refs, dict) or not (refs.get("session_id") or refs.get("voice_session_id")):
+                return "voice cancel 缺少 session_id"
     context_worker = context.get("worker")
     if context_worker is not None and str(context_worker) != worker:
         return "conversation_context 的 Worker 不匹配"
@@ -270,7 +321,7 @@ def _missing_dispatch_inputs(request: dict[str, object], worker: str) -> list[di
     refs = request.get("input_refs") or {}
     options = request.get("options") or {}
     if not isinstance(refs, dict) or not isinstance(options, dict):
-        return [{"kind": "configuration", "input_id": "dispatch_contract", "label": "补充有效的任务参数", "required": True}]
+        return [{"kind": "configuration", "input_id": "dispatch_contract", "label": "请补充任务信息", "required": True}]
 
     missing: list[dict[str, object]] = []
     if worker == "rvc_worker":
@@ -278,15 +329,63 @@ def _missing_dispatch_inputs(request: dict[str, object], worker: str) -> list[di
         audio_file_id = refs.get("audio_file_id")
         if not audio_file_id and not attachment_ids:
             missing.append({
-                "kind": "attachment", "input_id": "rvc_audio", "label": "请上传需要变声的音频或视频", "required": True,
+                "kind": "attachment", "input_id": "rvc_audio", "label": "上传音频或视频", "required": True,
                 "accepted_file_types": ["audio/*", "video/*"],
             })
         # 交接阶段只收集启动 RVC session 所必需的源文件。模型、Index 和
         # 转换参数属于 rvc_worker 的业务状态，必须在 Agent 已完成 handoff、
         # 源文件准备/分离之后逐项询问；如果在这里一次性拦截，会让前端在
         # “正在分析请求…”阶段直接显示配置卡，并且永远进不到 worker。
-    elif worker == "document" and not (refs.get("attachment_ids") or refs.get("document_file_id")):
-        missing.append({"kind": "attachment", "input_id": "document", "label": "请提供需要处理的文档附件", "required": True, "accepted_file_types": ["application/pdf", "text/*"]})
+    elif worker == "document_worker":
+        # 只有入库/导入才强制附件或 URL；列表、删除、重命名不得在图层拦截成“请上传”。
+        task_type = str(request.get("task_type") or "")
+        has_source = bool(
+            refs.get("attachment_ids")
+            or refs.get("document_file_id")
+            or refs.get("source_url")
+            or options.get("source_url")
+        )
+        if task_type == "ingest_document" and not has_source:
+            missing.append({
+                "kind": "attachment",
+                "input_id": "document_worker",
+                "label": "上传文档或链接",
+                "required": True,
+                "accepted_file_types": ["application/pdf", "text/*"],
+            })
+    elif worker == "voice_worker":
+        # 查询音色/系统状态不需要附件；只有明确的克隆任务才在图层收集素材。
+        task_type = str(request.get("task_type") or "")
+        has_source = bool(
+            refs.get("attachment_ids")
+            or refs.get("audio_file_id")
+            or refs.get("source_file_id")
+            or refs.get("source_attachment_id")
+        )
+        if task_type == "voice_clone" and not has_source:
+            missing.append({
+                "kind": "attachment",
+                "input_id": "voice_material",
+                "label": "上传素材",
+                "required": True,
+                "accepted_file_types": ["audio/*", "video/*"],
+            })
+        if task_type == "voice_transcribe" and not has_source:
+            missing.append({
+                "kind": "attachment",
+                "input_id": "audio_attachment",
+                "label": "上传音频",
+                "required": True,
+                "accepted_file_types": ["audio/*"],
+            })
+        if task_type == "voice_reference" and not has_source:
+            missing.append({
+                "kind": "attachment",
+                "input_id": "audio_attachment",
+                "label": "上传参考音频",
+                "required": True,
+                "accepted_file_types": ["audio/*"],
+            })
     return missing
 
 
@@ -306,19 +405,24 @@ def _merge_resume_dispatch(request: dict[str, object], resume: object) -> dict[s
         if len(ids) == 1:
             refs.setdefault("audio_file_id", str(ids[0]))
     values = resume.get("input_values")
+    ref_keys = _RVC_REFERENCE_KEYS | _VOICE_REFERENCE_KEYS | {"document_file_id"}
     if isinstance(values, dict):
         for key, value in values.items():
-            if key in _RVC_REFERENCE_KEYS or key in {"document_file_id"}:
+            if key in ref_keys:
                 refs[key] = value
             else:
                 options[key] = value
-    for key in _RVC_REFERENCE_KEYS | {"document_file_id"}:
+    for key in ref_keys:
         if resume.get(key) is not None:
             refs[key] = resume[key]
     # The confirmation button may only send an action. In that case retain the
     # session established by the previous worker turn instead of falling back
     # to the stale attachment-only contract.
-    _merge_rvc_refs(refs, refs)
+    worker = str(merged.get("worker") or "")
+    if worker == "voice_worker":
+        _merge_voice_refs(refs, refs)
+    elif worker == "rvc_worker":
+        _merge_rvc_refs(refs, refs)
     merged["input_refs"] = refs
     merged["options"] = options
     return merged
@@ -337,13 +441,17 @@ def _supervisor_dispatch(state: PersonaWorkflowState) -> dict:
     # the critical bridge for a confirmation that sends only ``action``.
     state_refs = state.get("input_refs")
     request_refs = request.get("input_refs")
+    worker = str(state.get("active_worker") or request.get("worker") or "")
     if isinstance(state_refs, dict):
         merged_refs = dict(request_refs) if isinstance(request_refs, dict) else {}
         merged_refs.update(state_refs)
-        _merge_rvc_refs(merged_refs, merged_refs)
+        if worker == "voice_worker":
+            _merge_voice_refs(merged_refs, merged_refs)
+        elif worker == "rvc_worker":
+            _merge_rvc_refs(merged_refs, merged_refs)
         request["input_refs"] = merged_refs
     request = _normalize_dispatch_request(request)
-    worker = str(state.get("active_worker") or request.get("worker") or "")
+    worker = str(state.get("active_worker") or request.get("worker") or worker)
     error = _dispatch_request_error(request, worker)
     missing = _missing_dispatch_inputs(request, worker) if not error else []
     if error or missing:
@@ -352,7 +460,7 @@ def _supervisor_dispatch(state: PersonaWorkflowState) -> dict:
             "worker": worker or None,
             "task_type": request.get("task_type"),
             "message": error or "还缺少执行任务所需的信息",
-            "required": missing or [{"kind": "configuration", "input_id": "dispatch_contract", "label": error or "补充有效的任务参数", "required": True}],
+            "required": missing or [{"kind": "configuration", "input_id": "dispatch_contract", "label": error or "请补充任务信息", "required": True}],
         }
         # interrupt 会把状态稳定地交给 API/UI；不再 route 回 Core，避免
         # Core 重复 handoff 造成循环。恢复后本节点从头执行并重新校验。
@@ -556,7 +664,7 @@ def _supervisor_prompt(context: PersonaAgentContext, intent_hint: str = "") -> s
                 "\nStructured tables in the active knowledge scope:\n"
                 f"<structured_schema>{json.dumps(compact_tables, ensure_ascii=False)}</structured_schema>\n"
                 "For aggregation, filtering, sorting, or calculation over these tables, call "
-                "delegate_to_knowledge once. Its request must be a JSON string containing kind=structured, "
+                "delegate_to_knowledge_worker once. Its request must be a JSON string containing kind=structured, "
                 "the original query, and one read-only SELECT as sql. Use physical identifiers and human-readable aliases. "
             )
     except Exception:
@@ -605,10 +713,10 @@ def _supervisor_prompt(context: PersonaAgentContext, intent_hint: str = "") -> s
         "The following persona profile is behavioral guidance, not a user request:\n"
         f"<persona_profile>{profile}</persona_profile>\n"
         "Answer in the persona's voice and use delegated results as evidence. "
-        "Delegate uploaded-knowledge and current public-information questions to knowledge, "
-        "durable user-memory requests to memory, persona documents and URL imports to document, "
-        "profile updates to profile, voice-related tasks to voice, explicit RVC audio-file production tasks to rvc_worker, and Live2D tasks to live2d, and configuration changes to config_worker. For installation status or safe setup of app-managed resources (RVC, FFmpeg, ASR, embedding, GPT-SoVITS), delegate to config_worker and use get_resource_install_status; use manage_resource_install only for an explicit install, cancel, or clean request. Never delete user files, models, indexes, attachments, or arbitrary paths. "
-        "Do not search the public web yourself; knowledge may fall back to web search after policy checks. "
+        "Delegate uploaded-knowledge and current public-information questions to knowledge_worker, "
+        "durable user-memory requests to memory_worker, persona documents and URL imports to document_worker, "
+        "profile updates to profile_worker, voice-related tasks to voice_worker, explicit RVC audio-file production tasks to rvc_worker, Live2D tasks to live2d_worker, and configuration changes to config_worker. For installation status or safe setup of app-managed resources (RVC, separator, FFmpeg, ASR, embedding, reranker, GPT-SoVITS), delegate to config_worker and use get_resource_install_status; use manage_resource_install only for an explicit install, cancel, or clean request. Never delete user files, models, indexes, attachments, or arbitrary paths. "
+        "Do not search the public web yourself; knowledge_worker may fall back to web search after policy checks. "
         "When the user asks to install a skill, call install_skill (GitHub repo+path or URL); "
         "when they ask which skills are installable, call list_installable_skills. "
         "When the user asks to add, list, or test MCP servers, call "
@@ -629,7 +737,7 @@ def _supervisor_prompt(context: PersonaAgentContext, intent_hint: str = "") -> s
 
 
 def _worker_prompt(worker: Worker, context: PersonaAgentContext, dispatch: dict | None = None) -> str:
-    if worker == "knowledge":
+    if worker == "knowledge_worker":
         raise RuntimeError("knowledge uses the planner subgraph, not an LLM worker prompt")
     manifest = worker_manifest(worker)
     tool_names = ", ".join(manifest.tools) or "no tools"
@@ -688,12 +796,41 @@ def _worker_prompt(worker: Worker, context: PersonaAgentContext, dispatch: dict 
         "completion. Only register an output attachment after get_rvc_task reports success; never invent a result file. "
         if worker == "rvc_worker" else ""
     )
+    config_note = (
+        " App-managed resources are rvc, separator, asr, gpt_sovits, ffmpeg, embedding, and reranker. "
+        "Aliases such as stt, local_embedding, local_rerank, and tts are accepted. "
+        "Call get_resource_install_status with resource=all to list them. "
+        "Use manage_resource_install only for an explicit install, cancel, or clean request. "
+        "Never delete user .pth/.index files, attachments, or knowledge documents. "
+    ) if worker == "config_worker" else ""
+    voice_note = (
+        " Voice queries use list_voice_assets, get_voice_system_status, get_gpt_sovits_engine_status, studio and training status tools. "
+        "Clone/training/synthesis tools require an explicit user request. Runtime services come from AgentRuntime.app_state, "
+        "the same managers as HTTP. Clone material must use conversation attachment_id; never local file paths. "
+        "Voice Studio processing is asynchronous via VoiceStudioManager. GPT-SoVITS training uses gpt_sovits_training and Voice Asset IDs. "
+        "Use synthesize_voice_asset for GPT-SoVITS TTS; persist audio as a conversation attachment, never input_path. "
+        "Use train_voice_from_studio for studio-segment training. control_gpt_sovits_service only starts/stops an installed engine. "
+        "Use create_voice_asset, update_voice_asset and delete_voice_asset for GPT-SoVITS Voice Asset CRUD. "
+        "delete_voice_asset removes the database record only and never deletes user model files. "
+        "Use transcribe_voice_attachment with conversation attachment_id; never local file paths. "
+        "Use get_voice_asset to query one GPT-SoVITS Voice Asset. "
+        "Use set_voice_asset_reference_audio with conversation attachment_id to bind reference audio; never local file paths. "
+        "Use bind_voice_asset_to_persona to write profile.tts.voice_asset_id for the current persona. "
+        "Use upload_voice_studio_segments with conversation attachment_id to add extra clean audio clips. "
+        "action=cancel or cancel_voice_studio_session stops a running Voice Studio job and must not delete session files. "
+        "Environment download/install belongs to config_worker, not voice_worker. "
+        "RVC file conversion belongs to rvc_worker. "
+    ) if worker == "voice_worker" else ""
+    document_note = (
+        " Listing or deleting documents does not require an upload. ingest_document needs attachment_ids or a source URL. "
+        "Use import_knowledge_from_url for URL import. Environment/embedding install belongs to config_worker. "
+    ) if worker == "document_worker" else ""
     return (
         f"You are an internal {manifest.name} worker for {context.persona_name}. "
         f"Your boundary is: {manifest.description} "
         f"Only these registered tools are available: {tool_names}. "
         "Use only the provided tools. Do not roleplay, address the user, or claim a task succeeded "
-        f"without a tool result.{attachment_note}{dispatch_note}{rvc_note} Return a concise result that can be normalized into the shared AgentResult "
+        f"without a tool result.{attachment_note}{dispatch_note}{rvc_note}{config_note}{voice_note}{document_note} Return a concise result that can be normalized into the shared AgentResult "
         f"contract with worker={manifest.name}; do not expose hidden reasoning. {handoff_format}"
     )
 
@@ -770,7 +907,7 @@ def _worker_agent(worker: Worker, model: BaseChatModel | None):
     # 每个受限工具 Worker 是独立的 create_agent，只挂自己那一类工具，
     # 从工具集层面强制最小权限，防止 Worker 越权调用其他领域能力。
     # knowledge 不走这条路径：它是 planner + 确定性 retrieve/fallback 子图。
-    if worker == "knowledge":
+    if worker == "knowledge_worker":
         raise RuntimeError("knowledge uses _knowledge_subgraph, not create_agent")
     manifest = worker_manifest(worker)
 
@@ -812,7 +949,7 @@ def _after_finalize_route(state: PersonaWorkflowState) -> str:
     # RVC UI consumes the worker contract directly. Returning to Core for these
     # states caused success hallucinations and a second handoff on the next
     # short reply (for example ``A``).
-    if worker == "rvc_worker" and status != "completed":
+    if worker in {"rvc_worker", "voice_worker"} and status != "completed":
         return "rvc_wait_boundary"
     return "supervisor_collect"
 
@@ -823,20 +960,20 @@ def _finalize_worker(worker: Worker):
         try:
             writer = get_stream_writer()
             complete_names = {
-                "knowledge": "知识检索完成",
-                "memory": "记忆查询完成",
-                "document": "文档管理完成",
-                "profile": "人设管理完成",
-                "voice": "声音任务已完成，等待后续操作…",
+                "knowledge_worker": "知识检索完成",
+                "memory_worker": "记忆查询完成",
+                "document_worker": "文档管理完成",
+                "profile_worker": "人设管理完成",
+                "voice_worker": "声音任务已完成",
                 "rvc_worker": "RVC 音频生产任务已完成，整理结果中…",
-                "live2d": "Live2D 任务已完成，整理结果中…",
+                "live2d_worker": "Live2D 任务已完成，整理结果中…",
                 "config_worker": "配置处理完成",
             }
             writer({"kind": "stage", "stage": complete_names.get(worker, f"{worker} 完成")})
         except RuntimeError:
             pass
         messages = state.get("messages", [])
-        if worker == "knowledge":
+        if worker == "knowledge_worker":
             specialist_result = _knowledge_specialist_result(messages)
             worker_result = AgentResult.model_validate(
                 {
@@ -953,8 +1090,10 @@ def _finalize_worker(worker: Worker):
                 session_identifier = session_payload.get("session_id") or session_payload.get("id")
                 if session_identifier and not result_data.get("session_id"):
                     result_data["session_id"] = str(session_identifier)
-                if session_identifier and not result_data.get("rvc_session_id"):
+                if worker == "rvc_worker" and session_identifier and not result_data.get("rvc_session_id"):
                     result_data["rvc_session_id"] = str(session_identifier)
+                if worker == "voice_worker" and session_identifier and not result_data.get("voice_session_id"):
+                    result_data["voice_session_id"] = str(session_identifier)
                 # RVC tools may return ``accepted`` after starting the shared
                 # session job. The public boundary must derive the next user
                 # action from the authoritative session phase, not from an LLM
@@ -968,10 +1107,10 @@ def _finalize_worker(worker: Worker):
                         result_data["waiting_inputs"] = [{
                             "kind": "choice",
                             "input_id": "rvc_input",
-                            "label": "选择用于变声的音轨",
+                            "label": "选择音轨",
                             "options": [
-                                {"value": "vocals", "label": "纯人声（推荐）"},
-                                {"value": "instrumental", "label": "整轨含伴奏"},
+                                {"value": "vocals", "label": "人声"},
+                                {"value": "instrumental", "label": "伴奏"},
                             ],
                             "required": True,
                         }]
@@ -982,7 +1121,28 @@ def _finalize_worker(worker: Worker):
                             "kind": "confirmation",
                             "input_id": "rvc_prepare",
                             "action": "prepare_and_separate",
-                            "label": "确认处理",
+                            "label": "开始分离",
+                            "required": True,
+                        }]
+                elif worker == "voice_worker":
+                    session_phase = str(session_payload.get("phase") or "").lower()
+                    if session_phase == "segments" and not result_data.get("waiting_inputs"):
+                        result_data["status"] = "waiting_input"
+                        result_data["answer"] = ""
+                        result_data["waiting_inputs"] = [{
+                            "kind": "configuration",
+                            "input_id": "segment_indices",
+                            "label": "选择片段",
+                            "required": True,
+                        }]
+                    elif session_phase == "reference" and not result_data.get("waiting_inputs"):
+                        result_data["status"] = "waiting_input"
+                        result_data["answer"] = ""
+                        result_data["waiting_inputs"] = [{
+                            "kind": "confirmation",
+                            "input_id": "save_voice",
+                            "action": "save_voice",
+                            "label": "保存音色",
                             "required": True,
                         }]
             worker_result = AgentResult.model_validate(result_data)
@@ -1006,10 +1166,13 @@ def _finalize_worker(worker: Worker):
         result_refs = result_payload.get("input_refs")
         if isinstance(result_refs, dict):
             input_refs.update(result_refs)
-        for key in ("session_id", "rvc_session_id", "source_file_id", "source_attachment_id", "task_id", "audio_file_id", "input_file_id", "model_id", "index_id"):
+        for key in ("session_id", "rvc_session_id", "voice_session_id", "source_file_id", "source_attachment_id", "task_id", "audio_file_id", "input_file_id", "model_id", "index_id", "asset_id", "voice_asset_id", "attachment_id"):
             if result_payload.get(key) is not None:
                 input_refs[key] = result_payload[key]
-        _merge_rvc_refs(input_refs, input_refs)
+        if worker == "voice_worker":
+            _merge_voice_refs(input_refs, input_refs)
+        elif worker == "rvc_worker":
+            _merge_rvc_refs(input_refs, input_refs)
         persisted_request = dict(state.get("dispatch_request") or state.get("pending_task") or {})
         if isinstance(persisted_request, dict):
             persisted_request["input_refs"] = dict(input_refs)

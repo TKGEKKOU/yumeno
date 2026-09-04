@@ -145,7 +145,7 @@ def test_skill_middleware_exposes_loaded_skill_tools():
     )
 
     assert any("list_persona_documents" in names for names in seen_tools)
-    assert any("delegate_to_knowledge" in names for names in seen_tools)
+    assert any("delegate_to_knowledge_worker" in names for names in seen_tools)
 
 
 def test_conversation_can_load_skill_and_call_its_tool(db_session):

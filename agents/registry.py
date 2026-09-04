@@ -40,14 +40,27 @@ from agents.tools.voice import (
     analyze_voice_material,
     request_training_confirmation,
     start_voice_training,
+    train_voice_from_studio,
     check_training_progress,
     bind_trained_voice,
     list_voice_assets,
     get_voice_system_status,
+    get_gpt_sovits_engine_status,
+    control_gpt_sovits_service,
     list_voice_studio_sessions,
     get_voice_studio_session,
     get_voice_training_status,
     get_persona_voice_binding,
+    synthesize_voice_asset,
+    create_voice_asset,
+    update_voice_asset,
+    delete_voice_asset,
+    transcribe_voice_attachment,
+    get_voice_asset,
+    set_voice_asset_reference_audio,
+    bind_voice_asset_to_persona,
+    upload_voice_studio_segments,
+    cancel_voice_studio_session,
 )
 from agents.tools.live2d import (
     list_live2d_models,
@@ -68,7 +81,17 @@ from agents.tools.extended import (
 )
 
 
-_WORKER_COMPAT_ALIASES = {"rvc": "rvc_worker", "voice_clone": "voice", "config": "config_worker"}
+_WORKER_COMPAT_ALIASES = {
+    "knowledge": "knowledge_worker",
+    "memory": "memory_worker",
+    "document": "document_worker",
+    "profile": "profile_worker",
+    "voice": "voice_worker",
+    "voice_clone": "voice_worker",
+    "live2d": "live2d_worker",
+    "rvc": "rvc_worker",
+    "config": "config_worker",
+}
 
 
 def _canonical_worker_name(value: str | None) -> str | None:
@@ -91,27 +114,27 @@ class ToolSpec:
     server: str = ""
 
 
-_WORKER_ORDER = ("knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config_worker")
+_WORKER_ORDER = ("knowledge_worker", "memory_worker", "document_worker", "profile_worker", "voice_worker", "rvc_worker", "live2d_worker", "config_worker")
 
 _WORKER_DESCRIPTIONS = {
-    "knowledge": "在当前角色知识空间中检索、查询结构化数据，并按策略补充公开信息。",
-    "memory": "读取、维护当前角色范围内的用户记忆与工作区记忆。",
-    "document": "管理当前角色的知识文档、上传资料和 URL 导入任务。",
-    "profile": "读取或修改当前角色的人设档案，并导出会话内容。",
-    "voice": "统一管理音色、TTS、ASR、实时语音、Voice Studio、训练与 GPT-SoVITS。",
+    "knowledge_worker": "在当前角色知识空间中检索、查询结构化数据，并按策略补充公开信息。",
+    "memory_worker": "读取、维护当前角色范围内的用户记忆与工作区记忆。",
+    "document_worker": "管理当前角色的知识文档、上传资料和 URL 导入任务。",
+    "profile_worker": "读取或修改当前角色的人设档案，并导出会话内容。",
+    "voice_worker": "统一管理音色、TTS、ASR、实时语音、Voice Studio、训练与 GPT-SoVITS。",
     "rvc_worker": "管理本地 RVC 音色转换资源，并提交和跟踪受管的音频变声任务。",
-    "live2d": "统一管理 Live2D 模型、VTube Studio 连接和本地模型目录。",
+    "live2d_worker": "统一管理 Live2D 模型、VTube Studio 连接和本地模型目录。",
     "config_worker": "查询、安装、更新、取消和安全清理应用受管资源；不执行具体功能任务。",
 }
 
 _WORKER_EXECUTION_DEFAULTS = {
-    "knowledge": (45.0, WorkerRetryPolicy(max_attempts=2, backoff_seconds=0.5)),
-    "memory": (30.0, WorkerRetryPolicy(max_attempts=1)),
-    "document": (120.0, WorkerRetryPolicy(max_attempts=2, backoff_seconds=1.0)),
-    "profile": (30.0, WorkerRetryPolicy(max_attempts=1)),
-    "voice": (300.0, WorkerRetryPolicy(max_attempts=1)),
+    "knowledge_worker": (45.0, WorkerRetryPolicy(max_attempts=2, backoff_seconds=0.5)),
+    "memory_worker": (30.0, WorkerRetryPolicy(max_attempts=1)),
+    "document_worker": (120.0, WorkerRetryPolicy(max_attempts=2, backoff_seconds=1.0)),
+    "profile_worker": (30.0, WorkerRetryPolicy(max_attempts=1)),
+    "voice_worker": (300.0, WorkerRetryPolicy(max_attempts=1)),
     "rvc_worker": (1800.0, WorkerRetryPolicy(max_attempts=1)),
-    "live2d": (45.0, WorkerRetryPolicy(max_attempts=1)),
+    "live2d_worker": (45.0, WorkerRetryPolicy(max_attempts=1)),
     "config_worker": (45.0, WorkerRetryPolicy(max_attempts=1)),
 }
 
@@ -159,35 +182,48 @@ _WORKER_OUTPUT_SCHEMA = {
 # - 真正改记忆/文档/人设/配置的工具 requires_confirmation=True。
 # Worker 通过 tools_for_specialist 按 specialist 取子集，避免把全部工具塞进单一 Agent。
 _TOOL_SPECS = (
-    ToolSpec("search_persona_knowledge", "knowledge", search_persona_knowledge),
-    ToolSpec("web_search", "knowledge", web_search),
-    ToolSpec("list_persona_documents", "document", list_persona_documents),
-    ToolSpec("read_persona_memories", "memory", read_persona_memories),
-    ToolSpec("save_persona_memory", "memory", save_persona_memory, False, True),
-    ToolSpec("update_persona_memory", "memory", update_persona_memory, False, True),
-    ToolSpec("delete_persona_memory", "memory", delete_persona_memory, False, True),
-    ToolSpec("read_workspace_memories", "memory", read_workspace_memories),
-    ToolSpec("list_structured_tables", "knowledge", list_structured_tables),
-    ToolSpec("query_structured_data", "knowledge", query_structured_data),
-    ToolSpec("save_workspace_memory", "memory", save_workspace_memory, True, True),
-    ToolSpec("delete_workspace_memory", "memory", delete_workspace_memory, True, True),
-    ToolSpec("add_persona_knowledge", "document", add_persona_knowledge, True, True),
-    ToolSpec("rename_persona", "profile", rename_persona, True, True),
-    ToolSpec("update_persona_profile", "profile", update_persona_profile, True, True),
-    ToolSpec("delete_persona_document", "document", delete_persona_document, True, True),
-    ToolSpec("start_voice_clone_session", "voice", start_voice_clone_session, False, True),
-    ToolSpec("request_file_upload", "voice", request_file_upload),
-    ToolSpec("analyze_voice_material", "voice", analyze_voice_material),
-    ToolSpec("request_training_confirmation", "voice", request_training_confirmation, True, False),
-    ToolSpec("start_voice_training", "voice", start_voice_training, False, True),
-    ToolSpec("check_training_progress", "voice", check_training_progress),
-    ToolSpec("bind_trained_voice", "voice", bind_trained_voice, False, True),
-    ToolSpec("list_voice_assets", "voice", list_voice_assets),
-    ToolSpec("get_voice_system_status", "voice", get_voice_system_status),
-    ToolSpec("list_voice_studio_sessions", "voice", list_voice_studio_sessions),
-    ToolSpec("get_voice_studio_session", "voice", get_voice_studio_session),
-    ToolSpec("get_voice_training_status", "voice", get_voice_training_status),
-    ToolSpec("get_persona_voice_binding", "voice", get_persona_voice_binding),
+    ToolSpec("search_persona_knowledge", "knowledge_worker", search_persona_knowledge),
+    ToolSpec("web_search", "knowledge_worker", web_search),
+    ToolSpec("list_persona_documents", "document_worker", list_persona_documents),
+    ToolSpec("read_persona_memories", "memory_worker", read_persona_memories),
+    ToolSpec("save_persona_memory", "memory_worker", save_persona_memory, False, True),
+    ToolSpec("update_persona_memory", "memory_worker", update_persona_memory, False, True),
+    ToolSpec("delete_persona_memory", "memory_worker", delete_persona_memory, False, True),
+    ToolSpec("read_workspace_memories", "memory_worker", read_workspace_memories),
+    ToolSpec("list_structured_tables", "knowledge_worker", list_structured_tables),
+    ToolSpec("query_structured_data", "knowledge_worker", query_structured_data),
+    ToolSpec("save_workspace_memory", "memory_worker", save_workspace_memory, True, True),
+    ToolSpec("delete_workspace_memory", "memory_worker", delete_workspace_memory, True, True),
+    ToolSpec("add_persona_knowledge", "document_worker", add_persona_knowledge, True, True),
+    ToolSpec("rename_persona", "profile_worker", rename_persona, True, True),
+    ToolSpec("update_persona_profile", "profile_worker", update_persona_profile, True, True),
+    ToolSpec("delete_persona_document", "document_worker", delete_persona_document, True, True),
+    ToolSpec("start_voice_clone_session", "voice_worker", start_voice_clone_session, False, True),
+    ToolSpec("request_file_upload", "voice_worker", request_file_upload),
+    ToolSpec("analyze_voice_material", "voice_worker", analyze_voice_material),
+    ToolSpec("request_training_confirmation", "voice_worker", request_training_confirmation, True, False),
+    ToolSpec("start_voice_training", "voice_worker", start_voice_training, False, True),
+    ToolSpec("train_voice_from_studio", "voice_worker", train_voice_from_studio, False, True),
+    ToolSpec("check_training_progress", "voice_worker", check_training_progress),
+    ToolSpec("bind_trained_voice", "voice_worker", bind_trained_voice, False, True),
+    ToolSpec("list_voice_assets", "voice_worker", list_voice_assets),
+    ToolSpec("get_voice_system_status", "voice_worker", get_voice_system_status),
+    ToolSpec("get_gpt_sovits_engine_status", "voice_worker", get_gpt_sovits_engine_status),
+    ToolSpec("control_gpt_sovits_service", "voice_worker", control_gpt_sovits_service, False, True),
+    ToolSpec("synthesize_voice_asset", "voice_worker", synthesize_voice_asset, False, True),
+    ToolSpec("create_voice_asset", "voice_worker", create_voice_asset, False, True),
+    ToolSpec("update_voice_asset", "voice_worker", update_voice_asset, False, True),
+    ToolSpec("delete_voice_asset", "voice_worker", delete_voice_asset, True, True),
+    ToolSpec("transcribe_voice_attachment", "voice_worker", transcribe_voice_attachment, False, True),
+    ToolSpec("get_voice_asset", "voice_worker", get_voice_asset),
+    ToolSpec("set_voice_asset_reference_audio", "voice_worker", set_voice_asset_reference_audio, False, True),
+    ToolSpec("bind_voice_asset_to_persona", "voice_worker", bind_voice_asset_to_persona, False, True),
+    ToolSpec("upload_voice_studio_segments", "voice_worker", upload_voice_studio_segments, False, True),
+    ToolSpec("cancel_voice_studio_session", "voice_worker", cancel_voice_studio_session, False, True),
+    ToolSpec("list_voice_studio_sessions", "voice_worker", list_voice_studio_sessions),
+    ToolSpec("get_voice_studio_session", "voice_worker", get_voice_studio_session),
+    ToolSpec("get_voice_training_status", "voice_worker", get_voice_training_status),
+    ToolSpec("get_persona_voice_binding", "voice_worker", get_persona_voice_binding),
     ToolSpec("create_rvc_session", "rvc_worker", create_rvc_session),
     ToolSpec("attach_file_to_rvc_session", "rvc_worker", attach_file_to_rvc_session),
     ToolSpec("prepare_rvc_source", "rvc_worker", prepare_rvc_source),
@@ -201,17 +237,17 @@ _TOOL_SPECS = (
     ToolSpec("convert_audio_with_rvc", "rvc_worker", convert_audio_with_rvc, False, True),
     ToolSpec("get_rvc_task_status", "rvc_worker", get_rvc_task_status),
     ToolSpec("cancel_rvc_task", "rvc_worker", cancel_rvc_task, False, True),
-    ToolSpec("list_live2d_models", "live2d", list_live2d_models),
-    ToolSpec("get_live2d_vts_config", "live2d", get_live2d_vts_config),
-    ToolSpec("open_live2d_model_directory", "live2d", open_live2d_model_directory),
+    ToolSpec("list_live2d_models", "live2d_worker", list_live2d_models),
+    ToolSpec("get_live2d_vts_config", "live2d_worker", get_live2d_vts_config),
+    ToolSpec("open_live2d_model_directory", "live2d_worker", open_live2d_model_directory),
     ToolSpec("list_available_configs", "config_worker", list_available_configs),
     ToolSpec("get_config_detail", "config_worker", get_config_detail),
     ToolSpec("get_resource_install_status", "config_worker", get_resource_install_status),
     ToolSpec("manage_resource_install", "config_worker", manage_resource_install, True, True),
     ToolSpec("request_config_change", "config_worker", request_config_change, True, False),
     ToolSpec("apply_config_change", "config_worker", apply_config_change, False, True),
-    ToolSpec("import_knowledge_from_url", "document", import_knowledge_from_url, True, True),
-    ToolSpec("export_conversation", "profile", export_conversation),
+    ToolSpec("import_knowledge_from_url", "document_worker", import_knowledge_from_url, True, True),
+    ToolSpec("export_conversation", "profile_worker", export_conversation),
 )
 
 READ_ONLY_TOOL_NAMES = tuple(spec.name for spec in _TOOL_SPECS if not spec.mutates_data)
@@ -331,7 +367,7 @@ def worker_manifests() -> tuple[WorkerManifest, ...]:
                 # 这里表示“该 Worker 可能触发确认”，而非每一个请求都必须确认；
                 # 具体动作仍由 CapabilityGuard / HITL 策略决定。
                 requires_confirmation=(
-                    worker == "knowledge" or any(spec.requires_confirmation for spec in owned)
+                    worker == "knowledge_worker" or any(spec.requires_confirmation for spec in owned)
                 ),
                 timeout_seconds=timeout_seconds,
                 retry_policy=retry_policy,

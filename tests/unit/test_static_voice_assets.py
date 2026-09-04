@@ -179,14 +179,15 @@ def test_resource_install_buttons_explain_ready_and_installing_states():
 
 def test_chat_resource_card_exposes_safe_management_actions():
     script = read_script("chat")
-    assert 'rvcButton("检测"' in script
-    assert 'rvcButton("下载/安装"' in script
+    assert 'rvcButton("下载"' in script
+    assert 'rvcButton("停止"' in script
     assert 'rvcButton("卸载"' in script
     assert 'resourceSetupAction(resource, "clean")' in script
-    assert '["rvc", "asr", "ffmpeg", "embedding", "gpt_sovits"].includes(key)' in script
-    assert "这是受管资源吗？用户模型、附件和历史结果不会被删除。" in script
+    assert '["rvc", "asr", "ffmpeg", "embedding", "gpt_sovits", "separator"].includes(key)' in script
+    assert "确定卸载该运行环境？不会删除你的模型、附件和历史结果。" in script
     assert 'GPT-SoVITS 运行环境' in script
-    assert '用于 GPT-SoVITS 运行、音色处理和语音合成。' in script
+    assert 'rvcButton("检测"' not in script
+    assert 'rvcButton("下载/安装"' not in script
     assert 'resource-setup-inline-card rvc-inline-workspace' not in script
 
 
@@ -371,3 +372,26 @@ def test_voice_clone_intent_uses_waiting_for_material_stage():
     script = read_script("chat")
     assert "已识别为声音克隆，正在准备上传会话…" in script
     assert "已识别为声音克隆，正在准备会话..." not in script
+
+
+def test_resource_overview_is_a_wide_aggregate_card_with_actionable_details():
+    script = read_script("chat")
+    styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+    assert "key === \"all\"" in script
+    assert "resource-setup-overview" in script
+    assert "resource-setup-overview-grid" in styles
+    assert "width: min(100%, 900px)" in styles or "width: 100%" in styles
+
+
+def test_chat_rvc_runtime_helper_does_not_collide_with_rvc_studio_global():
+    chat = read_script("chat")
+    rvc_studio = read_script("rvc-studio")
+    assert "function rvcRuntimeReady(" not in chat
+    assert "function chatRvcRuntimeReady(" in chat
+    assert "let rvcRuntimeReady" in rvc_studio
+
+
+def test_config_progress_copy_does_not_claim_configuration_was_modified():
+    service = (ROOT / "agents" / "service.py").read_text(encoding="utf-8")
+    assert "配置请求已处理，整理结果中" in service
+    assert "配置修改完成，整理结果中" not in service

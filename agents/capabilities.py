@@ -164,7 +164,7 @@ def guard_capability(
             {
                 "tool": descriptor.model_name,
                 "capability_id": descriptor.capability_id,
-                "title": f"执行能力 {descriptor.name}",
+                "title": f"需要确认：{descriptor.name}",
                 "target": descriptor.capability_id,
                 "arguments": dict(arguments or {}),
             }

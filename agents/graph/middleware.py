@@ -192,7 +192,7 @@ def build_capability_guard_middleware():
                 {
                     "tool": descriptor.model_name,
                     "capability_id": descriptor.capability_id,
-                    "title": f"执行能力 {descriptor.name}",
+                    "title": f"需要确认：{descriptor.name}",
                     "target": descriptor.capability_id,
                     "arguments": dict(request.tool_call.get("args") or {}),
                 }
@@ -222,23 +222,38 @@ def build_worker_action_tool_middleware(worker: str):
     保留 Agent、Supervisor、worker 的原有架构不变。
     """
     action_tools = {
-        "prepare_and_separate": {"prepare_rvc_source"},
-        "session_status": {"get_rvc_session"},
-        "separate_vocals": {"separate_rvc_vocals"},
-        "convert": {"convert_audio_with_rvc"},
-        "cancel": {"cancel_rvc_task"},
+        "rvc_worker": {
+            "prepare_and_separate": {"prepare_rvc_source"},
+            "session_status": {"get_rvc_session"},
+            "separate_vocals": {"separate_rvc_vocals"},
+            "convert": {"convert_audio_with_rvc"},
+            "cancel": {"cancel_rvc_task"},
+        },
+        "voice_worker": {
+            "session_status": {"get_voice_studio_session"},
+            "cancel": {"cancel_voice_studio_session"},
+            "analyze": {"analyze_voice_material"},
+            "confirm_segments": {"request_training_confirmation"},
+            "save_voice": {"bind_trained_voice"},
+            "upload_segments": {"upload_voice_studio_segments"},
+            "synthesize": {"synthesize_voice_asset"},
+            "transcribe": {"transcribe_voice_attachment"},
+            "bind": {"bind_voice_asset_to_persona"},
+            "train": {"train_voice_from_studio"},
+        },
     }
 
     @wrap_model_call
     def worker_action_tools(request: ModelRequest, handler: Callable):
-        if worker != "rvc_worker":
+        worker_tools = action_tools.get(worker)
+        if not worker_tools:
             return handler(request)
         dispatch = request.state.get("dispatch_request") or request.state.get("pending_task") or {}
         options = dispatch.get("options") if isinstance(dispatch, dict) else {}
         raw_action = dispatch.get("action") if isinstance(dispatch, dict) else None
         raw_action = raw_action or (options.get("action") if isinstance(options, dict) else None)
         action = str(raw_action or "").strip().lower()
-        allowed = action_tools.get(action)
+        allowed = worker_tools.get(action)
         if not allowed:
             return handler(request)
         visible = [

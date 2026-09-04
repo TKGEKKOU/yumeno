@@ -10,18 +10,30 @@ from langchain.messages import HumanMessage
 
 
 _SIGNALS = {
-    "management": ("修改角色", "删除角色", "角色设定", "上传资料", "删除资料"),
-    "memory": ("记住", "记忆", "忘掉", "别记", "清空记忆"),
-    # canonical voice Worker：覆盖所有声音相关能力；保留“克隆”只是其中一组强信号。
+    "config_worker": (
+        "检查配置", "配置状态", "下载资源", "安装资源", "运行环境", "检查依赖", "补全环境",
+        "卸载资源", "清理资源", "停止下载", "取消安装", "环境依赖",
+        "ffmpeg配置", "embedding模型", "检查ffmpeg", "安装ffmpeg",
+    ),
+    "profile_worker": (
+        "修改角色", "删除角色", "角色设定", "更新人设", "调整人设", "改写人设",
+        "角色档案", "人设档案", "修改设定", "角色管理",
+    ),
+    "memory_worker": ("记住", "记忆", "忘掉", "别记", "清空记忆"),
+    "document_worker": (
+        "上传文档", "删除文档", "上传资料", "删除资料", "导入文档", "移除文档",
+        "文档管理", "管理文档", "清理文档",
+    ),
+    # canonical voice Worker：覆盖所有声音相关能力；保留"克隆"只是其中一组强信号。
     # RVC 只处理用户明确要求的音频文件变声；角色语音、TTS 和一般音频请求仍走 voice/GPT-SoVITS。
     # RVC 是受条件约束的专项意图，不能因为单独提到术语就触发。
-    "voice": (
+    "voice_worker": (
         "声音", "语音", "音色", "音频", "tts", "asr", "语音合成", "语音识别",
         "实时语音", "语音克隆", "音色克隆", "克隆音色", "克隆声音", "声音克隆",
         "训练音色", "音色训练", "gpt-sovits", "gpt sovits",
     ),
-    "live2d": ("live2d", "live 2d", "vtube studio", "vts", "模型立绘", "虚拟形象"),
-    "knowledge": ("资料", "文档", "知识库", "根据设定", "根据内容", "经历"),
+    "live2d_worker": ("live2d", "live 2d", "vtube studio", "vts", "模型立绘", "虚拟形象"),
+    "knowledge_worker": ("资料", "文档", "知识库", "根据设定", "根据内容", "经历", "查询知识", "检索知识"),
     "web": ("天气", "新闻", "实时", "最新", "联网", "搜索网络", "汇率", "当前价格"),
     "capability": ("工具", "能力", "能调用", "会调用", "可以调用"),
     "conversation": (
@@ -29,7 +41,11 @@ _SIGNALS = {
         "介绍自己", "陪我", "聊聊", "心情", "讲个笑话", "你喜欢", "你讨厌",
     ),
 }
-_PRIORITY = ("management", "memory", "rvc_worker", "voice", "live2d", "knowledge", "web", "capability", "conversation")
+_PRIORITY = (
+    "config_worker", "profile_worker", "memory_worker", "document_worker",
+    "rvc_worker", "voice_worker", "live2d_worker", "knowledge_worker",
+    "web", "capability", "conversation"
+)
 _NEGATORS = ("不要", "不用", "无需", "别", "不必", "不是", "不想", "禁止")
 _UI_COMMANDS = (
     (re.compile(r"^(?:请)?(?:打开|进入|切换到?)(?:系统)?设置(?:页|页面)?[。！!？?]*$"), "open_settings"),
@@ -81,7 +97,7 @@ class IntentAnalysis:
             "web_authorized": self.web_authorized,
             # Keep advisory configuration metadata in the graph checkpoint.
             # Without these fields the Core Agent only receives primary/candidates
-            # and may mistake “检查 RVC 配置” for an RVC production request.
+            # and may mistake "检查 RVC 配置" for an RVC production request.
             "configuration_hint": self.configuration_hint,
             "configuration_subject": self.configuration_subject,
             "requested_action": self.requested_action,
@@ -132,7 +148,7 @@ def analyze_intents(text: str, previous: IntentAnalysis | None = None) -> Intent
     normalized = re.sub(r"\s+", "", str(text or "")).lower()
     # 无上下文时也按保守的知识续接处理，避免上一轮联网结果被模型错误继承。
     if normalized in {"继续", "接着说", "然后呢", "再说说"}:
-        return IntentAnalysis("knowledge", ("knowledge",), inherited=True)
+        return IntentAnalysis("knowledge_worker", ("knowledge_worker",), inherited=True)
     for pattern, command in _UI_COMMANDS:
         if pattern.fullmatch(normalized):
             return IntentAnalysis("ui", ("ui",), ui_command=command, requires_model=False)
@@ -147,7 +163,7 @@ def analyze_intents(text: str, previous: IntentAnalysis | None = None) -> Intent
     )
     configuration_hint = any(token in normalized for _, tokens in config_action_map for token in tokens)
     requested_action = next((action for action, tokens in config_action_map if any(token in normalized for token in tokens)), None)
-    configuration_subject = next((subject for subject, tokens in (("rvc", ("rvc", "变声")), ("ffmpeg", ("ffmpeg",)), ("asr", ("asr", "语音识别")), ("embedding", ("embedding", "嵌入模型")), ("gpt_sovits", ("gpt-sovits", "gpt sovits"))) if any(token in normalized for token in tokens)), None)
+    configuration_subject = next((subject for subject, tokens in (("rvc", ("rvc", "变声")), ("ffmpeg", ("ffmpeg",)), ("asr", ("asr", "语音识别")), ("embedding", ("embedding", "嵌入模型")), ("reranker", ("reranker", "重排序")), ("gpt_sovits", ("gpt-sovits", "gpt sovits"))) if any(token in normalized for token in tokens)), None)
     fresh_external = (
         any(signal in normalized for signal in _WEB_FRESHNESS_SIGNALS)
         and any(subject in normalized for subject in _EXTERNAL_FACT_OBJECTS)
@@ -185,8 +201,8 @@ def analyze_intents(text: str, previous: IntentAnalysis | None = None) -> Intent
         or bool(_RENAME_RE.search(normalized))
         or bool(_PROFILE_SET_RE.search(normalized))
     )
-    if has_profile_mutation and not _PROFILE_NEGATION_PREFIX_RE.search(normalized):
-        return IntentAnalysis("management", ("management",))
+    if has_profile_mutation:
+        return IntentAnalysis("profile_worker", ("profile_worker",))
     if candidates:
         return IntentAnalysis(
             candidates[0],

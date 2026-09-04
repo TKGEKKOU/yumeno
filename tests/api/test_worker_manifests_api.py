@@ -8,13 +8,13 @@ def test_worker_manifest_list_returns_public_manifests(client):
     payload = response.json()
     assert set(payload) == {"items"}
     assert [item["name"] for item in payload["items"]] == [
-        "knowledge",
-        "memory",
-        "document",
-        "profile",
-        "voice",
+        "knowledge_worker",
+        "memory_worker",
+        "document_worker",
+        "profile_worker",
+        "voice_worker",
         "rvc_worker",
-        "live2d",
+        "live2d_worker",
         "config_worker",
     ]
     assert payload["items"]
@@ -33,7 +33,7 @@ def test_worker_manifest_detail_returns_one_manifest(client):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["name"] == "memory"
+    assert payload["name"] == "memory_worker"
     assert payload["tools"]
     assert payload["read_only"] is False
     assert payload["requires_confirmation"] is True
@@ -51,11 +51,11 @@ def test_worker_manifest_detail_exposes_voice_and_live2d_domains(client):
     live2d = client.get("/api/workers/manifests/live2d")
 
     assert voice.status_code == 200
-    assert voice.json()["name"] == "voice"
+    assert voice.json()["name"] == "voice_worker"
     assert "start_voice_clone_session" in voice.json()["tools"]
     assert "list_voice_assets" in voice.json()["tools"]
     assert live2d.status_code == 200
-    assert live2d.json()["name"] == "live2d"
+    assert live2d.json()["name"] == "live2d_worker"
     assert "list_live2d_models" in live2d.json()["tools"]
     rvc = client.get("/api/workers/manifests/rvc_worker")
     assert rvc.status_code == 200

@@ -57,3 +57,23 @@ def test_is_alive_checks_port_when_process_untracked(monkeypatch):
         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("refused")),
     )
     assert adapter.is_alive() is False
+
+
+def test_adapter_status_does_not_treat_installed_as_ready(tmp_path, monkeypatch):
+    config = GPTSoVITSConfig(tmp_path)
+    install_dir = tmp_path / "gpt-sovits"
+    (install_dir / "runtime").mkdir(parents=True)
+    (install_dir / "runtime" / "python.exe").write_bytes(b"python")
+    (install_dir / "api_v2.py").write_text("APP = None\n", encoding="utf-8")
+    config.save(install_dir=str(install_dir))
+    adapter = GPTSoVITSAdapter(config, tmp_path)
+    monkeypatch.setattr(adapter, "is_alive", lambda: False)
+
+    status = adapter.status()
+
+    assert status["installed"] is True
+    assert status["installation_ready"] is True
+    assert status["ready"] is False
+    assert status["service_running"] is False
+    assert status["missing"] == []
+    assert status["next_action"] == "start_service"

@@ -39,7 +39,7 @@ def test_service_result_preserves_structured_worker_handoff_and_canonical_worker
             "active_worker": None,
             "worker_results": [
                 {
-                    "worker": "knowledge",
+                    "worker": "knowledge_worker",
                     "status": "accepted",
                     "answer": "知识 Worker 的结构化结果",
                     "evidence": [{"title": "设定.md"}],
@@ -48,11 +48,11 @@ def test_service_result_preserves_structured_worker_handoff_and_canonical_worker
         }
     )
 
-    assert result.worker == "knowledge"
+    assert result.worker == "knowledge_worker"
     assert result.specialist == "conversation"
     assert result.worker_results == (
         {
-            "worker": "knowledge",
+            "worker": "knowledge_worker",
             "status": "accepted",
             "answer": "知识 Worker 的结构化结果",
             "evidence": [{"title": "设定.md"}],

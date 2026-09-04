@@ -102,6 +102,7 @@ def test_registry_marks_every_mutation_as_confirmed():
         "request_training_confirmation",
         "request_config_change",
             "manage_resource_install",
+        "delete_voice_asset",
     }
     assert set(MUTATION_TOOL_NAMES) == expected
     mutation_specs = [spec for spec in tool_specs() if spec.name in expected]

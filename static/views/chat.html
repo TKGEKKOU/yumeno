@@ -95,7 +95,7 @@
       <footer class="chat-footer">
         <div class="chat-main-inner chat-footer-inner">
           <div class="chat-inline-status is-hidden"><p id="audio-status" class="audio-status" aria-live="polite"></p><p id="question-status" class="question-status" aria-live="polite"></p><p id="chat-error" class="inline-error chat-error"></p></div>
-          <section id="confirmation-panel" class="confirmation-panel is-hidden"><div><strong id="confirmation-title">确认操作</strong><p id="confirmation-detail"></p></div><div class="confirmation-actions"><button id="cancel-action" class="button button-secondary" type="button">取消</button><button id="confirm-action" class="button button-warning" type="button">确认</button></div></section>
+          <section id="confirmation-panel" class="confirmation-panel is-hidden" aria-hidden="true"><div><strong id="confirmation-title">确认操作</strong><p id="confirmation-detail"></p></div><div class="confirmation-actions"><button id="cancel-action" class="button button-secondary" type="button">取消</button><button id="confirm-action" class="button button-warning" type="button">确认</button></div></section>
           <form id="question-form" class="composer">
             <input id="chat-voice-material" class="visually-hidden-input" type="file" accept=".pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.json,.png,.jpg,.jpeg,.webp,.gif,audio/*,video/*,.wav,.mp3,.m4a,.aac,.flac,.ogg,.opus,.wma,.mp4,.mkv,.webm,.mov,.avi" multiple>
             <button id="chat-attachment" class="icon-button" type="button" title="上传附件" aria-label="上传附件" disabled><i data-lucide="paperclip"></i></button>
@@ -120,6 +120,18 @@
     <button id="chat-context-backdrop" class="chat-context-backdrop is-hidden" type="button" aria-label="关闭任务栏"></button>
 
     <button id="chat-settings-backdrop" class="chat-settings-backdrop is-hidden" type="button" aria-label="关闭对话设置"></button>
+    <dialog id="chat-voice-service-dialog" class="settings-confirm-dialog" aria-labelledby="chat-voice-service-title">
+      <form method="dialog">
+        <h2 id="chat-voice-service-title">语音服务未启动</h2>
+        <p class="settings-confirm-detail">播放语音需要启动 GPT-SoVITS。现在启动后，后续回复即可自动播放。</p>
+        <p id="chat-voice-service-status" class="inline-error" role="status"></p>
+        <div class="settings-confirm-actions">
+          <button id="chat-voice-service-close" class="button button-secondary" value="cancel" type="submit">稍后</button>
+          <button id="chat-voice-service-open" class="button button-secondary" value="settings" type="button">声音设置</button>
+          <button id="chat-voice-service-start" class="button button-primary" value="start" type="button">启动服务</button>
+        </div>
+      </form>
+    </dialog>
     <aside id="chat-settings-sidebar" class="chat-settings-sidebar is-hidden" role="dialog" aria-modal="false" aria-labelledby="chat-settings-title" aria-hidden="true">
       <header class="chat-settings-head">
         <div><span class="chat-context-kicker">WORKSPACE</span><strong id="chat-settings-title">对话设置</strong></div>

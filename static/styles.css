@@ -2187,6 +2187,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 @media (prefers-reduced-motion: reduce) { .chat-task-card progress { transition: none; } }
 
 
+/* 任务操作统一收敛到对话中央工作卡片；隐藏尚未承载完整控制状态的右侧任务栏。 */
+#chat-layout #chat-context-peek,
+#chat-layout #chat-context-sidebar,
+#chat-layout #chat-context-backdrop { display: none !important; }
+
 /* Chat workbench — compact task rail with an Archify-inspired public workflow view. */
 .chat-context-peek {
   position: absolute; top: 78px; right: 10px; z-index: calc(var(--z-float) + 1);
@@ -2788,4 +2793,42 @@ body:has(#chat-view:not(.is-hidden)) .page-shell { width: 100%; max-width: none;
 .resource-setup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .resource-setup-components{display:grid;gap:4px;margin:10px 0;color:var(--muted,#6d7778);font-size:12px}.resource-setup-component{display:flex;justify-content:space-between;gap:12px}.resource-setup-component .is-ready{color:#39a99f}.resource-setup-component .is-missing{color:#9a6b45}.resource-setup-progress{margin:10px 0}.resource-setup-progress-head{display:flex;justify-content:space-between;font-size:12px;color:var(--muted,#6d7778);margin-bottom:5px}.resource-setup-progress-track{height:5px;border-radius:99px;background:#dcebea;overflow:hidden}.resource-setup-progress-track i{display:block;height:100%;border-radius:inherit;background:#39c5bb;transition:width .35s ease}
 /* 资源管理卡片：固定信息区高度，避免下载阶段因文案变化上下跳动。 */
-.resource-setup-inline-card{height:188px;min-height:188px;box-sizing:border-box;display:flex;flex-direction:column}.resource-setup-inline-card .resource-setup-actions{margin-top:auto}.resource-setup-progress-head span{max-width:78%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.resource-setup-inline-card{min-height:188px;height:auto;box-sizing:border-box;display:flex;flex-direction:column}.resource-setup-inline-card .resource-setup-actions{margin-top:auto}.resource-setup-progress-head span{max-width:78%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 资源总览：用一张横向工作区承载所有受管资源，避免多个窄卡片造成“未加载”的错觉。 */
+.resource-setup-overview { width: 100%; min-height: 0; height: auto; }
+.resource-setup-overview-grid { display: grid; gap: 0; margin-top: 12px; border-top: 1px solid color-mix(in srgb, var(--primary, #39C5BB) 18%, transparent); }
+.resource-setup-overview-row { display: grid; grid-template-columns: minmax(180px, 1fr) auto minmax(72px, auto); align-items: center; gap: 20px; min-height: 58px; padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--ink, #172321) 8%, transparent); }
+.resource-setup-overview-identity { display: grid; gap: 3px; min-width: 0; }
+.resource-setup-overview-identity strong { color: var(--text-primary, #172321); }
+.resource-setup-overview-identity span { overflow: hidden; color: var(--text-secondary, #5b6c69); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.resource-setup-overview-state { min-width: 62px; color: var(--muted, #6d7778); font-size: 12px; text-align: right; white-space: nowrap; }
+.resource-setup-overview-state.is-ready { color: #2f9f96; }
+.resource-setup-overview-state.is-missing { color: #9a6b45; }
+.resource-setup-overview-state.is-failed { color: var(--danger, #a94c4c); }
+.resource-setup-overview-action { min-width: 60px; text-align: right; }
+.resource-setup-overview-action .button { min-height: 30px; padding: 5px 12px; font-size: 12px; }
+@media (max-width: 680px) {
+  .resource-setup-overview-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .resource-setup-overview-state { grid-column: 2; grid-row: 1; }
+  .resource-setup-overview-action { grid-column: 1 / -1; grid-row: 2; text-align: left; }
+}
+
+/* 旧版页脚确认条仅保留 DOM 兼容性，确认入口统一由任务工作区承载。 */
+#chat-layout #confirmation-panel { display: none !important; }
+
+/* Resource cards need room for real diagnostics instead of a narrow status tile. */
+#chat-layout .message-assistant:has(.resource-setup-inline-card) { width: min(100%, 1040px); }
+#chat-layout .resource-setup-inline-card { width: 100%; min-width: 0; }
+#chat-layout .resource-setup-diagnostic-card { min-height: 252px; }
+#chat-layout .resource-setup-components { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 28px; row-gap: 8px; }
+#chat-layout .resource-setup-component { min-width: 0; }
+#chat-layout .resource-setup-component span:last-child { overflow-wrap: anywhere; text-align: right; }
+@media (max-width: 680px) { #chat-layout .resource-setup-components { grid-template-columns: 1fr; } }
+
+.resource-setup-confirmation { margin-top: 14px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line)); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.resource-setup-confirmation > div:first-child { display: grid; gap: 3px; }
+.resource-setup-confirmation strong { font-size: 13px; color: var(--ink); }
+.resource-setup-confirmation small { color: var(--muted); line-height: 1.45; }
+.resource-setup-confirmation-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+@media (max-width: 720px) { .resource-setup-confirmation { align-items: stretch; flex-direction: column; } .resource-setup-confirmation-actions { justify-content: flex-end; } }

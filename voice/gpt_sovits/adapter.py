@@ -344,10 +344,23 @@ class GPTSoVITSAdapter:
     def status(self) -> dict:
         probe = self.probe()
         alive = self.is_alive()
+        installed = self._has_installation_files(probe.install_dir)
+        installation_ready = probe.ok
+        if not installed:
+            next_action = "install"
+        elif not installation_ready:
+            next_action = "check"
+        elif not alive:
+            next_action = "start_service"
+        else:
+            next_action = "none"
         return {
             "configured": bool(self.config.values()["install_dir"]),
-            "installed": probe.ok,
-            "ready": probe.ok and alive,
+            "installed": installed,
+            "installation_ready": installation_ready,
+            "ready": installation_ready and alive,
+            "missing": list(probe.missing),
+            "next_action": next_action,
             "install_dir": str(probe.install_dir) if probe.install_dir else None,
             "python_path": str(probe.python_path) if probe.python_path else None,
             "api_script": str(probe.api_script) if probe.api_script else None,
@@ -356,3 +369,12 @@ class GPTSoVITSAdapter:
             "service_running": alive,
             "error": probe.error,
         }
+
+    @staticmethod
+    def _has_installation_files(install_dir: Path | None) -> bool:
+        if not install_dir or not install_dir.is_dir():
+            return False
+        try:
+            return any(install_dir.iterdir())
+        except OSError:
+            return False

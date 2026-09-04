@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.database import get_session
 from app.models import ConversationMessage, Persona, VoiceAsset
 from app.routers.messages import message_response
+from app.routers.resources import _gpt_sovits_status
 from app.routers.personas import local_persona_or_404
 from app.routers.settings import require_local
 from persona.service import LOCAL_WORKSPACE_ID
@@ -155,11 +156,10 @@ def _persist_audio(
 @router.get("/status")
 def get_status(request: Request):
     require_local(request)
-    current = request.app.state.gpt_sovits.status()
+    current = _gpt_sovits_status(request)
     return {
         **current,
         "engine": "gpt_sovits",
-        "ready": bool(current.get("installed")),
         "install": request.app.state.gpt_sovits_install.status(),
     }
 

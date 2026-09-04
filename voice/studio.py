@@ -404,6 +404,25 @@ class VoiceStudioManager:
             return True
         return False
 
+    def cancel_session(self, session_id: str) -> dict:
+        """Stop a running Voice Studio job without deleting session files."""
+        self._signal_cancel(session_id)
+        worker = None
+        with self._lock:
+            worker = self._workers.get(session_id)
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=5.0)
+        state = self.session_state(session_id)
+        phase = str((state or {}).get("phase") or "").lower()
+        if phase != "cancelled":
+            try:
+                self._update_meta(session_id, {"phase": "cancelled", "error": ""})
+            except VoiceStudioError:
+                pass
+            self._runtime_cancel(session_id)
+            state = self.session_state(session_id)
+        return state or {"session_id": session_id, "phase": "cancelled"}
+
     # ------------------------------------------------------------------
     # pipeline tasks
     # ------------------------------------------------------------------

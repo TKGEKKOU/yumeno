@@ -26,6 +26,7 @@ class InstallationProbe:
     api_script: Path | None
     api_version: str | None
     error: str = ""
+    missing: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -38,10 +39,19 @@ def probe_installation(install_dir: Path | None) -> InstallationProbe:
     launch the API service is present."""
 
     if install_dir is None:
-        return InstallationProbe(None, None, None, None, "未配置 GPT-SoVITS 安装目录")
+        return InstallationProbe(
+            None, None, None, None, "未配置 GPT-SoVITS 安装目录", ("安装目录",)
+        )
     install_dir = install_dir.resolve()
     if not install_dir.is_dir():
-        return InstallationProbe(install_dir, None, None, None, f"目录不存在：{install_dir}")
+        return InstallationProbe(
+            install_dir,
+            None,
+            None,
+            None,
+            f"目录不存在：{install_dir}",
+            ("GPT-SoVITS 安装目录",),
+        )
 
     python_path = install_dir / "runtime" / "python.exe"
     if not python_path.is_file():
@@ -58,15 +68,24 @@ def probe_installation(install_dir: Path | None) -> InstallationProbe:
     else:
         api_script, api_version = None, None
 
+    missing: list[str] = []
     if not python_path:
-        return InstallationProbe(
-            install_dir, None, api_script, api_version,
-            "未找到 Python 运行环境（runtime\\python.exe 或 python.exe）",
-        )
+        missing.append("Python 运行环境")
     if not api_script:
+        missing.append("API 入口")
+    if missing:
+        details = []
+        if "Python 运行环境" in missing:
+            details.append("未找到 Python 运行环境（runtime\\python.exe 或 python.exe）")
+        if "API 入口" in missing:
+            details.append("未找到 API 入口（api_v2.py 或 api.py）")
         return InstallationProbe(
-            install_dir, python_path, None, None,
-            "未找到 API 入口（api_v2.py 或 api.py）",
+            install_dir,
+            python_path,
+            api_script,
+            api_version,
+            "；".join(details),
+            tuple(missing),
         )
     return InstallationProbe(install_dir, python_path, api_script, api_version)
 

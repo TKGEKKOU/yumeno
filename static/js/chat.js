@@ -160,10 +160,14 @@ function initChat() {
   state.chatContextOpen = false;
   state.currentWorkflow = null;
   state.pendingRvcWorkflowEvent = null;
+  state.pendingVoiceWorkflowEvent = null;
   state.rvcInline = null;
+  state.voiceInline = null;
   state.currentTaskStatus = null;
   state.pendingInput = null;
   state.pendingInputValues = {};
+  state.confirmationRequestKey = "";
+  state.confirmationResponded = false;
   state.chatTaskEntries = new Map();
   state.voicePlaybackQueue = [];
   state.voicePlayingAudio = null;
@@ -426,6 +430,68 @@ function clearStaleReplyLoading() {
     node.remove();
   });
 }
+
+// confirmation.required 可能同时从实时事件和 HTTP resume 结果到达。
+// 用动作指纹区分“新的确认请求”和“同一确认未被服务端消费”，避免旧确认无限重放。
+function confirmationActionKey(action, specialist = "") {
+  const normalize = (value) => {
+    if (Array.isArray(value)) return value.map(normalize);
+    if (!value || typeof value !== "object") return value;
+    return Object.keys(value).sort().reduce((output, key) => {
+      output[key] = normalize(value[key]);
+      return output;
+    }, {});
+  };
+  try {
+    return JSON.stringify({ specialist: String(specialist || ""), action: normalize(action || null) });
+  } catch {
+    return `${String(specialist || "")}:${String(action?.tool || action?.name || action?.title || "confirmation")}`;
+  }
+}
+
+function resetConfirmationResponseLock() {
+  state.confirmationResponded = false;
+  state.confirmationRequestKey = "";
+}
+
+function resetConfirmationState() {
+  state.pendingAction = null;
+  resetConfirmationResponseLock();
+}
+
+function releaseFailedConfirmation(message = "") {
+  resetConfirmationState();
+  state.pendingInput = null;
+  state.pendingInputValues = {};
+  finishPendingReplies();
+  clearStaleReplyLoading();
+  state.pendingReplyNode = null;
+  state.realtimeAnswerNode = null;
+  state.realtimeTurnId = null;
+  state.realtimeExecutionPending = false;
+  clearRealtimeSubmission();
+  renderConfirmation();
+  if (message) setText("chat-error", message, true);
+  // 清理必须优先于 UI 更新；即使某个页面/测试环境缺少可选控件，
+  // 也不能让一次失效确认阻断新消息。
+  try { setRealtimeBusy(false); } catch (error) { console.warn("确认状态 UI 清理失败", error); }
+  try { updateComposerControls(); } catch (error) { console.warn("对话控件刷新失败", error); }
+}
+
+function beginConfirmation(action, specialist) {
+  const key = confirmationActionKey(action, specialist);
+  const previousKey = state.confirmationRequestKey
+    || confirmationActionKey(state.pendingAction?.action, state.pendingAction?.specialist);
+  if (state.confirmationResponded && key && key === previousKey) {
+    releaseFailedConfirmation("确认未被服务端接受，请重新发送");
+    return false;
+  }
+  state.pendingAction = { action, specialist };
+  state.confirmationRequestKey = key;
+  state.confirmationResponded = false;
+  return true;
+}
+
 function handleRealtimeEvent(event) {
   if (consumeWorkflowEvent(event)) return;
   if (event.type === "session.ready") {
@@ -447,6 +513,7 @@ function handleRealtimeEvent(event) {
     // workflow.update 可能先于最终结果到达；它只对当前 turn 有效。
     // 新一轮请求必须丢弃旧的 RVC handoff，避免“检查配置”等请求复活旧工作区。
     state.pendingRvcWorkflowEvent = null;
+    state.pendingVoiceWorkflowEvent = null;
     state.realtimeCompletionEpoch = (state.realtimeCompletionEpoch || 0) + 1;
     state.realtimeStageEpoch = state.realtimeCompletionEpoch;
     const optimisticReply = state.pendingReplyNode?.isConnected ? state.pendingReplyNode : null;
@@ -470,7 +537,7 @@ function handleRealtimeEvent(event) {
     state.realtimeStageEpoch = state.realtimeCompletionEpoch || 0;
     // RVC handoff 后，专用工作区是唯一活动进度源；后续 Core/Worker 阶段
     // 只作为调试信息保留（若用户开启思考内容），不能重新创建 spinner。
-    if (state.rvcInline?.node?.isConnected) {
+    if (state.rvcInline?.node?.isConnected || state.voiceInline?.node?.isConnected) {
       const processList = state.realtimeAnswerNode?.querySelector(".agent-process-list");
       processList?.querySelectorAll(".agent-process-item.is-active").forEach((item) => {
         item.classList.remove("is-active");
@@ -499,7 +566,7 @@ function handleRealtimeEvent(event) {
     const finalFlow = event.workflow || event.flow;
     // RVC 的正式 handoff 可能在最终 text.final 才到达；此时接管当前
     // “正在分析请求…”气泡，而不是再创建一张顶部任务卡或第二个气泡。
-    if (hasFormalRvcHandoff(event, finalFlow)) {
+    if (hasFormalRvcHandoff(event, finalFlow) || hasFormalVoiceHandoff(event, finalFlow)) {
       handleAgentResult({ ...event, workflow: finalFlow, worker: event.worker || event.worker_name });
       state.realtimeStageEpoch = "closed";
       state.realtimeTurnId = null;
@@ -540,6 +607,7 @@ function handleRealtimeEvent(event) {
       state.pendingInput = null;
       state.pendingInputValues = {};
       state.confirmationResponded = false;
+      state.confirmationRequestKey = "";
       renderConfirmation();
       state.realtimeTurnId = null;
       state.realtimeExecutionPending = false;
@@ -549,7 +617,7 @@ function handleRealtimeEvent(event) {
   } else if (event.type === "confirmation.required") {
     state.realtimeStageEpoch = "closed";
     if (window.PLLive2DHub) window.PLLive2DHub.setAgentState("idle");
-    state.pendingAction = { action: event.pending_action, specialist: event.specialist };
+    if (!beginConfirmation(event.pending_action, event.specialist)) return;
     state.pendingInput = null;
     state.pendingInputValues = {};
     finishPendingReplies();
@@ -560,7 +628,6 @@ function handleRealtimeEvent(event) {
     state.realtimeSubmissionPending = false;
     state.agentRequestPending = false;
     clearRealtimeSubmission();
-    state.confirmationResponded = false;
     state.lastUploadRequestAt = 0;
     abortVoiceStream();
     resetPacing();
@@ -574,14 +641,14 @@ function handleRealtimeEvent(event) {
     // realtime 在 waiting_input 时不会走 handleAgentResult，而是直接发 input.required。
     // RVC 的 workflow 仍然必须由 Core Agent 已完成 handoff 后才能进入专用工作区；
     // 这里接管同一个 turn.started 创建的 assistant 气泡，禁止生成通用“缺少信息”卡片。
-    if (hasFormalRvcHandoff(event, waitingFlow)) {
+    if (hasFormalRvcHandoff(event, waitingFlow) || hasFormalVoiceHandoff(event, waitingFlow)) {
       handleAgentResult({ ...waitingResult, workflow: waitingFlow, worker: event.worker || event.worker_name });
       state.pendingReplyNode = null;
       state.realtimeAnswerNode = null;
       state.realtimeTurnId = null;
       state.realtimeSubmissionPending = false;
       state.agentRequestPending = false;
-      state.confirmationResponded = false;
+      resetConfirmationResponseLock();
       clearRealtimeSubmission();
       abortVoiceStream();
       resetPacing();
@@ -594,7 +661,7 @@ function handleRealtimeEvent(event) {
     // 不创建通用顶部“缺少信息”卡，也不让它把 RVC UI 提前带出来；保留
     // 原 loading 气泡，等待最终带 workflow.worker + worker 的结果。
     const waitingWorker = String(event.worker || event.worker_name || "").trim().toLowerCase();
-    if (waitingWorker === "rvc_worker" || (waitingFlow && String(waitingFlow.worker || "").trim().toLowerCase() === "rvc_worker")) {
+    if (waitingWorker === "rvc_worker" || waitingWorker === "voice_worker" || (waitingFlow && ["rvc_worker", "voice_worker"].includes(String(waitingFlow.worker || "").trim().toLowerCase()))) {
       const target = state.realtimeAnswerNode || state.pendingReplyNode;
       if (target) setReplyStage(target, "正在分析请求…");
       return;
@@ -673,7 +740,7 @@ function handleRealtimeEvent(event) {
       state.pendingAction = null;
       state.pendingInput = null;
       state.pendingInputValues = {};
-      state.confirmationResponded = false;
+      resetConfirmationResponseLock();
       renderConfirmation();
       updateComposerControls();
     }
@@ -730,7 +797,7 @@ function cancelRealtimeTurn() {
   state.pendingAction = null;
   state.pendingInput = null;
   state.pendingInputValues = {};
-  state.confirmationResponded = false;
+  resetConfirmationResponseLock();
   state.realtimeStageEpoch = "closed";
   finishPendingReplies();
   state.pendingReplyNode = null;
@@ -887,11 +954,13 @@ function observeChatStatus() {
 }
 function updateComposerControls() {
   if (!$("question-form")) return;
-  const conversationBusy = isConversationBusy() && !(state.pendingInput && state.rvcInline);
+  const conversationBusy = isConversationBusy() && !(state.pendingInput && (state.rvcInline || state.voiceInline));
   const rvcPhase = String(state.rvcInline?.state?.phase || "").toLowerCase();
   const rvcBusy = Boolean(state.rvcInline && (state.rvcInline.taskId || state.rvcInline.preparePending
     || ["accepted", "processing", "preparing", "extracting", "normalizing", "separating", "converting", "running"].includes(rvcPhase)));
-  const stopAvailable = Boolean(state.realtimeBusy || state.agentRequestPending || state.realtimeSubmissionPending || state.realtimeExecutionPending || rvcBusy);
+  const voiceStatus = String(state.voiceInline?.lastResult?.status || state.voiceInline?.agentWorkflow?.status || "").toLowerCase();
+  const voiceBusy = Boolean(state.voiceInline && (state.voiceInline.cancelling || ["accepted", "running", "processing", "queued"].includes(voiceStatus)));
+  const stopAvailable = Boolean(state.realtimeBusy || state.agentRequestPending || state.realtimeSubmissionPending || state.realtimeExecutionPending || rvcBusy || voiceBusy);
   const voiceActive = state.voiceActive;
   $("question-form").classList.toggle("is-voice-active", voiceActive);
   if ($("voice-chat")) {
@@ -1061,6 +1130,53 @@ function readChatPreference(key, fallback = false) {
 function writeChatPreference(key, value) {
   try { localStorage.setItem(key, value ? "on" : "off"); } catch { /* storage may be unavailable */ }
 }
+async function promptVoiceServiceStartup() {
+  const dialog = $("chat-voice-service-dialog");
+  if (!dialog) return;
+  const status = $("chat-voice-service-status");
+  const start = $("chat-voice-service-start");
+  const open = $("chat-voice-service-open");
+  const readStatus = async () => resourceSnapshot(await chatRvcApi("/api/resources/gpt_sovits/status", { cache: "no-store" }));
+  const waitUntilReady = async (attempts = 20) => {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const snapshot = await readStatus();
+      if (snapshot.service_running === true || snapshot.ready === true) return true;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return false;
+  };
+  try {
+    const snapshot = await readStatus();
+    if (snapshot.service_running === true || snapshot.ready === true) return;
+    if (status) status.textContent = snapshot.installation_ready === false ? "运行环境尚未完整安装，请先到声音页检查。" : "服务未启动，这是按需运行的正常状态。";
+  } catch (error) {
+    if (status) status.textContent = "暂时无法检查服务状态，请稍后重试。";
+  }
+  if (!dialog.open) dialog.showModal();
+  start?.focus();
+  if (start && start.dataset.bound !== "true") {
+    start.dataset.bound = "true";
+    start.addEventListener("click", async () => {
+      start.disabled = true;
+      if (status) status.textContent = "正在启动 GPT-SoVITS…";
+      try {
+        await chatRvcApi("/api/gpt-sovits/service/start", { method: "POST" });
+        const ready = await waitUntilReady();
+        if (!ready) throw new Error("启动请求已发送，但服务尚未就绪，请到声音页查看状态。");
+        if (status) status.textContent = "服务已就绪，可以播放语音了。";
+        setTimeout(() => { if (dialog.open) dialog.close("start"); }, 500);
+      } catch (error) {
+        if (status) status.textContent = `启动失败：${error?.message || error}`;
+        start.disabled = false;
+      }
+    });
+  }
+  if (open && open.dataset.bound !== "true") {
+    open.dataset.bound = "true";
+    open.addEventListener("click", () => { if (dialog.open) dialog.close("settings"); setChatSettingsOpen(false); window.switchView?.("voice"); });
+  }
+}
+
 function bindChatSettingsSidebar() {
   const button = $("chat-settings-toggle");
   if (!button || button.dataset.bound === "true") return;
@@ -1070,7 +1186,13 @@ function bindChatSettingsSidebar() {
   const thinking = $("chat-thinking-setting");
   const workflow = $("chat-workflow-setting");
   const debug = $("chat-debug-setting");
-  if (voice) { voice.checked = readChatPreference(CHAT_PREFERENCE_KEYS.voice, true); voice.addEventListener("change", () => writeChatPreference(CHAT_PREFERENCE_KEYS.voice, voice.checked)); }
+  if (voice) {
+    voice.checked = readChatPreference(CHAT_PREFERENCE_KEYS.voice, true);
+    voice.addEventListener("change", () => {
+      writeChatPreference(CHAT_PREFERENCE_KEYS.voice, voice.checked);
+      if (voice.checked) void promptVoiceServiceStartup();
+    });
+  }
   if (live2d) {
     live2d.checked = readChatPreference(CHAT_PREFERENCE_KEYS.live2d, false);
     const setLive2dVisibility = (open) => {
@@ -1198,6 +1320,7 @@ async function selectPersona(personaId = "") {
   state.composerAttachmentIds = [];
   state.currentWorkflow = null;
   state.rvcInline = null;
+  state.voiceInline = null;
   state.currentTaskStatus = null;
   setChatContextOpen(false);
   renderChatAttachments();
@@ -1216,7 +1339,7 @@ async function selectPersona(personaId = "") {
   state.pendingAction = null;
   state.pendingInput = null;
   state.pendingInputValues = {};
-  state.confirmationResponded = false;
+  resetConfirmationResponseLock();
   renderConfirmation(); renderChatContext(); renderPersonaList();
   if (window.PLLive2DHub) {
     window.PLLive2DHub.setPersonaModel(state.activePersona?.profile?.live2d?.model || null);
@@ -1238,13 +1361,22 @@ async function submitQuestion(event) {
     void cancelActiveChatTask();
     return;
   }
-  const question = $("question").value.trim(); if (!question) return;  // RVC 正在运行时，输入新问题表示放弃当前生成；不要把“什么情况”等新消息
+  const question = $("question").value.trim(); if (!question) return;
+  // 如果上一次确认已经发出但服务端没有消费，允许新消息清掉这条失效确认，
+  // 不让旧 pendingAction 永久占住发送入口；尚未响应的真实确认仍需用户明确处理。
+  if (state.pendingAction && state.confirmationResponded) releaseFailedConfirmation();
+  // RVC 正在运行时，输入新问题表示放弃当前生成；不要把“什么情况”等新消息
   // 再投递给旧的 waiting checkpoint。等待明确输入（上传/确认/模型）时仍保留
   // 自然语言继续 workflow 的能力。
   const rvcPhaseNow = String(state.rvcInline?.state?.phase || "").toLowerCase();
   if (state.rvcInline && ["processing", "preparing", "extracting", "normalizing", "separating", "converting", "running"].includes(rvcPhaseNow)) {
     await cancelActiveChatTask();
     state.rvcInline = null;
+  }
+  const voiceStatusNow = String(state.voiceInline?.lastResult?.status || state.voiceInline?.agentWorkflow?.status || "").toLowerCase();
+  if (state.voiceInline && ["accepted", "running", "processing", "queued"].includes(voiceStatusNow) && !state.pendingInput) {
+    await cancelActiveChatTask();
+    state.voiceInline = null;
   }  // 新消息优先：上一轮仍在生成且未等待用户输入时，先取消旧 turn。
   if ((state.realtimeBusy || state.agentRequestPending || state.realtimeSubmissionPending || state.realtimeExecutionPending)
       && !state.pendingInput && !state.pendingAction) {
@@ -1252,7 +1384,7 @@ async function submitQuestion(event) {
     if (!state.activePersona) return;
   }
   // 等待 Worker 输入时允许自然语言回答，继续当前 Agent checkpoint。
-  if (state.pendingInput && state.rvcInline && !state.voiceActive) {
+  if (state.pendingInput && (state.rvcInline || state.voiceInline) && !state.voiceActive) {
     $("question-form").reset();
     appendMessage("user", question);
     state.pendingInputValues = { ...(state.pendingInputValues || {}), user_message: question, text: question };
@@ -1268,8 +1400,10 @@ async function submitQuestion(event) {
   // 生成完成后，新的无关话题或“完成”表达会释放当前挂载，避免旧任务污染下一轮对话。
   // 已结束的 RVC 流程只保留在结果/附件中，不应污染下一轮普通对话的任务栏。
   if (state.currentWorkflow && CHAT_FLOW_TERMINAL.has(state.currentWorkflow.status)) {
+    const terminalWorker = String(state.currentWorkflow.worker || state.currentWorkflow.worker_name || "").trim().toLowerCase();
     state.currentWorkflow = null;
-  state.rvcInline = null;
+    if (terminalWorker === "rvc_worker") state.rvcInline = null;
+    else if (terminalWorker === "voice_worker") state.voiceInline = null;
     state.currentTaskStatus = null;
     renderChatContext();
   }
@@ -1279,6 +1413,7 @@ async function submitQuestion(event) {
   state.agentRequestPending = true;
   // 新一轮请求开始时丢弃上一轮尚未完成的 RVC handoff，避免过期事件污染当前对话。
   state.pendingRvcWorkflowEvent = null;
+  state.pendingVoiceWorkflowEvent = null;
   state.agentStageEpoch = null;
   const selected = selectedAttachments();
   if (selected.some((item) => item.status === "uploading")) {
@@ -1567,8 +1702,11 @@ async function clearConversation() {
     clearChatLogContents("从一句话开始");
     state.chatAttachments = []; state.composerAttachmentIds = [];
     state.currentWorkflow = null;
-  state.pendingRvcWorkflowEvent = null;
-  state.rvcInline = null; state.currentTaskStatus = null; state.chatTaskEntries = new Map();
+    state.pendingRvcWorkflowEvent = null;
+    state.pendingVoiceWorkflowEvent = null;
+    state.rvcInline = null;
+    state.voiceInline = null;
+    state.currentTaskStatus = null; state.chatTaskEntries = new Map();
     state.pendingAction = null; state.pendingInput = null; state.pendingInputValues = {};
     setChatContextOpen(false); renderChatAttachments(); renderChatContext();
     connectRealtime();
@@ -1583,19 +1721,27 @@ function handleAgentResult(result) {
   const resultWorker = String(result?.worker || result?.worker_name || "").trim().toLowerCase();
   const activeRvcTurn = resultWorker === "rvc_worker"
     || String(state.pendingInput?.worker || state.pendingInput?.specialist || "").trim().toLowerCase() === "rvc_worker";
+  const activeVoiceTurn = resultWorker === "voice_worker"
+    || String(state.pendingInput?.worker || state.pendingInput?.specialist || "").trim().toLowerCase() === "voice_worker";
   const cachedRvc = activeRvcTurn ? state.pendingRvcWorkflowEvent : null;
   const cachedFlow = cachedRvc?.flow || cachedRvc?.event?.flow;
+  const cachedVoice = activeVoiceTurn ? state.pendingVoiceWorkflowEvent : null;
+  const cachedVoiceFlow = cachedVoice?.flow || cachedVoice?.event?.flow;
   // 缓存的 workflow 只能补全同一个仍在活动的 RVC 回合，不能作为新请求的路由依据。
   const resultFlow = result?.workflow || result?.flow || (activeRvcTurn && cachedFlow?.worker === "rvc_worker" ? cachedFlow : null);
+  const voiceFlow = result?.workflow || result?.flow || (activeVoiceTurn && cachedVoiceFlow?.worker === "voice_worker" ? cachedVoiceFlow : null);
   const handoffResult = resultFlow && cachedFlow && !result?.workflow && !result?.flow && resultWorker === "rvc_worker"
     ? { ...cachedRvc.event, ...result, worker: "rvc_worker" } : result;
+  const voiceHandoffResult = voiceFlow && cachedVoiceFlow && !result?.workflow && !result?.flow && resultWorker === "voice_worker"
+    ? { ...cachedVoice.event, ...result, worker: "voice_worker" } : result;
   // 配置资源结果与 RVC 业务 workflow 彻底隔离。
   const isRvcResult = !resourceSetup && Boolean(resultFlow && typeof resultFlow === "object" && hasFormalRvcHandoff(handoffResult, resultFlow));
+  const isVoiceResult = !resourceSetup && !isRvcResult && Boolean(voiceFlow && typeof voiceFlow === "object" && hasFormalVoiceHandoff(voiceHandoffResult, voiceFlow));
   // 正式 handoff 会接管原 loading assistant 气泡；后续结果必须写回同一节点，
   // 不能再 append 一个普通 assistant 气泡覆盖/分离内嵌工作区。
   const inlineNode = isRvcResult
     ? (state.rvcInline?.node || state.realtimeAnswerNode || state.pendingReplyNode)
-    : null;
+    : (isVoiceResult ? (state.voiceInline?.node || state.realtimeAnswerNode || state.pendingReplyNode) : null);
   applyAgentContextResult(result);
   const waiting = result?.status === "waiting_input";
   state.pendingInput = waiting ? result : null;
@@ -1604,13 +1750,29 @@ function handleAgentResult(result) {
   } else {
     state.pendingInputValues = {};
   }
-  state.pendingAction = result.status === "pending_confirmation"
-    ? { action: result.pending_action, specialist: result.specialist }
-    : null;
+  const pendingConfirmation = result.status === "pending_confirmation";
+  if (pendingConfirmation) {
+    if (!beginConfirmation(result.pending_action, result.specialist)) return;
+  } else {
+    state.confirmationResponded = false;
+    state.confirmationRequestKey = "";
+    state.pendingAction = null;
+  }
   renderConfirmation();
   // Worker 等待用户补充信息时，输入框必须保持可发送；否则用户无法用自然语言继续或纠正当前任务。
-  const waitingWorkerReply = Boolean(state.pendingInput && (state.rvcInline || String(state.pendingInput.worker || state.pendingInput.specialist || "").toLowerCase() === "rvc_worker"));
+  const waitingWorkerReply = Boolean(state.pendingInput && (state.rvcInline || state.voiceInline || ["rvc_worker", "voice_worker"].includes(String(state.pendingInput.worker || state.pendingInput.specialist || "").toLowerCase())));
   $("send-question").disabled = ((!state.pendingAction && !waitingWorkerReply) && Boolean(state.pendingInput)) || (state.pendingAction && !waitingWorkerReply) || !state.activePersona;
+  // pending_confirmation 的 answer 可能仍是旧版内部预览（例如“执行能力 manage_resource_install”）。
+  // 它不是用户消息，不能再写进对话气泡；确认入口只由统一任务工作区承载，避免旧文案、空气泡和重复确认。
+  if (pendingConfirmation) {
+    if (state.pendingReplyNode) {
+      state.pendingReplyNode.remove();
+      state.pendingReplyNode = null;
+    }
+    finishPendingReplies();
+    renderChatContext();
+    return;
+  }
   if (isRvcResult) {
     const node = state.rvcInline?.node?.isConnected ? state.rvcInline.node : inlineNode;
     if (node) {
@@ -1621,6 +1783,27 @@ function handleAgentResult(result) {
       finishReply(node);
       state.pendingReplyNode = null;
       appendResultArtifacts(node, result);
+    }
+    finishPendingReplies();
+    renderChatContext();
+    return;
+  }
+  if (isVoiceResult) {
+    activateVoiceWorkspaceFromAgent(voiceHandoffResult, voiceFlow);
+    const node = state.voiceInline?.node?.isConnected ? state.voiceInline.node : inlineNode;
+    if (node) {
+      if (result.answer) {
+        const body = node.querySelector("p");
+        if (body) body.textContent = result.answer;
+      }
+      finishReply(node);
+      state.pendingReplyNode = null;
+      appendResultArtifacts(node, result);
+    }
+    if (state.voiceInline) {
+      state.voiceInline.lastResult = result;
+      state.voiceInline.agentWorkflow = voiceFlow;
+      renderVoiceInline();
     }
     finishPendingReplies();
     renderChatContext();
@@ -1934,22 +2117,40 @@ function findResourceSetup(value, seen = new Set()) {
   return null;
 }
 const resourcePhaseLabels = {
-  preparing: "正在准备下载环境", downloading: "正在下载 RVC 运行环境",
-  installing: "正在安装 RVC 运行环境", probing: "正在检查推理依赖",
-  verifying: "正在验证 RVC 运行环境", ready: "RVC 运行环境已就绪",
-  failed: "RVC 运行环境准备失败", idle: "等待操作"
+  preparing: "准备中", downloading: "下载中",
+  installing: "安装中", probing: "检查中",
+  verifying: "验证中", ready: "已就绪",
+  failed: "失败", idle: "等待操作"
 };
 function findExistingResourceCard(key) {
   return [...document.querySelectorAll(".resource-setup-inline-card")].find((card) => card.dataset.resource === key)?.parentElement || null;
 }
-async function resourceSetupAction(resource, action) {
+async function resourceSetupAction(resource, action, options = {}) {
   const key = canonicalResourceKey(resource?.resource || resource || "");
   const normalized = String(action || "status").trim().toLowerCase();
   if (!key) return;
-  if (normalized === "clean" && !window.confirm(`确定卸载 ${key} 运行环境吗？用户模型、附件和历史结果不会被删除。`)) return;
+  if (normalized === "clean" && options.confirmed !== true && !window.confirm(`确定卸载该运行环境？不会删除你的模型、附件和历史结果。`)) return;
   if ((normalized === "cancel" || normalized === "clean") && window.__yumenoResourceInstallTimer) { clearInterval(window.__yumenoResourceInstallTimer); window.__yumenoResourceInstallTimer = null; }
   // 卡片上的明确资源动作不再绕一圈生成工具确认卡；它调用同一个受保护
   // provider API，仍由后端资源管理器执行，避免 Core Agent 在 UI 操作中阻塞。
+  if (key === "gpt_sovits" && ["start_service", "stop_service", "detect", "open_directory"].includes(normalized)) {
+    const endpoints = {
+      start_service: ["/api/gpt-sovits/service/start", "POST"],
+      stop_service: ["/api/gpt-sovits/service/stop", "POST"],
+      detect: ["/api/gpt-sovits/detect", "POST"],
+      open_directory: ["/api/gpt-sovits/model-directory", "POST"],
+    };
+    try {
+      const [url, method] = endpoints[normalized];
+      const result = await chatRvcApi(url, { method });
+      const node = findExistingResourceCard(key) || (state.realtimeAnswerNode?.isConnected ? state.realtimeAnswerNode : appendMessage("assistant", "资源状态已更新。"));
+      if (node && normalized !== "open_directory") renderResourceSetupCard(node, { ...result, resource: key });
+      if (normalized === "open_directory") setText("question-status", result.opened_directory ? "已打开 GPT-SoVITS 目录" : "目录已就绪");
+    } catch (error) {
+      setText("chat-error", `GPT-SoVITS 操作失败：${error?.message || error}`, true);
+    }
+    return;
+  }
   const resourceApiBase = "/api/resources/" + encodeURIComponent(key);
   const endpointSet = {
     status: resourceApiBase + "/status",
@@ -1957,14 +2158,14 @@ async function resourceSetupAction(resource, action) {
     cancel: resourceApiBase + "/install/cancel",
     clean: resourceApiBase + "/install",
   };
-  const supportedResources = new Set(["rvc", "separator", "asr", "embedding", "gpt_sovits", "ffmpeg"]);
+  const supportedResources = new Set(["rvc", "separator", "asr", "embedding", "gpt_sovits", "ffmpeg", "reranker"]);
   const api = supportedResources.has(key) ? endpointSet : null;
   if (!api) {
     const input = $("question"); if (!input) return;
-    input.value = `请${({status:"检查",install:"安装/下载",cancel:"取消安装",clean:"卸载"})[normalized] || "检查"} ${key} 受管资源`;
+    input.value = `请${({status:"检查",install:"下载",cancel:"取消安装",clean:"卸载"})[normalized] || "检查"} ${key} 受管资源`;
     resizeComposer(); void submitQuestion({ preventDefault() {} }); return;
   }
-  const node = state.realtimeAnswerNode?.isConnected ? state.realtimeAnswerNode : (findExistingResourceCard(key) || appendMessage("assistant", ""));
+  const node = findExistingResourceCard(key) || (state.realtimeAnswerNode?.isConnected ? state.realtimeAnswerNode : appendMessage("assistant", "资源状态已更新。"));
   try {
     const options = { method: normalized === "status" ? "GET" : normalized === "clean" || normalized === "cancel" ? "DELETE" : "POST" };
     let result = await chatRvcApi(api[normalized], options);
@@ -1985,7 +2186,7 @@ async function resourceSetupAction(resource, action) {
             const success = result.ready === true || (result.installed === true && !(result.missing || []).length);
             if (!node.dataset.resourceCompletionNotified) {
               node.dataset.resourceCompletionNotified = "1";
-              appendMessage("assistant", success ? `${resourceSetupDescriptor(key).title}已准备完成。` : `${resourceSetupDescriptor(key).title}准备失败：${result.error || result.detail || "请检查资源状态后重试。"}`);
+              appendMessage("assistant", success ? `${resourceSetupDescriptor(key).title}已就绪。` : `${resourceSetupDescriptor(key).title}下载失败：${result.error || result.detail || "请重试。"}`);
             }
             if (node) renderResourceSetupCard(node, { ...result, resource: key, kind: "resource_setup", install: result });
           }
@@ -2004,30 +2205,121 @@ function canonicalResourceKey(resourceKey) {
   const raw = String(resourceKey || "").trim().toLowerCase().replace(/-/g, "_");
   if (["gpt_sovits", "gptsovits", "gsv_tts_local", "gpt_sovits_runtime", "gpt_sovits_resource"].includes(raw)) return "gpt_sovits";
   if (["rvc", "rvc_runtime", "rvc_resource"].includes(raw)) return "rvc";
+  if (["reranker", "rerank", "local_rerank"].includes(raw)) return "reranker";
   return raw;
 }
 function resourceSetupDescriptor(resourceKey) {
   const key = canonicalResourceKey(resourceKey);
   const descriptors = {
-    rvc: { title: "RVC 运行环境", ready: "已就绪，可用于 RVC 变声处理。", fallback: "用于 RVC 音频变声、音轨处理和最终音频生成。" },
-    gpt_sovits: { title: "GPT-SoVITS 运行环境", ready: "已就绪，可用于 GPT-SoVITS 音色克隆与语音合成。", fallback: "用于 GPT-SoVITS 运行、音色处理和语音合成。" },
-    separator: { title: "人声分离模型", ready: "已就绪，可用于人声与伴奏分离。", fallback: "用于音频人声与伴奏分离。" },
-    asr: { title: "语音识别资源", ready: "已就绪，可用于语音转文字。", fallback: "用于语音识别和音频转写。" },
-    embedding: { title: "Embedding 本地模型", ready: "已就绪，可用于知识库向量化。", fallback: "用于文档向量化和知识库检索。" },
-    ffmpeg: { title: "FFmpeg 音视频处理资源", ready: "已就绪，可用于音视频处理。", fallback: "用于音轨提取和格式转换。" },
+    rvc: { title: "RVC 运行环境", ready: "已就绪", fallback: "未就绪" },
+    gpt_sovits: { title: "GPT-SoVITS 运行环境", ready: "已就绪", fallback: "未就绪" },
+    separator: { title: "人声分离模型", ready: "已就绪", fallback: "未就绪" },
+    asr: { title: "语音识别", ready: "已就绪", fallback: "未就绪" },
+    embedding: { title: "检索模型", ready: "已就绪", fallback: "未就绪" },
+    ffmpeg: { title: "FFmpeg", ready: "已就绪", fallback: "未就绪" },
   };  return descriptors[key] || {
     title: `${String(resourceKey || "应用")} 运行资源`,
-    ready: "已就绪，可用于当前应用功能。",
-    fallback: "由配置 Worker 管理的应用运行资源。",
+    ready: "已就绪",
+    fallback: "未就绪",
   };
+}
+function resourceSnapshot(item) {
+  if (!item || typeof item !== "object") return {};
+  const nested = [item.status, item.install, item.resource_status]
+    .find((value) => value && typeof value === "object" && !Array.isArray(value)) || {};
+  return { ...nested, ...item, ...(item.status && typeof item.status === "object" ? item.status : {}), ...(item.install && typeof item.install === "object" ? item.install : {}) };
+}
+function resourceStatusText(item) {
+  const install = resourceSnapshot(item);
+  // config_worker 的外层 status 是协议状态（ok/accepted），不是资源状态。
+  // 资源是否就绪只能由标准化 install/status 快照决定，避免“查询成功”被显示成“已就绪”。
+  const status = String(install.status || "unknown").toLowerCase();
+  if (install.ready === true || status === "ready") return "已就绪";
+  if (install.installing === true || status === "accepted" || status === "running") {
+    return resourcePhaseLabels[String(install.phase || "").toLowerCase()] || "处理中";
+  }
+  if (status === "failed" || install.error) return install.installed === false ? "下载失败" : "检查失败";
+  return "未就绪";
+}
+function resourceStatusDetail(item) {
+  const install = resourceSnapshot(item);
+  const missing = Array.isArray(install.missing) ? install.missing : [];
+  return [item?.error, install.error, item?.detail, item?.message, install.detail, install.message]
+    .find((value) => String(value || "").trim())
+    || (missing.length ? `缺少：${missing.join("、")}` : (install.ready ? "运行所需组件完整" : (install.next_action === "start_service" ? "安装完整，服务尚未启动" : "等待检查")));
+}
+function appendResourceOverviewRow(grid, item) {
+  const key = canonicalResourceKey(item?.resource || item?.provider_id || item?.resource_kind);
+  const descriptor = resourceSetupDescriptor(key);
+  const row = document.createElement("div");
+  row.className = "resource-setup-overview-row";
+  row.dataset.resource = key;
+  const identity = document.createElement("div");
+  identity.className = "resource-setup-overview-identity";
+  const name = document.createElement("strong");
+  name.textContent = descriptor.title;
+  const detail = document.createElement("span");
+  detail.textContent = resourceStatusDetail(item);
+  identity.append(name, detail);
+  const state = document.createElement("span");
+  state.className = "resource-setup-overview-state";
+  const stateText = resourceStatusText(item);
+  state.textContent = stateText;
+  if (stateText === "已就绪") state.classList.add("is-ready");
+  else if (stateText === "检查失败") state.classList.add("is-failed");
+  else if (stateText === "未就绪") state.classList.add("is-missing");
+  const action = document.createElement("div");
+  action.className = "resource-setup-overview-action";
+  const install = resourceSnapshot(item);
+  const capabilities = item?.capabilities || install.capabilities || {};
+  const ready = stateText === "已就绪";
+  const installing = install.installing === true || ["accepted", "running"].includes(String(item?.status || install.status || "").toLowerCase());
+  const canClean = capabilities.clean === true || capabilities.uninstall === true;
+  if (installing && capabilities.cancel !== false) {
+    action.append(rvcButton("停止", () => resourceSetupAction({ ...item, resource: key }, "cancel"), true));
+  } else if (!ready && capabilities.install !== false) {
+    action.append(rvcButton("下载", () => resourceSetupAction({ ...item, resource: key }, "install"), true));
+  } else if (ready && canClean) {
+    action.append(rvcButton("卸载", () => resourceSetupAction({ ...item, resource: key }, "clean"), true));
+  }
+  row.append(identity, state, action);
+  grid.append(row);
+}
+function renderResourceOverviewCard(node, resource) {
+  const card = document.createElement("section");
+  card.className = "resource-setup-inline-card resource-setup-overview";
+  card.dataset.resource = "all";
+  const heading = document.createElement("div");
+  heading.className = "resource-setup-heading";
+  const title = document.createElement("strong");
+  title.textContent = "全部运行资源";
+  const items = Array.isArray(resource.items) ? resource.items : [];
+  const readyCount = items.filter((item) => resourceStatusText(item) === "已就绪").length;
+  const badge = document.createElement("span");
+  badge.className = "resource-setup-status";
+  badge.textContent = items.length ? `${readyCount}/${items.length} 已就绪` : "暂无可用资源";
+  heading.append(title, badge);
+  const summary = document.createElement("p");
+  summary.textContent = items.length ? "应用受管运行资源状态。用户模型、附件和历史结果不在此范围内。" : resourceStatusDetail(resource);
+  card.append(heading, summary);
+  const grid = document.createElement("div");
+  grid.className = "resource-setup-overview-grid";
+  items.forEach((item) => appendResourceOverviewRow(grid, item));
+  card.append(grid);
+  node.append(card);
 }
 function renderResourceSetupCard(node, resource) {
   if (!node || !resource) return;
   node.querySelectorAll(".resource-setup-inline-card").forEach((item) => item.remove());
   const key = canonicalResourceKey(resource.resource);
+  if (key === "all") {
+    renderResourceOverviewCard(node, resource);
+    return;
+  }
   const descriptor = resourceSetupDescriptor(key);
   const card = document.createElement("section");
   card.className = "resource-setup-inline-card";
+  if (key === "gpt_sovits") card.classList.add("resource-setup-diagnostic-card");
   card.dataset.resource = key;
   const heading = document.createElement("div");
   heading.className = "resource-setup-heading";
@@ -2035,18 +2327,33 @@ function renderResourceSetupCard(node, resource) {
   title.textContent = descriptor.title;
   const badge = document.createElement("span");
   badge.className = "resource-setup-status";
-  const install = resource.install && typeof resource.install === "object" ? resource.install : resource;
-  const status = String(resource.status || install.status || "unknown").toLowerCase();
-  const ready = install.ready === true || status === "ok" || status === "ready";
+  const install = resourceSnapshot(resource);
+  const status = String(install.status || "unknown").toLowerCase();
+  const ready = install.ready === true || status === "ready";
   const installing = status === "accepted" || status === "running" || install.installing === true;
-  badge.textContent = installing ? "安装中" : ready ? "已就绪" : status === "failed" ? "安装失败" : "未就绪";
+  badge.textContent = resourceStatusText(resource);
   heading.append(title, badge);
   const detail = document.createElement("p");
-  const missing = Array.isArray(resource.missing) ? resource.missing : (Array.isArray(install.missing) ? install.missing : []);
-  const message = [resource.error, install.error, resource.detail, resource.message, install.detail, install.message]
-    .find((value) => String(value || "").trim());
-  detail.textContent = message || (missing.length ? `缺少：${missing.join("、")}` : (ready ? descriptor.ready : descriptor.fallback));
+  detail.textContent = resourceStatusDetail(resource);
   card.append(heading, detail);
+  if (key === "gpt_sovits") {
+    const components = document.createElement("div");
+    components.className = "resource-setup-components";
+    const rows = [
+      ["安装文件", install.installed ? (install.installation_ready ? "完整" : "已发现，待检查") : "未发现"],
+      ["运行状态", install.ready ? "可用" : (install.next_action === "start_service" ? "等待启动" : "未就绪")],
+      ["服务状态", install.service_running ? "运行中" : "未启动"],
+      ["API", install.api_version ? `API ${install.api_version}` : "未检测"],
+      ["目录", install.install_dir || "未配置"],
+    ];
+    rows.forEach(([label, value]) => {
+      const row = document.createElement("div"); row.className = "resource-setup-component";
+      const name = document.createElement("span"); name.textContent = label;
+      const state = document.createElement("span"); state.textContent = String(value);
+      row.append(name, state); components.append(row);
+    });
+    card.append(components);
+  }
   const progress = Number(install.progress_percent ?? install.progress);
   if (installing) {
     const progressWrap = document.createElement("div");
@@ -2060,15 +2367,22 @@ function renderResourceSetupCard(node, resource) {
   const actions = document.createElement("div");
   actions.className = "resource-setup-actions";
   const capabilities = resource.capabilities || install.capabilities || {};
-  const canClean = capabilities.clean === true || capabilities.uninstall === true || ["rvc", "asr", "ffmpeg", "embedding", "gpt_sovits"].includes(key) || key === "separator";
-  card.append(Object.assign(document.createElement("p"), { className: "resource-setup-note", textContent: "这是受管资源吗？用户模型、附件和历史结果不会被删除。" }));
-  if (installing) actions.append(rvcButton("停止", () => resourceSetupAction(resource, "cancel")));
-  else if (!ready) actions.append(rvcButton("检测", () => resourceSetupAction(resource, "status"), true), rvcButton("下载/安装", () => resourceSetupAction(resource, "install")));
-  else if (canClean) actions.append(rvcButton("卸载", () => resourceSetupAction(resource, "clean")));
+  const managedResourceKeys = ["rvc", "asr", "ffmpeg", "embedding", "gpt_sovits", "separator"].includes(key) || key === "reranker";
+  const canClean = capabilities.clean === true || capabilities.uninstall === true || managedResourceKeys;
+  if (installing) actions.append(rvcButton("停止", () => resourceSetupAction(resource, "cancel"), true));
+  else if (key === "gpt_sovits" && install.installation_ready === true && install.ready !== true) {
+    actions.append(rvcButton(install.service_running ? "停止服务" : "启动服务", () => resourceSetupAction(resource, install.service_running ? "stop_service" : "start_service"), true));
+    actions.append(rvcButton("检查环境", () => resourceSetupAction(resource, "detect"), false));
+    actions.append(rvcButton("打开目录", () => resourceSetupAction(resource, "open_directory"), false));
+  } else if (!ready) actions.append(rvcButton(install.next_action === "check" ? "检查环境" : "下载", () => resourceSetupAction(resource, install.next_action === "check" ? "detect" : "install"), true));
+  else if (key === "gpt_sovits") {
+    actions.append(rvcButton(install.service_running ? "停止服务" : "启动服务", () => resourceSetupAction(resource, install.service_running ? "stop_service" : "start_service"), true));
+    actions.append(rvcButton("打开目录", () => resourceSetupAction(resource, "open_directory"), false));
+    if (canClean) actions.append(rvcButton("卸载", () => resourceSetupAction(resource, "clean"), false));
+  } else if (canClean) actions.append(rvcButton("卸载", () => resourceSetupAction(resource, "clean"), true));
   card.append(actions);
   node.append(card);
 }
-
 function applyAgentContextResult(result) {
   const resultFlow = result?.workflow || result?.flow;
   const resourceSetup = findResourceSetup(result);
@@ -2077,7 +2391,7 @@ function applyAgentContextResult(result) {
   const isRvcResult = Boolean(resultFlow && typeof resultFlow === "object" && hasFormalRvcHandoff(result, resultFlow));
   const tasks = rvcTaskEntries(result);
   if (resourceSetup) {
-    const resourceNode = state.realtimeAnswerNode || state.pendingReplyNode || appendMessage("assistant", "正在处理资源配置…");
+    const resourceNode = state.realtimeAnswerNode || state.pendingReplyNode || appendMessage("assistant", "正在检查运行环境…");
     if (resourceNode) renderResourceSetupCard(resourceNode, resourceSetup);
   }
   // RVC 只能由 Agent 返回的结构化 worker 合同激活。历史兼容 task 不能
@@ -2248,10 +2562,12 @@ function bindChatMaterialUpload() {
   input.addEventListener("change", () => {
     const files = Array.from(input.files || []);
     const inlineRvc = input.dataset.rvcInline === "true";
+    const inlineVoice = input.dataset.voiceInline === "true";
     input.value = "";
     input.dataset.rvcInline = "false";
+    input.dataset.voiceInline = "false";
     input.accept = ".pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.json,.png,.jpg,.jpeg,.webp,.gif,audio/*,video/*";
-    files.forEach((file) => void ((inlineRvc || state.pendingUploadRequest?.purpose === "voice_material") ? uploadChatVoiceMaterial(file) : uploadChatAttachment(file)));
+    files.forEach((file) => void ((inlineRvc || inlineVoice || state.pendingUploadRequest?.purpose === "voice_material") ? uploadChatVoiceMaterial(file) : uploadChatAttachment(file)));
   });
 }
 
@@ -2259,7 +2575,7 @@ function openChatVoiceUpload() {
   const input = $("chat-voice-material");
   if (input) input.click();
 }
-function uploadChatVoiceMaterial(file) { if (!file) { setText("chat-error", "音色素材上传失败：未选择文件", true); return Promise.resolve(null); } return uploadChatAttachment(file, { errorPrefix: "音色素材", inlineRvc: Boolean(state.rvcInline) }); }
+function uploadChatVoiceMaterial(file) { if (!file) { setText("chat-error", "音色素材上传失败：未选择文件", true); return Promise.resolve(null); } return uploadChatAttachment(file, { errorPrefix: "音色素材", inlineRvc: Boolean(state.rvcInline), inlineVoice: Boolean(state.voiceInline) }); }
 function bindChatAttachmentDropzone() {
   const form = $("question-form");
   const dropzones = [form, $("chat-files-dropzone")].filter(Boolean);
@@ -2282,7 +2598,7 @@ function bindChatAttachmentDropzone() {
     if (isConversationBusy() || !document.activeElement?.closest("#chat-view")) return;
     const input = $("chat-voice-material");
     const files = Array.from(event.clipboardData?.items || []).map((item) => item.kind === "file" ? item.getAsFile() : null).filter(Boolean);
-    files.forEach((file) => void ((input?.dataset.rvcInline === "true" || state.pendingUploadRequest?.purpose === "voice_material") ? uploadChatVoiceMaterial(file) : uploadChatAttachment(file)));
+    files.forEach((file) => void ((input?.dataset.rvcInline === "true" || input?.dataset.voiceInline === "true" || state.pendingUploadRequest?.purpose === "voice_material") ? uploadChatVoiceMaterial(file) : uploadChatAttachment(file)));
   });
 }
 function bindChatAttachmentDrawer() {
@@ -2375,7 +2691,7 @@ function createAttachmentPreview(item, options = {}) {
 }
 function renderChatMediaWorkbench(items) {
   const host = $("chat-media-workbench"); if (!host) return;
-  if (isInlineRvcActive()) { host.replaceChildren(); host.classList.add("is-hidden"); return; }
+  if (isInlineRvcActive() || isInlineVoiceActive()) { host.replaceChildren(); host.classList.add("is-hidden"); return; }
   const mediaItems = (items || []).filter((item) => ["audio", "video"].includes(attachmentKind(item)) && ["ready", "selected", "completed"].includes(item.status));
   if (!mediaItems.length) { state.currentMediaFileId = null; host.replaceChildren(); host.classList.add("is-hidden"); return; }
   let current = mediaItems.find((item) => String(item.file_id) === String(state.currentMediaFileId));
@@ -2401,7 +2717,7 @@ function renderChatAttachments() {
   const strip = $("chat-attachment-strip"); const lists = [$("chat-files-list"), $("chat-attachments-list-mobile")].filter(Boolean); const items = state.chatAttachments || []; const selected = new Set(getSelectedAttachmentIds());
   if (strip) {
     strip.replaceChildren();
-    if (isInlineRvcActive()) strip.classList.add("is-hidden");
+    if (isInlineRvcActive() || isInlineVoiceActive()) strip.classList.add("is-hidden");
     else {
       if (selected.size) { const count = document.createElement("span"); count.className = "chat-selection-summary"; count.textContent = `${selected.size} 个待发送`; strip.append(count); }
       strip.classList.toggle("is-hidden", !selected.size);
@@ -2464,6 +2780,10 @@ async function uploadChatAttachment(file, options = {}) {
     options.inlineRvc ||
     (state.rvcInline && ["audio", "video"].includes(attachmentKind({ name: file.name, mime_type: file.type }))),
   );
+  const isVoiceSource = Boolean(
+    options.inlineVoice ||
+    (state.voiceInline && ["audio", "video"].includes(attachmentKind({ name: file.name, mime_type: file.type }))),
+  );
   const tempId = `upload-${crypto.randomUUID()}`;
   const item = {
     file_id: tempId,
@@ -2504,8 +2824,12 @@ async function uploadChatAttachment(file, options = {}) {
         inline.generation = (inline.generation || 0) + 1;
       }
       inline.attachmentResumeSent = false;
-      setText("question-status", `已上传 ${saved.name}，正在交给 RVC 工作流`);
+      setText("question-status", `已上传 ${saved.name}`);
       await resumeRvcWorkerWithAttachment(saved.file_id);
+    } else if (isVoiceSource && state.voiceInline) {
+      state.voiceInline.attachmentResumeSent = false;
+      setText("question-status", `已上传 ${saved.name}`);
+      await resumeVoiceWorkerWithAttachment(saved.file_id);
     } else {
       setPendingAttachment(saved.file_id);
       setText("question-status", `已添加附件：${saved.name}`);
@@ -2525,20 +2849,65 @@ async function renameChatAttachment(item) { const name = prompt("输入新的文
 async function deleteChatAttachment(item) { if (!confirm(`删除附件“${item.name}”？`)) return; try { await api(fetch(`${attachmentApiBase()}/${encodeURIComponent(item.file_id)}`, { method: "DELETE", headers: { "X-YUMENO-Request": "web" } })); state.chatAttachments = state.chatAttachments.filter((entry) => entry.file_id !== item.file_id); state.composerAttachmentIds = state.composerAttachmentIds.filter((id) => id !== item.file_id); renderChatAttachments(); } catch (reason) { setText("chat-error", `删除失败：${reason.message || reason}`, true); } }
 async function sendAttachmentTo(item, target) { try { const result = await api(fetch(`${attachmentApiBase()}/${encodeURIComponent(item.file_id)}/send-to-${target}`, { method: "POST", headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" }, body: JSON.stringify({ file_id: item.file_id }) })); setText("question-status", result.message || (target === "rvc" ? "已发送到 RVC" : "已发送到知识库")); } catch (reason) { setText("chat-error", `发送失败：${reason.message || reason}`, true); } }
 
+function pendingResourceAction() {
+  const pending = state.pendingAction;
+  const action = pending?.action || {};
+  const tool = String(action.tool || action.name || "").trim();
+  const args = action.arguments && typeof action.arguments === "object" ? action.arguments : {};
+  if (tool !== "manage_resource_install" || !args.resource || !args.action) return null;
+  return { resource: canonicalResourceKey(args.resource), action: String(args.action).toLowerCase() };
+}
+
+function renderResourceConfirmation() {
+  document.querySelectorAll(".resource-setup-confirmation").forEach((item) => item.remove());
+  const pending = pendingResourceAction();
+  if (!pending) return false;
+  const node = findExistingResourceCard(pending.resource);
+  const card = node?.querySelector(`.resource-setup-inline-card[data-resource="${CSS.escape(pending.resource)}"]`);
+  if (!card) return false;
+  const operationLabels = { install: "下载", clean: "卸载", cancel: "停止下载" };
+  const label = operationLabels[pending.action] || "执行";
+  const panel = document.createElement("div");
+  panel.className = "resource-setup-confirmation";
+  const copy = document.createElement("div");
+  const title = document.createElement("strong"); title.textContent = `确认${label}`;
+  const detail = document.createElement("small");
+  detail.textContent = pending.action === "clean" ? "只清理应用受管资源，不会删除用户模型、附件或历史结果。" : `确认后立即${label}此资源。`;
+  copy.append(title, detail);
+  const actions = document.createElement("div"); actions.className = "resource-setup-confirmation-actions";
+  actions.append(
+    rvcButton("取消", () => { resetConfirmationState(); renderConfirmation(); updateComposerControls(); }, false),
+    rvcButton(`确认${label}`, () => void confirmPendingTaskAction(), true),
+  );
+  panel.append(copy, actions);
+  card.append(panel);
+  card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  icons();
+  return true;
+}
+
 function renderConfirmation() {
+  // 资源安装等操作由 config_worker 负责；确认只作为当前任务的一部分展示，
+  // 不再显示会脱离任务上下文的旧版黄色页脚条。
   const panel = $("confirmation-panel");
-  if (!panel) return;
-  panel.classList.toggle("is-hidden", !state.pendingAction);
+  if (panel) {
+    // 保留兼容 DOM 的可读摘要，实际页脚面板继续隐藏；确认入口只显示在任务工作区。
+    const action = state.pendingAction?.action || {};
+    const actionArguments = action.arguments && typeof action.arguments === "object" ? action.arguments : {};
+    const argumentText = Object.entries(actionArguments)
+      .filter(([key]) => !["tool", "name", "internal"].includes(String(key).toLowerCase()))
+      .map(([key, value]) => `${key}：${typeof value === "object" ? JSON.stringify(value) : value}`)
+      .join("；");
+    const title = panel.querySelector("#confirmation-title");
+    const detail = panel.querySelector("#confirmation-detail");
+    if (title) title.textContent = state.pendingAction ? "需要确认" : "确认操作";
+    if (detail) detail.textContent = state.pendingAction ? (argumentText || "确认后继续当前操作") : "";
+    panel.classList.add("is-hidden");
+    panel.setAttribute("aria-hidden", "true");
+  }
+  renderResourceConfirmation();
+  renderChatTaskWorkspace();
   renderChatContext();
-  if (!state.pendingAction) return;
-  const action = state.pendingAction.action || {};
-  $("confirmation-title").textContent = action.title || "确认操作";
-  const actionArguments = action.arguments || {};
-  const detail = Object.entries(actionArguments)
-    .filter(([, value]) => value !== null && value !== undefined && value !== "")
-    .map(([key, value]) => `${key}：${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
-    .join(" · ");
-  $("confirmation-detail").textContent = `${action.target || "当前角色"}${detail ? ` · ${detail}` : ""}`;
 }
 function setPendingAttachment(fileId) {
   if (!fileId || !state.pendingInput) return;
@@ -2566,6 +2935,7 @@ function pendingResumePayload(approved = null) {
   const pending = state.pendingInput || {};
   const values = { ...(state.pendingInputValues || {}) };
   const inline = state.rvcInline;
+  const voice = state.voiceInline;
   const ids = new Set([
     ...getSelectedAttachmentIds(),
     ...(Array.isArray(values.attachment_ids) ? values.attachment_ids : []),
@@ -2578,24 +2948,31 @@ function pendingResumePayload(approved = null) {
   if (inline?.workflowId) values.workflow_id = inline.workflowId;
   if (inline?.source?.file_id) { values.source_file_id = inline.source.file_id; values.source_attachment_id = inline.source.file_id; }
   if (inline?.agentWorkflow?.worker === "rvc_worker") values.worker = "rvc_worker";
+  if (voice?.source?.file_id) {
+    ids.add(voice.source.file_id);
+    values.source_file_id = voice.source.file_id;
+    values.source_attachment_id = voice.source.file_id;
+    values.attachment_id = voice.source.file_id;
+  }
+  if (voice?.agentWorkflow?.worker === "voice_worker") values.worker = "voice_worker";
   return {
     conversation_id: state.conversationId,
     specialist: pending.specialist || state.pendingAction?.specialist || "management",
     approved,
-    worker: pending.worker || inline?.agentWorkflow?.worker || state.currentWorkflow?.worker || null,
-    task_id: pending.task_id || inline?.agentWorkflow?.task_id || state.currentWorkflow?.task_id || null,
+    worker: pending.worker || inline?.agentWorkflow?.worker || voice?.agentWorkflow?.worker || state.currentWorkflow?.worker || null,
+    task_id: pending.task_id || inline?.agentWorkflow?.task_id || voice?.agentWorkflow?.task_id || state.currentWorkflow?.task_id || null,
     attachment_ids: Array.from(ids),
     input_values: values,
   };
 }
 function waitingInputLabel(item) {
-  return item?.label || item?.title || "还需要补充信息";
+  return item?.label || item?.title || "请继续";
 }
 
 function appendWaitingInputCard(node, result) {
   // 等待输入只保留说明消息；唯一的操作卡由中央任务工作区渲染，
   // 避免 assistant 气泡和右侧任务栏各自复制一份上传/选择表单。
-  const target = node || state.pendingReplyNode || appendMessage("assistant", result?.answer || "还缺少执行任务所需的信息");
+  const target = node || state.pendingReplyNode || appendMessage("assistant", result?.answer || "请按提示继续");
   if (target && result?.answer) {
     const body = target.querySelector("p");
     if (body) body.textContent = result.answer;
@@ -2626,11 +3003,11 @@ async function loadPendingRvcOptions(select, item) {
     if (!select.options.length) {
       select.disabled = true;
       if (!select.options.length) {
-        const empty = document.createElement("option"); empty.value = ""; empty.textContent = "暂无可用配置"; select.append(empty);
+        const empty = document.createElement("option"); empty.value = ""; empty.textContent = "暂无可用项"; select.append(empty);
       }
     }
   } catch {
-    const failed = document.createElement("option"); failed.value = ""; failed.textContent = "无法读取配置，请稍后重试"; select.replaceChildren(failed);
+    const failed = document.createElement("option"); failed.value = ""; failed.textContent = "加载失败，请重试"; select.replaceChildren(failed);
     select.disabled = true;
   }
 }
@@ -2652,6 +3029,12 @@ async function resumeAgent(approved = null, options = {}) {
   }
   if (state.confirmationResponded) return null;
   state.confirmationResponded = true;
+  if (state.pendingAction) {
+    state.confirmationRequestKey = confirmationActionKey(
+      state.pendingAction.action,
+      state.pendingAction.specialist,
+    );
+  }
   const payload = pendingResumePayload(approved);
   $("confirm-action").disabled = true; $("cancel-action").disabled = true;
   if (!options.forceHttp && sendRealtime({ type: "confirmation.respond", ...payload })) {
@@ -2670,7 +3053,7 @@ async function resumeAgent(approved = null, options = {}) {
     handleAgentResult(result);
     return result;
   } catch (reason) {
-    state.confirmationResponded = false;
+    resetConfirmationResponseLock();
     setText("chat-error", reason?.message || String(reason), true);
     throw reason;
   } finally {
@@ -2772,7 +3155,7 @@ function normalizePublicWorkflow(flow, taskId = "") {
     waiting_inputs: waiting.map((item, index) => ({
       id: String(item?.id || item?.kind || `input_${index + 1}`),
       kind: String(item?.kind || item?.type || "input"),
-      label: cleanPublicText(item?.label || item?.title || item?.message, "需要补充信息"),
+      label: cleanPublicText(item?.label || item?.title || item?.message, "请继续"),
       description: cleanPublicText(item?.description || item?.detail || ""),
       resolved: Boolean(item?.resolved),
     })),
@@ -2861,13 +3244,18 @@ function consumeWorkflowEvent(event) {
   const flow = event?.flow || event?.workflow;
   const isRvcEvent = isAgentRvcWorkflowDescriptor(event, flow);
   const isFormalRvcEvent = hasFormalRvcHandoff(event, flow);
+  const isVoiceEvent = isAgentVoiceWorkflowDescriptor(event, flow);
+  const isFormalVoiceEvent = hasFormalVoiceHandoff(event, flow);
   const hasIsolatedRvcWorker = !isRvcEvent && !flow && (
     String(event?.worker || event?.worker_name || "").trim().toLowerCase() === "rvc_worker"
+  );
+  const hasIsolatedVoiceWorker = !isVoiceEvent && !flow && (
+    String(event?.worker || event?.worker_name || "").trim().toLowerCase() === "voice_worker"
   );
   // 顶层孤立 worker 只是一条内部兼容/状态信息，不是 Core Agent 已完成
   // handoff 的公开合同。禁止它落入通用任务卡，否则会在“正在分析请求…”
   // 阶段提前显示 RVC 卡片。
-  if (hasIsolatedRvcWorker && (kind === "workflow_update" || kind === "task_status")) return true;
+  if ((hasIsolatedRvcWorker || hasIsolatedVoiceWorker) && (kind === "workflow_update" || kind === "task_status")) return true;
   if (kind === "workflow_update") {
     if (isRvcEvent) {
       // workflow_update 已经明确证明 Core Agent → rvc_worker handoff，
@@ -2875,6 +3263,13 @@ function consumeWorkflowEvent(event) {
       state.pendingRvcWorkflowEvent = { event, flow: flow || event };
       if (isFormalRvcEvent) {
         activateRvcWorkspaceFromAgent(event, flow || event);
+      }
+      return true;
+    }
+    if (isVoiceEvent) {
+      state.pendingVoiceWorkflowEvent = { event, flow: flow || event };
+      if (isFormalVoiceEvent) {
+        activateVoiceWorkspaceFromAgent(event, flow || event);
       }
       return true;
     }
@@ -2897,6 +3292,16 @@ function consumeWorkflowEvent(event) {
       }
       return true;
     }
+    if (isVoiceEvent) {
+      if (!isFormalVoiceEvent) return true;
+      if (state.voiceInline && flow) {
+        state.voiceInline.agentWorkflow = flow;
+        renderVoiceInline();
+      } else {
+        state.pendingVoiceWorkflowEvent = { event, flow: flow || event };
+      }
+      return true;
+    }
     if (taskId) registerChatTask(event);
     if (flow) setChatWorkflow(flow, taskId);
     else updateWorkflowFromTask(event, taskId);
@@ -2915,7 +3320,7 @@ function setChatWorkflow(flow, taskId = "") {
   if (!normalized) return;
   // RVC 的唯一主工作区挂在 Agent assistant 气泡内，绝不在聊天顶部
   // 复活“RVC 音频转换”总览卡（包括历史 task 和兼容轮询事件）。
-  if (normalized.worker === "rvc_worker") {
+  if (normalized.worker === "rvc_worker" || normalized.worker === "voice_worker") {
     state.currentWorkflow = null;
     const host = $("chat-task-workspace");
     host?.replaceChildren();
@@ -2943,11 +3348,11 @@ function setChatWorkflow(flow, taskId = "") {
 
 function rvcFallbackNodes() {
   return [
-    ["prepare_source", "准备音频", "将附件转换为可处理的音频"],
-    ["separate_vocals", "分离人声", "提取 Vocals 与 Instrumental"],
-    ["load_model", "加载音色模型", "准备 RVC 模型与 Index"],
-    ["gpu_inference", "GPU 音色转换", "提取音高与特征并生成目标音色"],
-    ["register_result", "保存结果", "将音频登记到当前会话附件"],
+    ["prepare_source", "准备音频", "整理上传的音频"],
+    ["separate_vocals", "分离人声", "分出人声和伴奏"],
+    ["load_model", "选择音色", "选择音色模型和 Index"],
+    ["gpu_inference", "变声", "按所选音色生成结果"],
+    ["register_result", "保存结果", "保存到当前会话"],
   ];
 }
 
@@ -2959,7 +3364,7 @@ function ensureRvcWorkflow(entry) {
   setChatWorkflow({
     flow_id: "rvc.audio_conversion",
     task_id: entry?.task_id,
-    title: "RVC 音频转换",
+    title: "变声",
     worker: "rvc_worker",
     status: "running",
     current_node: "prepare_source",
@@ -3019,9 +3424,9 @@ function inferTaskType(flow) {
   // RVC 不是前端关键词识别结果；只有 Agent 明确交接的 worker 才能显示 RVC 标签。
   const worker = String(flow?.worker || flow?.worker_name || "").trim().toLowerCase();
   const value = `${worker} ${flow?.flow_id || ""} ${flow?.title || ""}`.toLowerCase();
-  if (worker === "rvc_worker") return "RVC 变声";
-  if (/sovit|gpt.?sovits|voice.?material|音色|tts/.test(value)) return "GPT-SoVITS 音色处理";
-  if (/rag|knowledge|index|document|文档|知识/.test(value)) return "文档解析 / 知识库";
+  if (worker === "rvc_worker") return "变声";
+  if (/sovit|gpt.?sovits|voice.?material|音色|tts/.test(value) || worker === "voice_worker") return "声音";
+  if (/rag|knowledge|index|document|文档|知识/.test(value)) return "知识库";
   if (/media|image|video|audio|媒体/.test(value)) return "媒体分析";
   return "文件任务";
 }
@@ -3036,6 +3441,18 @@ async function cancelActiveChatTask() {
     inline.workflowActive = false;
     inline.cancelled = true;
     state.rvcInline = null;
+    state.pendingAction = null;
+    state.pendingInput = null;
+    state.pendingInputValues = {};
+    updateComposerControls();
+    return;
+  }
+  if (state.voiceInline && !state.voiceInline.cancelling) {
+    const inline = state.voiceInline;
+    await cancelInlineVoice();
+    inline.workflowActive = false;
+    inline.cancelled = true;
+    state.voiceInline = null;
     state.pendingAction = null;
     state.pendingInput = null;
     state.pendingInputValues = {};
@@ -3074,8 +3491,36 @@ async function cancelActiveChatTask() {
     renderChatContext();
     updateComposerControls();
   } catch (reason) {
-    setText("chat-error", `无法中止任务：${reason?.message || reason}`, true);
+    setText("chat-error", `无法停止：${reason?.message || reason}`, true);
   }
+}
+
+async function confirmPendingTaskAction() {
+  const pending = state.pendingAction;
+  const action = pending?.action || {};
+  const tool = String(action.tool || action.name || "").trim();
+  const args = action.arguments && typeof action.arguments === "object" ? action.arguments : {};
+  // 资源卡已经有受保护的确定性 API。用户在任务卡确认后直接调用同一资源
+  // 管理链路，不再恢复 Agent checkpoint，避免重复确认、空回复和无动作。
+  if (tool === "manage_resource_install" && args.resource && args.action) {
+    const resource = args.resource;
+    const operation = args.action;
+    resetConfirmationState();
+    state.pendingInput = null;
+    state.pendingInputValues = {};
+    renderConfirmation();
+    setText("question-status", "正在执行资源操作…");
+    try {
+      await resourceSetupAction(resource, operation, { confirmed: true });
+      setText("question-status", "资源操作已提交");
+    } catch (error) {
+      setText("chat-error", `资源操作失败：${error?.message || error}`, true);
+    } finally {
+      updateComposerControls();
+    }
+    return;
+  }
+  await resumeAgent(true);
 }
 
 function renderChatTaskActions(flow) {
@@ -3086,7 +3531,7 @@ function renderChatTaskActions(flow) {
   const action = state.pendingAction;
   const items = normalizedWaitingInputs(waiting?.waiting_inputs || waiting?.pending_inputs);
   if (action) {
-    const confirm = pendingActionButton("确认并继续", "arrow-right", () => resumeAgent(true), true);
+    const confirm = pendingActionButton("确认", "arrow-right", () => void confirmPendingTaskAction(), true);
     host.append(confirm);
   }
   items.forEach((item) => {
@@ -3098,8 +3543,8 @@ function renderChatTaskActions(flow) {
     label.textContent = waitingInputLabel(item);
     row.append(label);
     if (/file|attachment|audio|video|upload/.test(kind)) {
-      row.append(pendingActionButton("上传文件", "upload", () => $("chat-voice-material")?.click(), true));
-      const choose = pendingActionButton("从会话文件选择", "paperclip", () => {
+      row.append(pendingActionButton("上传", "upload", () => $("chat-voice-material")?.click(), true));
+      const choose = pendingActionButton("选用已有", "paperclip", () => {
         setChatAttachmentsDrawer(true);
         setChatContextOpen(false);
       });
@@ -3113,7 +3558,7 @@ function renderChatTaskActions(flow) {
       if (Array.isArray(options) && options.length) appendPendingOptions(select, options);
       else {
         const loading = document.createElement("option");
-        loading.value = ""; loading.textContent = "正在读取可用配置…"; select.append(loading);
+        loading.value = ""; loading.textContent = "正在加载…"; select.append(loading);
         void loadPendingRvcOptions(select, item);
       }
       select.addEventListener("change", () => setPendingInputValue(select.dataset.pendingInputId, select.value));
@@ -3126,17 +3571,434 @@ function renderChatTaskActions(flow) {
     host.append(row);
   });
   if (waiting) {
-    const continueButton = pendingActionButton("继续执行", "play", () => resumeAgent(null), true);
+    const continueButton = pendingActionButton("继续", "play", () => resumeAgent(null), true);
     continueButton.disabled = items.some((item) => /file|attachment|audio|video|upload/.test(String(item.kind || item.type || "").toLowerCase()))
       && !getSelectedAttachmentIds().length;
     host.append(continueButton);
   }
   const active = flow && !CHAT_FLOW_TERMINAL.has(flow.status);
-  if (active || waiting || action) host.append(pendingActionButton("中止任务", "square", cancelActiveChatTask, false));
-  if (flow?.status === "failed") host.append(pendingActionButton("重试任务", "rotate-ccw", () => {
+  if (active || waiting || action) host.append(pendingActionButton("停止", "square", cancelActiveChatTask, false));
+  if (flow?.status === "failed") host.append(pendingActionButton("重试", "rotate-ccw", () => {
     if (!isConversationBusy()) sendQuestionText("重试刚才的任务");
   }, true));
   icons();
+}
+
+function isAgentVoiceWorkflowDescriptor(event, flow) {
+  return String(flow?.worker || "").trim().toLowerCase() === "voice_worker";
+}
+function hasFormalVoiceHandoff(event, flow) {
+  const flowWorker = String(flow?.worker || flow?.worker_name || "").trim().toLowerCase();
+  if (flowWorker !== "voice_worker") return false;
+  const eventType = String(event?.type || event?.kind || "").trim().toLowerCase();
+  if (eventType === "workflow.update" || eventType === "workflow_update") return true;
+  const directWorkers = [
+    event?.worker, event?.worker_name,
+    event?.result?.worker, event?.result?.worker_name,
+    event?.agent_result?.worker, event?.agent_result?.worker_name,
+  ];
+  return directWorkers.some((item) => String(item || "").trim().toLowerCase() === "voice_worker");
+}
+function isInlineVoiceActive() {
+  return Boolean(state.voiceInline?.host?.isConnected || state.currentWorkflow?.worker === "voice_worker");
+}
+function voiceWorkspaceNode() {
+  if (state.voiceInline?.node?.isConnected) return state.voiceInline.node;
+  const node = state.realtimeAnswerNode?.isConnected
+    ? state.realtimeAnswerNode
+    : (state.pendingReplyNode || appendMessage("assistant", "\u58f0\u97f3\u4efb\u52a1\u5df2\u5c31\u7eea\u3002"));
+  if (!node) return null;
+  node.classList.remove("message-loading");
+  delete node.dataset.pendingTurn;
+  clearReplyStage(node);
+  node.querySelectorAll(
+    ".agent-process-list, .agent-process-details, .thinking-indicator, [data-role=\"agent-stage\"], p[data-stage]",
+  ).forEach((item) => item.remove());
+  const body = node.querySelector('[data-role="voice-reply"]') || node.querySelector("p");
+  if (body) { body.textContent = "\u58f0\u97f3\u4efb\u52a1\u5df2\u5c31\u7eea\uff0c\u8bf7\u6309\u63d0\u793a\u7ee7\u7eed\u3002"; delete body.dataset.stage; }
+  node.classList.add("message-voice-workflow");
+  state.pendingReplyNode = null;
+  const host = document.createElement("section");
+  host.className = "voice-inline-workspace rvc-inline-workspace";
+  host.setAttribute("aria-label", "\u58f0\u97f3\u5bf9\u8bdd\u5de5\u4f5c\u533a");
+  node.append(host);
+  state.voiceInline = {
+    node, host, agentWorkflow: null, lastResult: null, source: null, attachmentResumeSent: false,
+    sessionId: null, pollTimer: null, generation: 0, cancelling: false, sourceConfirmed: false, polling: false,
+  };
+  renderVoiceInline();
+  return node;
+}
+function activateVoiceWorkspaceFromAgent(event, flow) {
+  if (!hasFormalVoiceHandoff(event, flow)) return false;
+  state.currentWorkflow = null;
+  voiceWorkspaceNode();
+  if (state.voiceInline && flow && typeof flow === "object") {
+    const payload = (event?.result && typeof event.result === "object") ? event.result : (event || {});
+    state.voiceInline.agentWorkflow = flow;
+    state.voiceInline.lastResult = payload;
+    const attachmentIds = [
+      ...(Array.isArray(payload.attachment_ids) ? payload.attachment_ids : []),
+      ...(Array.isArray(flow.attachment_ids) ? flow.attachment_ids : []),
+    ].filter(Boolean);
+    const sourceId = payload.attachment_id || payload.attachment?.file_id || attachmentIds[0] || null;
+    if (sourceId) {
+      state.voiceInline.source = (state.chatAttachments || []).find((item) => String(item.file_id) === String(sourceId))
+        || payload.attachment
+        || { file_id: sourceId, name: "\u97f3\u9891\u9644\u4ef6", kind: "audio", mime_type: "audio/*" };
+    }
+    state.voiceInline.sessionId = state.voiceInline.sessionId || payload.session_id || payload.voice_session_id || payload.session?.session_id || null;
+    renderVoiceInline();
+    maybePollVoiceSession();
+  }
+  return true;
+}
+function voiceWaitingItems(data) {
+  const result = data?.lastResult || {};
+  const flow = data?.agentWorkflow || {};
+  const pending = state.pendingInput || {};
+  const items = result.waiting_inputs || flow.waiting_inputs || pending.waiting_inputs || [];
+  return Array.isArray(items) ? items : [];
+}
+function voiceSessionPayload(data) {
+  const result = data?.lastResult || {};
+  const session = (result.session && typeof result.session === "object") ? result.session : {};
+  return session;
+}
+function voiceStageLabel(data) {
+  const result = data?.lastResult || {};
+  const session = voiceSessionPayload(data);
+  const waiting = voiceWaitingItems(data);
+  const inputId = String(waiting[0]?.input_id || waiting[0]?.id || "");
+  const phase = String(session.phase || "").toLowerCase();
+  const status = String(result.status || data?.agentWorkflow?.status || "").toLowerCase();
+  if (data?.cancelling || status === "cancelled" || phase === "cancelled") return "\u5df2\u505c\u6b62";
+  if (status === "failed" || phase === "failed") return result.reason || "\u5904\u7406\u5931\u8d25";
+  if (result.attachment && (result.attachment.url || result.attachment.file_id || result.attachment.id)) return "\u5df2\u5b8c\u6210";
+  if (status === "completed" || phase === "done") return "\u5df2\u5b8c\u6210";
+  if (["accepted", "running", "processing", "queued"].includes(status) || session.running || ["queued", "convert", "separating", "audio_ready"].includes(phase)) return "\u5904\u7406\u4e2d";
+  if (inputId === "voice_material") return "\u4e0a\u4f20\u7d20\u6750";
+  if (inputId === "audio_attachment") return "\u4e0a\u4f20\u97f3\u9891";
+  if (inputId === "segment_indices") return "\u9009\u62e9\u7247\u6bb5";
+  if (inputId === "save_voice") return "\u4fdd\u5b58\u97f3\u8272";
+  if (inputId === "tts_text") return "\u8f93\u5165\u6587\u672c";
+  if (inputId === "asset_id") return "\u9009\u62e9\u97f3\u8272";
+  if (inputId === "asset_name" || inputId === "voice_name") return "\u547d\u540d\u97f3\u8272";
+  return waiting[0]?.label || "\u58f0\u97f3";
+}
+function maybePollVoiceSession() {
+  const data = state.voiceInline;
+  if (!data || data.cancelling || data.polling || data.pollTimer) return;
+  const result = data.lastResult || {};
+  const session = voiceSessionPayload(data);
+  data.sessionId = data.sessionId || result.session_id || result.voice_session_id || session.session_id || session.id || null;
+  const status = String(result.status || "").toLowerCase();
+  const running = ["accepted", "running", "processing", "queued"].includes(status) || Boolean(session.running);
+  if (running && data.sessionId) void waitInlineVoiceSession(["segments", "reference", "done", "failed", "cancelled"]);
+}
+async function resumeVoiceSessionStatus() {
+  const data = state.voiceInline;
+  if (!data?.sessionId || data.sessionStatusResumeSent || data.cancelling) return;
+  data.sessionStatusResumeSent = true;
+  state.pendingInputValues = {
+    ...(state.pendingInputValues || {}),
+    action: "session_status",
+    session_id: data.sessionId,
+    voice_session_id: data.sessionId,
+  };
+  try {
+    resetConfirmationResponseLock();
+    const result = await resumeAgent(null, { forceHttp: true });
+    const flow = result?.workflow || result?.flow;
+    if (flow && hasFormalVoiceHandoff(result, flow)) activateVoiceWorkspaceFromAgent(result, flow);
+    if (state.voiceInline === data) renderVoiceInline();
+  } catch (error) {
+    data.sessionStatusResumeSent = false;
+    setText("chat-error", error.message || String(error), true);
+    renderVoiceInline();
+  }
+}
+async function waitInlineVoiceSession(targetPhases) {
+  const data = state.voiceInline;
+  if (!data?.sessionId || data.polling || data.cancelling) return "failed";
+  data.polling = true;
+  const targets = new Set(targetPhases);
+  const generation = ++data.generation;
+  clearTimeout(data.pollTimer);
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    const tick = async () => {
+      if (!state.voiceInline || generation !== data.generation || data.cancelling) {
+        data.polling = false;
+        data.pollTimer = null;
+        return resolve("cancelled");
+      }
+      if (Date.now() - startedAt > 15 * 60 * 1000) {
+        data.polling = false;
+        data.pollTimer = null;
+        data.lastResult = { ...(data.lastResult || {}), status: "failed", reason: "\u5904\u7406\u8d85\u65f6" };
+        renderVoiceInline();
+        return resolve("failed");
+      }
+      try {
+        const response = await chatRvcApi(`/api/voice-studio/sessions/${encodeURIComponent(data.sessionId)}`);
+        const session = response?.session && typeof response.session === "object" ? response.session : response;
+        data.lastResult = { ...(data.lastResult || {}), session, session_id: data.sessionId, voice_session_id: data.sessionId, status: session?.running ? "running" : (data.lastResult?.status || "running") };
+        if (!state.voiceInline || generation !== data.generation || data.cancelling) {
+          data.polling = false;
+          data.pollTimer = null;
+          return resolve("cancelled");
+        }
+        renderVoiceInline();
+        const phase = String(session?.phase || "").toLowerCase();
+        if (targets.has(phase) || ["failed", "cancelled", "done"].includes(phase)) {
+          data.polling = false;
+          data.pollTimer = null;
+          if (["segments", "reference", "failed", "cancelled"].includes(phase) && !data.cancelling) {
+            data.sessionStatusResumeSent = false;
+            void resumeVoiceSessionStatus();
+          }
+          return resolve(phase || "done");
+        }
+        data.pollTimer = setTimeout(tick, 700);
+      } catch (error) {
+        data.polling = false;
+        data.pollTimer = null;
+        data.lastResult = { ...(data.lastResult || {}), status: "failed", reason: error.message || String(error) };
+        renderVoiceInline();
+        resolve("failed");
+      }
+    };
+    void tick();
+  });
+}
+function renderVoiceInline() {
+  const data = state.voiceInline; const box = data?.host; if (!box) return;
+  const result = data.lastResult || {};
+  const waiting = voiceWaitingItems(data);
+  const first = waiting[0] || null;
+  const inputId = String(first?.input_id || first?.id || "");
+  const session = voiceSessionPayload(data);
+  const status = String(result.status || data.agentWorkflow?.status || (first ? "waiting_input" : "ok")).toLowerCase();
+  const running = ["accepted", "running", "processing", "queued"].includes(status) || Boolean(session.running);
+  data.sessionId = data.sessionId || result.session_id || result.voice_session_id || session.session_id || session.id || null;
+  box.replaceChildren();
+  if ((running || data.cancelling) && !["completed", "cancelled", "failed"].includes(status)) {
+    const actionBar = document.createElement("div");
+    actionBar.className = "rvc-inline-action-bar";
+    const stop = rvcButton(data.cancelling ? "\u6b63\u5728\u505c\u6b62\u2026" : "\u505c\u6b62", () => void cancelInlineVoice());
+    stop.disabled = Boolean(data.cancelling);
+    actionBar.append(stop);
+    box.append(actionBar);
+  }
+  const stage = document.createElement("div");
+  stage.className = "rvc-inline-stage";
+  stage.textContent = voiceStageLabel(data);
+  box.append(stage);
+  if (String(result.handoff || "") === "config_worker") {
+    const hint = document.createElement("p");
+    hint.className = "rvc-hint";
+    hint.textContent = "\u8fd0\u884c\u73af\u5883\u672a\u5c31\u7eea\uff0c\u8bf7\u5148\u4e0b\u8f7d";
+    box.append(hint);
+  }
+  if (data.source) {
+    const file = document.createElement("div");
+    file.className = "rvc-inline-file";
+    const copy = document.createElement("span");
+    const name = document.createElement("strong");
+    name.textContent = data.source.name || "\u4f1a\u8bdd\u9644\u4ef6";
+    const meta = document.createElement("small");
+    meta.textContent = attachmentMeta(data.source) || "\u4f1a\u8bdd\u9644\u4ef6";
+    copy.append(name, meta);
+    file.append(copy);
+    box.append(file);
+  }
+  const progressValue = Math.max(0, Math.min(100, Number(session.progress ?? result.progress ?? (status === "completed" ? 100 : 0)) || 0));
+  if (running || data.cancelling) {
+    const progress = document.createElement("progress");
+    progress.max = 100;
+    progress.value = progressValue;
+    progress.className = "rvc-inline-progress";
+    box.append(progress);
+  }
+  if (!running && !data.cancelling && result.text) {
+    const card = document.createElement("div");
+    card.className = "rvc-inline-confirm";
+    const title = document.createElement("strong");
+    title.textContent = "\u8bc6\u522b\u6587\u672c";
+    const body = document.createElement("p");
+    body.textContent = String(result.text);
+    card.append(title, body);
+    box.append(card);
+  }
+  const attachment = result.attachment;
+  if (!running && !data.cancelling && attachment && (attachment.url || attachment.file_id || attachment.id)) {
+    const card = document.createElement("div");
+    card.className = "rvc-inline-result-final";
+    const title = document.createElement("strong");
+    title.textContent = "\u5408\u6210\u97f3\u9891";
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.src = getAttachmentUrl(attachment);
+    card.append(title, audio);
+    box.append(card);
+  }
+  if (first && !running && !data.cancelling) {
+    if (inputId === "segment_indices") {
+      const wrap = document.createElement("div");
+      wrap.className = "rvc-inline-config";
+      const segments = Array.isArray(session.segments) ? session.segments : [];
+      const chosen = new Set((state.pendingInputValues?.segment_indices || []).map((item) => Number(item)));
+      segments.forEach((segment, offset) => {
+        const index = Number(segment.index ?? offset);
+        const label = document.createElement("label");
+        label.className = "rvc-inline-config-question";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = chosen.has(index);
+        input.addEventListener("change", () => {
+          const current = new Set((state.pendingInputValues?.segment_indices || []).map((item) => Number(item)));
+          if (input.checked) current.add(index);
+          else current.delete(index);
+          state.pendingInputValues = { ...(state.pendingInputValues || {}), segment_indices: Array.from(current) };
+        });
+        label.append(input, document.createTextNode(` \u7247\u6bb5 ${index + 1}${segment.seconds ? ` \u00b7 ${segment.seconds}s` : ""}`));
+        wrap.append(label);
+      });
+      wrap.append(rvcButton("\u786e\u8ba4", () => void resumeVoiceWorkerValues({
+        action: "confirm_segments",
+        segment_indices: state.pendingInputValues?.segment_indices || [],
+        indices: state.pendingInputValues?.segment_indices || [],
+      }), true));
+      box.append(wrap);
+    } else if (inputId === "tts_text") {
+      const wrap = document.createElement("div");
+      wrap.className = "rvc-inline-config";
+      const area = document.createElement("textarea");
+      area.rows = 3;
+      area.placeholder = "\u8f93\u5165\u6587\u672c";
+      area.value = state.pendingInputValues?.tts_text || state.pendingInputValues?.text || "";
+      wrap.append(area, rvcButton("\u5408\u6210", () => void resumeVoiceWorkerValues({ action: "synthesize", tts_text: area.value, text: area.value }), true));
+      box.append(wrap);
+    } else if (inputId === "asset_name" || inputId === "voice_name") {
+      const wrap = document.createElement("div");
+      wrap.className = "rvc-inline-config";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "\u7ed9\u97f3\u8272\u8d77\u4e2a\u540d\u5b57";
+      input.value = state.pendingInputValues?.[inputId] || "";
+      wrap.append(input, rvcButton("\u4fdd\u5b58", () => void resumeVoiceWorkerValues({ action: "save_voice", [inputId]: input.value, name: input.value, voice_name: input.value, asset_name: input.value }), true));
+      box.append(wrap);
+    } else if (inputId === "asset_id") {
+      const wrap = document.createElement("div");
+      wrap.className = "rvc-inline-config";
+      const select = document.createElement("select");
+      select.className = "rvc-inline-config-select";
+      (Array.isArray(result.items) ? result.items : []).forEach((assetItem) => {
+        const option = document.createElement("option");
+        option.value = assetItem.id;
+        option.textContent = assetItem.name || assetItem.id;
+        select.append(option);
+      });
+      wrap.append(select, rvcButton("\u4f7f\u7528\u8be5\u97f3\u8272", () => void resumeVoiceWorkerValues({ action: "bind", asset_id: select.value, voice_asset_id: select.value }), true));
+      box.append(wrap);
+    } else if (inputId === "save_voice") {
+      const confirm = document.createElement("div");
+      confirm.className = "rvc-inline-confirm";
+      const textNode = document.createElement("p");
+      textNode.textContent = "\u4fdd\u5b58\u5230\u5f53\u524d\u89d2\u8272\uff1f";
+      confirm.append(textNode, rvcButton("\u4fdd\u5b58", () => void resumeVoiceWorkerValues({ action: "save_voice", save_voice: true, voice_name: state.pendingInputValues?.voice_name || data.source?.name || "voice" }), true));
+      box.append(confirm);
+    } else if (inputId === "voice_material") {
+      box.append(rvcButton("\u4e0a\u4f20\u7d20\u6750", () => openInlineVoiceUpload("voice_material"), true));
+    } else if (inputId === "audio_attachment") {
+      box.append(rvcButton("\u4e0a\u4f20\u97f3\u9891", () => openInlineVoiceUpload("audio_attachment"), true));
+    } else {
+      const hint = document.createElement("p");
+      hint.className = "rvc-hint";
+      hint.textContent = "\u5728\u4e0b\u65b9\u8f93\u5165\u6846\u7ee7\u7eed";
+      box.append(hint);
+    }
+  }
+  maybePollVoiceSession();
+}
+function openInlineVoiceUpload(kind = "audio_attachment") {
+  const input = $("chat-voice-material");
+  if (!input) return;
+  const material = kind === "voice_material";
+  input.accept = material
+    ? "audio/*,video/*,.wav,.mp3,.m4a,.aac,.flac,.ogg,.opus,.webm,.mp4,.mkv,.mov,.avi"
+    : "audio/*,.wav,.mp3,.m4a,.aac,.flac,.ogg,.opus,.webm";
+  input.multiple = false;
+  input.dataset.voiceInline = "true";
+  input.dataset.voiceKind = kind;
+  input.click();
+}
+async function resumeVoiceWorkerValues(values) {
+  state.pendingInputValues = { ...(state.pendingInputValues || {}), ...(values || {}) };
+  resetConfirmationResponseLock();
+  try {
+    await resumeAgent(null, { forceHttp: true });
+    maybePollVoiceSession();
+  } catch (error) {
+    setText("chat-error", error.message || String(error), true);
+  }
+}
+async function cancelInlineVoice() {
+  const data = state.voiceInline;
+  if (!data || data.cancelling) return;
+  data.generation = (data.generation || 0) + 1;
+  clearTimeout(data.pollTimer);
+  data.pollTimer = null;
+  data.polling = false;
+  const shouldResumeAgent = Boolean(state.pendingInput || state.pendingAction);
+  const realtimeTurnWasActive = Boolean(state.realtimeTurnId);
+  data.cancelling = true;
+  state.realtimeBusy = false;
+  state.agentRequestPending = false;
+  state.realtimeSubmissionPending = false;
+  state.realtimeExecutionPending = false;
+  state.realtimeTurnId = null;
+  renderVoiceInline();
+  const sessionId = data.sessionId || data.lastResult?.session_id || data.lastResult?.voice_session_id || data.lastResult?.session?.session_id;
+  if (shouldResumeAgent) {
+    state.pendingInputValues = { action: "cancel", session_id: sessionId, voice_session_id: sessionId };
+    void resumeAgent(null, { forceHttp: true }).catch((error) => setText("chat-error", `停止失败：${error.message || error}`, true));
+  } else if (realtimeTurnWasActive) {
+    sendRealtime({ type: "generation.cancel" });
+  }
+  data.lastResult = { ...(data.lastResult || {}), status: "cancelled", session: { ...(data.lastResult?.session || {}), phase: "cancelled", running: false } };
+  data.cancelling = false;
+  renderVoiceInline();
+}
+async function resumeVoiceWorkerWithAttachment(fileId) {
+  const pending = state.pendingInput;
+  const worker = String(pending?.worker || pending?.workflow?.worker || state.voiceInline?.agentWorkflow?.worker || "").trim().toLowerCase();
+  if (worker !== "voice_worker") {
+    throw new Error("\u58f0\u97f3\u4efb\u52a1\u8fd8\u6ca1\u51c6\u5907\u597d\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5");
+  }
+  if (state.voiceInline) {
+    state.voiceInline.source = state.chatAttachments?.find((item) => String(item.file_id) === String(fileId)) || { file_id: fileId };
+    renderVoiceInline();
+  }
+  const taskType = String(pending?.task_type || state.voiceInline?.agentWorkflow?.task_type || "").trim().toLowerCase();
+  const action = taskType === "voice_transcribe" ? "transcribe" : "analyze";
+  state.pendingInputValues = {
+    ...(state.pendingInputValues || {}),
+    attachment_ids: Array.from(new Set([...(state.pendingInputValues?.attachment_ids || []), fileId])),
+    attachment_id: fileId,
+    audio_file_id: fileId,
+    action,
+  };
+  state.voiceInline = state.voiceInline || {};
+  if (state.voiceInline.attachmentResumeSent) return;
+  state.voiceInline.attachmentResumeSent = true;
+  try {
+    await resumeAgent(null);
+  } catch (error) {
+    state.voiceInline.attachmentResumeSent = false;
+    throw error;
+  }
 }
 
 function isInlineRvcActive() {
@@ -3147,7 +4009,7 @@ function renderChatTaskWorkspace() {
   const host = $("chat-task-workspace");
   if (!host) return;
   // RVC 的唯一主工作区挂在 Agent assistant 气泡内；顶部总览只保留在右侧摘要。
-  if (isInlineRvcActive()) {
+  if (isInlineRvcActive() || isInlineVoiceActive()) {
     host.replaceChildren();
     host.classList.add("is-hidden");
     return;
@@ -3156,7 +4018,8 @@ function renderChatTaskWorkspace() {
   const selected = selectedAttachments().filter((item) => !["removed", "error"].includes(item.status));
   const taskFiles = [...selected];
   const resultFiles = (flow?.result_attachments || flow?.result_files || flow?.outputs || []).map(normalizeAttachment).filter(Boolean);
-  const hasTask = Boolean(flow) || taskFiles.length > 0;
+  const resourceConfirmation = pendingResourceAction();
+  const hasTask = Boolean(flow) || taskFiles.length > 0 || (Boolean(state.pendingAction) && !resourceConfirmation);
   host.classList.toggle("is-hidden", !hasTask);
   if (!hasTask) return;
   const title = $("chat-task-workspace-title");
@@ -3165,14 +4028,20 @@ function renderChatTaskWorkspace() {
   const progressLabel = $("chat-task-workspace-progress-label");
   const bar = $("chat-task-workspace-progress-bar");
   const message = $("chat-task-workspace-message");
-  const progress = Math.max(0, Math.min(100, Number(flow?.progress) || (taskFiles.length ? 0 : 100)));
+  const progress = state.pendingAction && !flow ? 0 : Math.max(0, Math.min(100, Number(flow?.progress) || (taskFiles.length ? 0 : 100)));
   const current = flow?.nodes?.find((node) => node.id === flow.current_node) || flow?.nodes?.find((node) => node.status === "running");
-  if (title) title.textContent = flow?.title || "当前文件";
-  if (type) type.textContent = inferTaskType(flow);
-  if (stage) stage.textContent = flow ? (current?.label || flowStatusLabel(flow.status)) : "等待发送";
+  if (title) title.textContent = state.pendingAction && !flow ? "需要确认" : (flow?.title || "当前文件");
+  if (type) type.textContent = state.pendingAction && !flow ? "确认后继续当前操作" : inferTaskType(flow);
+  if (stage) stage.textContent = state.pendingAction && !flow ? "等待确认" : (flow ? (current?.label || flowStatusLabel(flow.status)) : "等待发送");
   if (progressLabel) progressLabel.textContent = `${Math.round(progress)}%`;
   if (bar) bar.style.width = `${progress}%`;
-  if (message) message.textContent = flow?.message || flow?.description || (taskFiles.length ? "这些文件将作为下一条消息的输入资源。" : "任务会在对话中继续推进。");
+  if (message) {
+    const action = state.pendingAction?.action || {};
+    const tool = String(action.tool || action.name || "").trim();
+    message.textContent = state.pendingAction && !flow
+      ? (tool === "manage_resource_install" ? "资源操作需要确认，确认后才会开始执行。" : "请确认后继续当前操作。")
+      : (flow?.message || flow?.description || (taskFiles.length ? "将随下一条消息发送" : "按提示继续"));
+  }
   const filesHost = $("chat-task-workspace-files");
   if (filesHost) {
     filesHost.replaceChildren();
@@ -3185,7 +4054,7 @@ function renderChatTaskWorkspace() {
       head.append(icon, name, meta); card.append(head, createAttachmentPreview(item, { compact: true }));
       filesHost.append(card);
     });
-    if (!taskFiles.length && flow) { const empty = document.createElement("p"); empty.className = "chat-task-files-empty"; empty.textContent = "任务尚未关联文件，按对话提示上传或继续。"; filesHost.append(empty); }
+    if (!taskFiles.length && flow) { const empty = document.createElement("p"); empty.className = "chat-task-files-empty"; empty.textContent = "上传文件或继续"; filesHost.append(empty); }
   }
   renderChatTaskActions(flow);
   const resultsHost = $("chat-task-workspace-results");
@@ -3199,9 +4068,17 @@ function renderChatTaskWorkspace() {
 function renderChatContext() {
   const peek = $("chat-context-peek");
   if (!peek) return;
+  // 任务统一显示在对话中的中央工作卡片。右侧任务栏目前不能承载完整
+  // 的多步骤控制状态，因此不再显示“待处理”入口，避免打开后出现空白面板。
+  peek.classList.add("is-hidden");
+  if (state.chatContextOpen) setChatContextOpen(false);
   const flow = state.currentWorkflow;
-  // RVC 的状态全部在 assistant 气泡内，不显示右侧通用任务摘要或顶部工作区。
-  if (isInlineRvcActive() || flow?.worker === "rvc_worker") {
+  const taskEntry = state.currentTaskStatus || (state.chatTaskEntries instanceof Map ? Array.from(state.chatTaskEntries.values()).at(-1) : null);
+  // 没有完整 workflow 时，仍展示结构化 task_status 的摘要，避免右侧“任务”面板空白。
+  // 它只作为只读概览；继续/取消等操作仍由中央任务工作区负责。
+  const summaryFlow = flow || taskEntry;
+  // RVC 的状态全部在 assistant 气泡内，不显示右侧通用任务摘要或顶部工作区.
+  if (isInlineRvcActive() || isInlineVoiceActive() || flow?.worker === "rvc_worker" || flow?.worker === "voice_worker") {
     renderChatTaskWorkspace();
     ["chat-task-summary-section", "chat-pending-section", "chat-workflow-section", "chat-context-attachments-section"].forEach((id) => $(id)?.classList.add("is-hidden"));
     peek.classList.add("is-hidden");
@@ -3211,8 +4088,8 @@ function renderChatContext() {
   const unresolved = normalizedWaitingInputs((flow?.waiting_inputs || []).filter((item) => !item.resolved));
   if (state.pendingAction) unresolved.push({ id: "confirmation", kind: "confirmation", label: state.pendingAction.action?.title || "确认操作", description: "确认后继续执行当前任务" });
   const uniqueUnresolved = uniqueByStableId(unresolved, (item) => String(item.id || `${item.kind}:${item.label}`));
-  const hasTask = Boolean(flow && !["completed", "cancelled"].includes(flow.status));
-  const hasAttention = uniqueUnresolved.length > 0 || flow?.status === "failed";
+  const hasTask = Boolean(summaryFlow && !["completed", "cancelled"].includes(normalizeFlowStatus(summaryFlow.status || summaryFlow.state)));
+  const hasAttention = uniqueUnresolved.length > 0 || summaryFlow?.status === "failed";
   const showEntry = hasTask || hasAttention;
   peek.classList.toggle("is-hidden", !showEntry);
   if (!showEntry && state.chatContextOpen) setChatContextOpen(false);
@@ -3220,7 +4097,7 @@ function renderChatContext() {
   if (count) { count.textContent = String(uniqueUnresolved.length || 1); count.classList.toggle("is-hidden", !hasAttention); }
   const label = $("chat-context-peek-label");
   if (label) label.textContent = hasAttention ? "待处理" : "任务";
-  renderTaskSummary(flow);
+  renderTaskSummary(summaryFlow);
   renderPendingInputs(uniqueUnresolved);
   renderWorkflow(flow);
   renderContextAttachments();
@@ -3234,15 +4111,20 @@ function renderTaskSummary(flow) {
   section.classList.toggle("is-hidden", !flow);
   host.replaceChildren();
   if (!flow) return;
-  const current = flow.nodes.find((node) => node.id === flow.current_node) || flow.nodes.find((node) => node.status === "running") || flow.nodes.at(-1);
-  const title = document.createElement("strong"); title.textContent = flow.title;
-  const phase = document.createElement("p"); phase.textContent = current?.label || flowStatusLabel(flow.status);
+  const nodes = Array.isArray(flow.nodes) ? flow.nodes : [];
+  const current = nodes.find((node) => node.id === flow.current_node) || nodes.find((node) => node.status === "running") || nodes.at(-1);
+  const title = document.createElement("strong");
+  title.textContent = cleanPublicText(flow.title || flow.name, "当前任务");
+  const phase = document.createElement("p");
+  phase.textContent = cleanPublicText(current?.label || flow.phase || flow.message, flowStatusLabel(flow.status || flow.state));
+  const progressValue = Math.max(0, Math.min(100, Number(flow.progress ?? flow.progress_percent) || 0));
   const progressRow = document.createElement("div"); progressRow.className = "chat-context-progress-row";
-  const progress = document.createElement("progress"); progress.max = 100; progress.value = flow.progress;
-  const value = document.createElement("span"); value.textContent = `${Math.round(flow.progress)}%`;
+  const progress = document.createElement("progress"); progress.max = 100; progress.value = progressValue;
+  const value = document.createElement("span"); value.textContent = `${Math.round(progressValue)}%`;
   progressRow.append(progress, value); host.append(title, phase, progressRow);
-  // 右侧栏只显示摘要；取消/重试等动作统一放在中央任务工作区。
-  const worker = $("chat-task-worker"); if (worker) worker.textContent = flow.worker || "Agent";
+  const taskId = flow.task_id || flow.id;
+  if (taskId) { const meta = document.createElement("small"); meta.className = "chat-task-summary-id"; meta.textContent = `任务 ${String(taskId).slice(0, 12)}`; host.append(meta); }
+  const worker = $("chat-task-worker"); if (worker) worker.textContent = flow.worker || flow.worker_name || "Agent";
 }
 
 function pendingActionButton(label, iconName, onClick, primary = false) {
@@ -3369,7 +4251,7 @@ function rvcSessionPayload(value) {
 function rvcPhase(data) { const session = rvcSessionPayload(data?.state); return String(session.phase || session.status || "idle").toLowerCase(); }
 function rvcTerminal(phase) { return ["failed", "cancelled", "separated"].includes(phase); }
 function rvcProgress(data) { if (data?.taskId) return Math.max(0, Math.min(100, Number(data.taskProgress) || 0)); const session = rvcSessionPayload(data?.state); return Math.max(0, Math.min(100, Number(session.progress) || 0)); }
-function rvcProgressLabel(data, phase) { if (data?.taskId) return `正在生成最终音频 · ${Math.round(rvcProgress(data))}%`; if (["processing", "extracting", "normalizing", "separating"].includes(phase)) return `${phase === "separating" ? "正在分离人声" : "正在准备音频"} · ${Math.round(rvcProgress(data))}%`; return ""; }
+function rvcProgressLabel(data, phase) { if (data?.taskId) return `变声 ${Math.round(rvcProgress(data))}%`; if (["processing", "extracting", "normalizing", "separating"].includes(phase)) return `${phase === "separating" ? "分离人声" : phase === "normalizing" ? "整理音频" : "提取音频"} ${Math.round(rvcProgress(data))}%`; return ""; }
 function appendRvcCompletionPrompt(data) {
   if (!data?.result || data.completionPromptShown) return;
   // 最终结果已落地后，释放本轮 Agent/实时请求锁；询问消息必须允许用户直接回复。
@@ -3386,12 +4268,12 @@ function appendRvcCompletionPrompt(data) {
   data.workflowActive = false;
   data.completed = true;
   data.completionPromptShown = true;
-  appendMessage("assistant", "最终音频已经生成，请检查试听结果。本次 RVC 任务是否完成？如果需要重新开始、重新分离，或返回模型与参数配置，请直接告诉我。", undefined, []);
+  appendMessage("assistant", "变声完成。要重做直接说。", undefined, []);
   setRealtimeBusy(false);
   renderConfirmation();
   renderChatContext();
 }
-function rvcRuntimeReady(status) {
+function chatRvcRuntimeReady(status) {
   if (!status || status.installing) return false;
   const missing = Array.isArray(status.missing) ? status.missing : [];
   if (missing.some((item) => ["runtime", "hubert", "rmvpe", "cuda"].includes(String(item).toLowerCase()))) return false;
@@ -3400,9 +4282,9 @@ function rvcRuntimeReady(status) {
   return Boolean(components.runtime?.ready && components.hubert?.ready && components.rmvpe?.ready);
 }
 function rvcResourceStatusLabel(status) {
-  if (!status) return "正在检查 RVC 资源…";
-  const phaseLabels = { preparing: "准备运行环境", runtime: "创建 RVC Python 运行时", dependencies: "安装 RVC 推理依赖", verify: "验证推理环境", resources: "下载 Hubert / RMVPE", done: "RVC 基础运行时已就绪", failed: "RVC 下载失败", cancelled: "RVC 下载已取消" };
-  const phase = phaseLabels[String(status.phase || "").toLowerCase()] || status.detail || "正在准备 RVC 资源";
+  if (!status) return "正在检查运行环境";
+  const phaseLabels = { preparing: "准备中", runtime: "安装中", dependencies: "安装中", verify: "验证中", resources: "下载中", done: "已就绪", failed: "下载失败", cancelled: "已停止" };
+  const phase = phaseLabels[String(status.phase || "").toLowerCase()] || status.detail || "正在准备运行环境";
   if (status.installing) return `${phase}${status.progress_percent != null ? ` · ${Math.round(Number(status.progress_percent) || 0)}%` : ""}`;
   return status.error || phase;
 }
@@ -3457,13 +4339,13 @@ function cancelRvcResourceInstall() {
 }
 function renderRvcResourceCard(box, status) {
   const card = document.createElement("section"); card.className = "rvc-inline-resource-card";
-  const ready = rvcRuntimeReady(status);
-  const title = document.createElement("strong"); title.textContent = status?.installing ? "正在准备 RVC 运行环境" : (status?.error ? "RVC 运行环境准备失败" : (ready ? "RVC 运行环境已就绪" : "RVC 尚未完成配置"));
-  const detail = document.createElement("p"); detail.textContent = status?.installing ? rvcResourceStatusLabel(status) : (status?.error || (ready ? "运行环境与基础资源均已检测通过。" : "首次使用需要下载推理运行时和基础资源。下载完成后即可继续当前对话。"));
+  const ready = chatRvcRuntimeReady(status);
+  const title = document.createElement("strong"); title.textContent = status?.installing ? "下载中" : (status?.error ? "下载失败" : (ready ? "已就绪" : "未就绪"));
+  const detail = document.createElement("p"); detail.textContent = status?.installing ? rvcResourceStatusLabel(status) : (status?.error || (ready ? "已就绪" : "运行环境未就绪，请先下载"));
   const progress = document.createElement("progress"); progress.max = 100; progress.value = Math.max(0, Math.min(100, Number(status?.progress_percent) || 0)); progress.className = "rvc-inline-progress";
   const actions = document.createElement("div"); actions.className = "rvc-inline-resource-actions";
-  if (status?.installing) { const cancel = rvcButton(status?.cancelling ? "正在取消…" : "取消下载", () => cancelRvcResourceInstall()); cancel.disabled = Boolean(status?.cancelling); actions.append(cancel); }
-  else actions.append(rvcButton(status?.error ? "重试下载" : "开始下载 RVC 资源", () => startRvcResourceInstall(), true));
+  if (status?.installing) { const cancel = rvcButton(status?.cancelling ? "正在停止…" : "停止", () => cancelRvcResourceInstall()); cancel.disabled = Boolean(status?.cancelling); actions.append(cancel); }
+  else actions.append(rvcButton(status?.error ? "下载" : "下载", () => startRvcResourceInstall(), true));
   card.append(title, detail, progress, actions); box.append(card);
 }
 function renderRvcInline() {
@@ -3473,12 +4355,14 @@ function renderRvcInline() {
   const resourceStatus = data.rvcResourceStatus;
   if (phase !== "awaiting_source" && !resourceStatus?.installing) stopRvcResourcePoll(data);
   const stage = document.createElement("div"); stage.className = "rvc-inline-stage";
-  if (phase === "awaiting_source" && resourceStatus && !rvcRuntimeReady(resourceStatus)) renderRvcResourceCard(box, resourceStatus);
-  const labels = { awaiting_source: "等待参考音频或视频", uploaded: "文件已上传，请确认是否处理", extracting: "正在准备音频", normalizing: "正在标准化 WAV", ready: "音频已准备，正在进入人声分离", separating: "正在分离 Vocals 与 Instrumental", separated: "分离完成，请逐项确认转换配置", failed: "处理失败", cancelled: "任务已中止" };
-  stage.textContent = data.result ? "RVC 变声完成" : (rvcProgressLabel(data, phase) || labels[phase] || session.message || "等待 Agent 提供下一步");
+  if (phase === "awaiting_source" && resourceStatus && !chatRvcRuntimeReady(resourceStatus)) renderRvcResourceCard(box, resourceStatus);
+  const labels = { awaiting_source: "上传音频或视频", uploaded: "开始分离", extracting: "提取音频", normalizing: "整理音频", ready: "分离人声", separating: "分离人声", separated: "选择音色", failed: "处理失败", cancelled: "已停止" };
+  const answers = data.configAnswers || {}; const step = Number(data.configStep) || 0;
+  const separatedGuide = (!answers.model_id) ? "选择音色" : (answers.index_id === undefined) ? "选择 Index" : (answers.pitch === undefined) ? "设置音高" : (answers.mix_instrumental === undefined) ? "合并伴奏" : "开始变声";
+  stage.textContent = data.result ? "变声结果" : (phase === "separated" && !data.taskId ? separatedGuide : (rvcProgressLabel(data, phase) || labels[phase] || session.message || "等待下一步"));
   if (phase !== "awaiting_source" && !data.result) {
     const actionBar = document.createElement("div"); actionBar.className = "rvc-inline-action-bar";
-    const stop = rvcButton(data.cancelling ? "正在中止…" : "中止任务", () => void cancelInlineRvc()); stop.disabled = data.cancelling;
+    const stop = rvcButton(data.cancelling ? "正在停止…" : "停止", () => void cancelInlineRvc()); stop.disabled = data.cancelling;
     actionBar.append(stop); box.append(actionBar);
   }
   box.append(stage);
@@ -3486,11 +4370,11 @@ function renderRvcInline() {
   const progressValue = rvcProgress(data);
   if (["processing", "extracting", "normalizing", "separating"].includes(phase) || data.taskId) { const progress = document.createElement("progress"); progress.max = 100; progress.value = progressValue; progress.className = "rvc-inline-progress"; progress.setAttribute("aria-label", stage.textContent); box.append(progress); }
   const stems = [session.vocals, session.instrumental].filter(Boolean);
-  if (stems.length) { const list = document.createElement("div"); list.className = "rvc-inline-stems"; stems.forEach((item, index) => { const card = document.createElement("div"); card.className = "rvc-inline-stem"; const label = document.createElement("strong"); label.textContent = index ? "Instrumental" : "Vocals"; const audio = document.createElement("audio"); audio.controls = true; audio.src = rvcFileUrl(data.sessionId, item.file_id || item.id); card.append(label, audio); list.append(card); }); box.append(list); }
-  if (!data.source && !data.result && !data.cancelling) box.append(rvcButton("选择参考音频 / 视频", openInlineRvcUpload, true));
-  if (data.source && ["uploaded", "awaiting_source"].includes(phase) && !data.sourceConfirmed && !data.cancelling) { const confirm = document.createElement("div"); confirm.className = "rvc-inline-confirm"; const text = document.createElement("p"); text.textContent = "已准备好这个文件。确认处理此音频并分离人声吗？"; confirm.append(text, rvcButton("确认处理", () => { void runInlineRvc("prepare_and_separate").catch((error) => setText("chat-error", `RVC 处理提交失败：${error?.message || error}`, true)); }, true), rvcButton("更换文件", openInlineRvcUpload)); box.append(confirm); }
+  if (stems.length) { const list = document.createElement("div"); list.className = "rvc-inline-stems"; stems.forEach((item, index) => { const card = document.createElement("div"); card.className = "rvc-inline-stem"; const label = document.createElement("strong"); label.textContent = index ? "伴奏" : "人声"; const audio = document.createElement("audio"); audio.controls = true; audio.src = rvcFileUrl(data.sessionId, item.file_id || item.id); card.append(label, audio); list.append(card); }); box.append(list); }
+  if (!data.source && !data.result && !data.cancelling) box.append(rvcButton("上传音频或视频", openInlineRvcUpload, true));
+  if (data.source && ["uploaded", "awaiting_source"].includes(phase) && !data.sourceConfirmed && !data.cancelling) { const confirm = document.createElement("div"); confirm.className = "rvc-inline-confirm"; const text = document.createElement("p"); text.textContent = "确认后开始分离"; confirm.append(text, rvcButton("开始分离", () => { void runInlineRvc("prepare_and_separate").catch((error) => setText("chat-error", `提交失败：${error?.message || error}`, true)); }, true), rvcButton("换文件", openInlineRvcUpload)); box.append(confirm); }
   if (phase === "separated" && !data.taskId && !data.result && !data.cancelling) renderRvcConversionControls(box);
-  if (data.result) { appendRvcCompletionPrompt(data); const resultCard = document.createElement("section"); resultCard.className = "rvc-inline-result rvc-inline-result-final"; const label = document.createElement("strong"); label.textContent = "RVC 变声完成"; const audio = document.createElement("audio"); audio.controls = true; audio.src = data.result.output_url || `/api/voice/rvc/output/${encodeURIComponent(data.result.task_id)}`; const link = document.createElement("a"); link.href = audio.src; link.download = `rvc-${data.result.task_id}.wav`; link.textContent = "下载最终 WAV"; resultCard.append(label, audio, link); box.append(resultCard); }
+  if (data.result) { appendRvcCompletionPrompt(data); const resultCard = document.createElement("section"); resultCard.className = "rvc-inline-result rvc-inline-result-final"; const label = document.createElement("strong"); label.textContent = "变声结果"; const audio = document.createElement("audio"); audio.controls = true; audio.src = data.result.output_url || `/api/voice/rvc/output/${encodeURIComponent(data.result.task_id)}`; const link = document.createElement("a"); link.href = audio.src; link.download = `rvc-${data.result.task_id}.wav`; link.textContent = "下载"; resultCard.append(label, audio, link); box.append(resultCard); }
   icons();
 }
 function renderRvcConversionControls(box) {
@@ -3499,12 +4383,12 @@ function renderRvcConversionControls(box) {
   const question = document.createElement("p"); question.className = "rvc-inline-config-question";
   const answers = data.configAnswers || (data.configAnswers = {}); const step = Number(data.configStep) || 0;
   const modelItems = data.models?.models || []; const indexItems = data.models?.indices || [];
-  if (!data.models) { question.textContent = "正在读取可用音色模型…"; wrap.append(question); box.append(wrap); void chatRvcApi("/api/voice/rvc/models").then((value) => { if (state.rvcInline) { state.rvcInline.models = value; renderRvcInline(); } }).catch((error) => setText("chat-error", `模型读取失败：${error.message}`, true)); return; }
+  if (!data.models) { question.textContent = "选择音色"; wrap.append(question); box.append(wrap); void chatRvcApi("/api/voice/rvc/models").then((value) => { if (state.rvcInline) { state.rvcInline.models = value; renderRvcInline(); } }).catch((error) => setText("chat-error", `模型读取失败：${error.message}`, true)); return; }
   if (step === 0 && !answers.model_id) {
-    question.textContent = "请选择音色模型"; const select = document.createElement("select"); select.className = "rvc-inline-config-select"; select.innerHTML = '<option value="">选择音色模型</option>'; modelItems.forEach((item) => { const value = item.id || item.name || item.file_id; const option = document.createElement("option"); option.value = value; option.textContent = item.name || value; select.append(option); }); const next = rvcButton("下一步", () => { if (!select.value) return setText("chat-error", "请先选择音色模型", true); answers.model_id = select.value; data.configStep = 1; renderRvcInline(); }, true);
+    question.textContent = "选择音色"; const select = document.createElement("select"); select.className = "rvc-inline-config-select"; select.innerHTML = '<option value="">选择音色</option>'; modelItems.forEach((item) => { const value = item.id || item.name || item.file_id; const option = document.createElement("option"); option.value = value; option.textContent = item.name || value; select.append(option); }); const next = rvcButton("下一步", () => { if (!select.value) return setText("chat-error", "请选择音色", true); answers.model_id = select.value; data.configStep = 1; renderRvcInline(); }, true);
     const modelInput = document.createElement("input"); modelInput.type = "file"; modelInput.accept = ".pth,.index"; modelInput.multiple = true; modelInput.className = "visually-hidden-input";
-    const importButton = rvcButton("导入 .pth / .index", () => modelInput.click(), false); importButton.addEventListener("click", () => modelInput.click());
-    const directoryButton = rvcButton("打开音色目录", async () => {
+    const importButton = rvcButton("导入", () => modelInput.click(), false); importButton.addEventListener("click", () => modelInput.click());
+    const directoryButton = rvcButton("打开文件夹", async () => {
       directoryButton.disabled = true;
       try {
         const opened = await chatRvcApi("/api/providers/rvc/open-model-directory", { method: "POST", headers: { "X-YUMENO-Request": "web" } });
@@ -3515,13 +4399,13 @@ function renderRvcConversionControls(box) {
     }, false);
     modelInput.addEventListener("change", async () => { const files = Array.from(modelInput.files || []); if (!files.length) return; const form = new FormData(); files.forEach((file) => form.append("files", file, file.name)); try { await chatRvcApi("/api/providers/rvc/models/import", { method: "POST", body: form }); data.models = await chatRvcApi("/api/voice/rvc/models"); renderRvcInline(); } catch (error) { setText("chat-error", `导入音色文件失败：${error.message || error}`, true); } finally { modelInput.value = ""; } }); wrap.append(question, select, directoryButton, importButton, modelInput, next);
   } else if (step <= 1 && answers.index_id === undefined) {
-    question.textContent = "是否使用 Index？"; const select = document.createElement("select"); select.className = "rvc-inline-config-select"; select.innerHTML = '<option value="">不使用 Index</option>'; indexItems.forEach((item) => { const value = item.id || item.name || item.file_id; const option = document.createElement("option"); option.value = value; option.textContent = item.name || value; select.append(option); }); const next = rvcButton("下一步", () => { answers.index_id = select.value || null; data.configStep = 2; renderRvcInline(); }, true); wrap.append(question, select, next);
+    question.textContent = "Index（可跳过）"; const select = document.createElement("select"); select.className = "rvc-inline-config-select"; select.innerHTML = '<option value="">不使用 Index</option>'; indexItems.forEach((item) => { const value = item.id || item.name || item.file_id; const option = document.createElement("option"); option.value = value; option.textContent = item.name || value; select.append(option); }); const next = rvcButton("下一步", () => { answers.index_id = select.value || null; data.configStep = 2; renderRvcInline(); }, true); wrap.append(question, select, next);
   } else if (step <= 2 && answers.pitch === undefined) {
-    question.textContent = "请选择音高（半音）"; const input = document.createElement("input"); input.type = "number"; input.min = "-24"; input.max = "24"; input.step = "1"; input.value = "0"; input.className = "rvc-inline-config-input"; const next = rvcButton("下一步", () => { answers.pitch = Number(input.value) || 0; data.configStep = 3; renderRvcInline(); }, true); wrap.append(question, input, next);
+    question.textContent = "音高"; const input = document.createElement("input"); input.type = "number"; input.min = "-24"; input.max = "24"; input.step = "1"; input.value = "0"; input.className = "rvc-inline-config-input"; const next = rvcButton("下一步", () => { answers.pitch = Number(input.value) || 0; data.configStep = 3; renderRvcInline(); }, true); wrap.append(question, input, next);
   } else if (step <= 3 && answers.mix_instrumental === undefined) {
-    question.textContent = "是否合并 Instrumental 背景音？"; const select = document.createElement("select"); select.className = "rvc-inline-config-select"; select.innerHTML = '<option value="false">不合并</option><option value="true">合并</option>'; const next = rvcButton("下一步", () => { answers.mix_instrumental = select.value === "true"; data.configStep = 4; renderRvcInline(); }, true); wrap.append(question, select, next);
+    question.textContent = "合并伴奏？"; const select = document.createElement("select"); select.className = "rvc-inline-config-select"; select.innerHTML = '<option value="false">不合并</option><option value="true">合并</option>'; const next = rvcButton("下一步", () => { answers.mix_instrumental = select.value === "true"; data.configStep = 4; renderRvcInline(); }, true); wrap.append(question, select, next);
   } else {
-    question.textContent = "配置已准备好，请确认后生成最终音频"; const summary = document.createElement("div"); summary.className = "rvc-inline-config-summary"; summary.textContent = `模型：${answers.model_id} · Index：${answers.index_id || "不使用"} · 音高：${answers.pitch || 0} · ${answers.mix_instrumental ? "合并背景音" : "不合并背景音"}`; const confirm = rvcButton("确认生成", () => void runInlineRvc("convert", answers), true); const back = rvcButton("重新配置", () => { data.configStep = 0; data.configAnswers = { index_id: null, pitch: undefined, mix_instrumental: undefined }; renderRvcInline(); }); wrap.append(question, summary, confirm, back);
+    question.textContent = "开始变声"; const summary = document.createElement("div"); summary.className = "rvc-inline-config-summary"; summary.textContent = `音色：${answers.model_id} · Index：${answers.index_id || "不使用"} · 音高：${answers.pitch || 0} · ${answers.mix_instrumental ? "合并伴奏" : "不合并"}`; const confirm = rvcButton("开始变声", () => void runInlineRvc("convert", answers), true); const back = rvcButton("重选", () => { data.configStep = 0; data.configAnswers = { index_id: null, pitch: undefined, mix_instrumental: undefined }; renderRvcInline(); }); wrap.append(question, summary, confirm, back);
   }
   box.append(wrap);
 }
@@ -3530,12 +4414,12 @@ async function resumeRvcWorkerWithAttachment(fileId) {
   const pending = state.pendingInput;
   const worker = String(pending?.worker || pending?.workflow?.worker || state.rvcInline?.agentWorkflow?.worker || "").trim().toLowerCase();
   if (worker !== "rvc_worker") {
-    throw new Error("RVC 工作流尚未完成 Agent 交接，暂不能提交文件");
+    throw new Error("变声任务还没准备好，请稍后再试");
   }
   if (state.rvcInline) {
     state.rvcInline.source = state.chatAttachments?.find((item) => String(item.file_id) === String(fileId)) || { file_id: fileId };
     state.rvcInline.sourceConfirmed = false;
-    state.rvcInline.state = { ...(state.rvcInline.state || {}), phase: "uploaded", message: "文件已上传，等待 RVC Worker 准备" };
+    state.rvcInline.state = { ...(state.rvcInline.state || {}), phase: "uploaded", message: "文件已上传" };
     renderRvcInline();
   }
   state.pendingInputValues = {
@@ -3574,14 +4458,14 @@ async function resumeRvcSessionStatus() {
   try {
     // 每次结构化恢复都是一次新的提交。上一次“确认处理”的
     // 防重复锁不能阻止 session_status 把 separated 结果交回 Agent。
-    state.confirmationResponded = false;
+    resetConfirmationResponseLock();
     const result = await resumeAgent(null, { forceHttp: true });
     const flow = result?.workflow || result?.flow;
     if (flow && hasFormalRvcHandoff(result, flow)) activateRvcWorkspaceFromAgent(result, flow);
     if (state.rvcInline === data) renderRvcInline();
   } catch (error) {
     data.sessionStatusResumeSent = false;
-    data.state = { ...(data.state || {}), phase: "failed", error: error.message || String(error), message: "RVC Worker 状态恢复失败" };
+    data.state = { ...(data.state || {}), phase: "failed", error: error.message || String(error), message: "状态同步失败，请重试" };
     renderRvcInline();
   }
 }
@@ -3595,7 +4479,7 @@ async function waitInlineRvcSession(targetPhases) {
       const sourceSize = Number(data.source?.size || data.state?.source?.size || 0);
       const timeoutMs = sourceSize >= 100 * 1024 * 1024 ? 30 * 60 * 1000 : 15 * 60 * 1000;
       if (Date.now() - startedAt > timeoutMs) {
-        data.state = { ...(data.state || {}), phase: "failed", message: "RVC Worker 长时间没有返回状态，请重试" };
+        data.state = { ...(data.state || {}), phase: "failed", message: "处理超时，请重试" };
         renderRvcInline();
         return resolve("failed");
       }
@@ -3623,13 +4507,13 @@ async function waitInlineRvcSession(targetPhases) {
 async function directRvcConvert(data, answers) {
   const session = rvcSessionPayload(data?.state);
   const inputFileId = session.selected_input || session.vocals?.file_id || session.normalized_wav?.file_id;
-  if (!data?.sessionId || !inputFileId) throw new Error("缺少可用于 RVC 推理的分离音频");
-  if (!answers?.model_id) throw new Error("请先选择音色模型");
+  if (!data?.sessionId || !inputFileId) throw new Error("还没有可用来变声的人声");
+  if (!answers?.model_id) throw new Error("请选择音色");
   const result = await chatRvcApi("/api/voice/rvc/convert", {
     method: "POST", headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
     body: JSON.stringify({ session_id: data.sessionId, input_file_id: inputFileId, model_id: answers.model_id, index_id: answers.index_id || null, speaker_id: 0, pitch: Number(answers.pitch || 0), f0_method: "rmvpe", index_rate: answers.index_id ? 0.75 : 0, protect: 0.33, resample_sr: 0, rms_mix_rate: 1, mix_instrumental: Boolean(answers.mix_instrumental) }),
   });
-  data.taskId = result.task_id; data.task = null; data.state = { ...session, phase: "converting", progress: 0, message: "正在生成最终音频" };
+  data.taskId = result.task_id; data.task = null; data.state = { ...session, phase: "converting", progress: 0, message: "正在变声" };
   renderRvcInline();
   await pollInlineRvcTask();
 }
@@ -3650,7 +4534,7 @@ async function directRvcPrepareFromAttachment(data) {
   // 失败/中止的 session 不能复用，否则会把上一次的 stems 带回下一次处理。
   if (current && ["failed", "cancelled"].includes(String(current.phase || current.status || "").toLowerCase())) {
     sessionId = null; current = null;
-    data.state = { phase: "uploaded", progress: 0, message: "将重新创建 RVC 处理会话" };
+    data.state = { phase: "uploaded", progress: 0, message: "正在重新处理" };
   }
   if (!sessionId) {
     const created = await chatRvcApi("/api/voice/rvc/sessions", { method: "POST" });
@@ -3693,7 +4577,7 @@ async function runInlineRvc(kind, options = {}) {
     const flow = data.agentWorkflow || state.currentWorkflow || {};
     const worker = String(flow.worker || flow.worker_name || "").trim().toLowerCase();
     if (worker !== "rvc_worker") {
-      setText("chat-error", "RVC Worker 尚未完成 Agent 交接，请稍后重试", true);
+      setText("chat-error", "变声任务还没准备好，请稍后再试", true);
       return;
     }
     state.pendingInput = {
@@ -3711,9 +4595,9 @@ async function runInlineRvc(kind, options = {}) {
       : kind === "separate" ? "separate_vocals" : "convert";
   const values = { action, ...options };
   // 上传恢复已经消耗过一次 confirmation.respond；确认处理是新的 worker action。
-  state.confirmationResponded = false;
+  resetConfirmationResponseLock();
   data.sourceConfirmed = action !== "prepare_and_separate";
-  data.state = { ...(data.state || {}), phase: action === "convert" ? "converting" : "processing", progress: 0, message: "正在提交给 RVC Worker…" };
+  data.state = { ...(data.state || {}), phase: action === "convert" ? "converting" : "processing", progress: 0, message: "正在开始处理" };
   state.pendingInputValues = { ...(state.pendingInputValues || {}), ...values };
   renderRvcInline();
   try {
@@ -3729,7 +4613,7 @@ async function runInlineRvc(kind, options = {}) {
       return;
     }
     const result = await resumeAgent(null, { forceHttp: true });
-    if (!result) throw new Error("RVC Worker 未接受当前操作，请重新点击确认处理");
+    if (!result) throw new Error("没有开始处理，请再点一次");
     // HTTP resume 的返回结构可能把 session_id 放在 workflow、result 或
     // worker_results 内。先把返回结果同步回当前气泡，再开始轮询；否则
     // 旧逻辑会在没有 session_id 时永远停留在乐观的 0%。
@@ -3749,7 +4633,7 @@ async function runInlineRvc(kind, options = {}) {
       // Worker 只负责接受并启动后台 session。前端观察 session，终态后
       // 再用一次明确的 session_status 恢复 Agent，不能在本次 resume 中等待。
       liveData.sessionStatusResumeSent = false;
-      liveData.state = { ...(liveData.state || {}), phase: "accepted", message: "已提交 RVC Worker，等待音频处理状态…" };
+      liveData.state = { ...(liveData.state || {}), phase: "accepted", message: "正在处理" };
       renderRvcInline();
       void waitInlineRvcSession(["separated"]);
     }
@@ -3816,7 +4700,7 @@ async function cancelInlineRvc() {
   } catch (error) { errors.push(error); }
   if (shouldResumeAgent) {
     state.pendingInputValues = { action: "cancel" };
-    void resumeAgent(null, { forceHttp: true }).catch((error) => setText("chat-error", `Agent 取消确认失败：${error.message || error}`, true));
+    void resumeAgent(null, { forceHttp: true }).catch((error) => setText("chat-error", `停止失败：${error.message || error}`, true));
   } else if (realtimeTurnWasActive) {
     if (!sendRealtime({ type: "generation.cancel" })) errors.push(new Error("实时连接不可用"));
   }
@@ -3824,5 +4708,5 @@ async function cancelInlineRvc() {
   data.state = { ...(data.state || {}), phase: "cancelled", status: "cancelled", message: "任务已中止" };
   data.cancelling = false;
   renderRvcInline();
-  if (errors.length) setText("chat-error", `任务已停止，但 Agent 未确认取消：${errors[0].message || errors[0]}`, true);
+  if (errors.length) setText("chat-error", `任务已停止：${errors[0].message || errors[0]}`, true);
 }

@@ -7,9 +7,9 @@ def test_negated_knowledge_and_web_intents_are_not_selected():
     result = analyze_intents("不要查资料，也不用联网，直接陪我聊聊")
 
     assert result.primary == "conversation"
-    assert "knowledge" not in result.candidates
+    assert "knowledge_worker" not in result.candidates
     assert "web" not in result.candidates
-    assert set(result.negated) >= {"knowledge", "web"}
+    assert set(result.negated) >= {"knowledge_worker", "web"}
 
 
 def test_multiple_intents_are_scanned_without_early_exit():
@@ -17,8 +17,8 @@ def test_multiple_intents_are_scanned_without_early_exit():
 
     result = analyze_intents("根据角色资料说明她的经历，再查一下今天北京天气")
 
-    assert result.primary == "knowledge"
-    assert result.candidates == ("knowledge", "web")
+    assert result.primary == "knowledge_worker"
+    assert result.candidates == ("knowledge_worker", "web")
 
 
 def test_explicit_ui_command_is_structured_without_calling_a_model():

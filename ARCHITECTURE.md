@@ -29,19 +29,19 @@ flowchart TD
   R -->|模糊 / knowledge / web| S[persona_supervisor]
   S -->|直接回答| END([父图 END])
   R -->|强意图| S
-  S -->|delegate_to_knowledge| K[knowledge 子图]
-  S -->|delegate_to_memory| M[memory Worker]
-  S -->|delegate_to_document| D[document Worker]
-  S -->|delegate_to_profile| P[profile Worker]
-  S -->|delegate_to_voice| V[voice Worker]
-  S -->|delegate_to_live2d| L[live2d Worker]
+  S -->|delegate_to_knowledge_worker| K[knowledge_worker 子图]
+  S -->|delegate_to_memory_worker| M[memory_worker]
+  S -->|delegate_to_document_worker| D[document_worker]
+  S -->|delegate_to_profile_worker| P[profile_worker]
+  S -->|delegate_to_voice_worker| V[voice_worker]
+  S -->|delegate_to_live2d_worker| L[live2d_worker]
   S -->|delegate_to_config| C[config Worker]
-  K --> FK[finalize_knowledge]
-  M --> FM[finalize_memory]
-  D --> FD[finalize_document]
-  P --> FP[finalize_profile]
-  V --> FV[finalize_voice]
-  L --> FL[finalize_live2d]
+  K --> FK[finalize_knowledge_worker]
+  M --> FM[finalize_memory_worker]
+  D --> FD[finalize_document_worker]
+  P --> FP[finalize_profile_worker]
+  V --> FV[finalize_voice_worker]
+  L --> FL[finalize_live2d_worker]
   C --> FC[finalize_config]
   FK --> S
   FM --> S
@@ -64,8 +64,8 @@ flowchart TD
 stateDiagram-v2
     [*] --> Supervisor
     Supervisor --> Completed: 直接回答
-    Supervisor --> KnowledgePlan: delegate_to_knowledge
-    Supervisor --> ToolWorker: delegate_to_memory/document/profile/voice/live2d/config_worker
+    Supervisor --> KnowledgePlan: delegate_to_knowledge_worker
+    Supervisor --> ToolWorker: delegate_to_memory_worker/document_worker/profile_worker/voice_worker/live2d_worker/config_worker
     KnowledgePlan --> KnowledgeRetrieve
     KnowledgeRetrieve --> KnowledgeFallback
     KnowledgeFallback --> FinalizeKnowledge
@@ -120,13 +120,13 @@ RAG / SQL / web 都是确定性管线，不是 Worker 自由总结。
 
 ### 受限工具 Worker
 
-`memory` / `document` / `profile` / `voice` / `live2d` / `config_worker` 是 `create_agent` 子图：各自 LLM、各自受限工具、各自 prompt，经 `finalize_*` 回 Supervisor。Worker 之间不互相调用，继续由 Supervisor 编排。
+`memory_worker` / `document_worker` / `profile_worker` / `voice_worker` / `live2d_worker` / `config_worker` 是 `create_agent` 子图：各自 LLM、各自受限工具、各自 prompt，经 `finalize_*` 回 Supervisor。Worker 之间不互相调用，继续由 Supervisor 编排。
 
-URL 导入文档属于 `document`，不属于 knowledge 检索子图。
+URL 导入文档属于 `document_worker`，不属于 knowledge 检索子图。
 
 ### finalize_*
 
-- knowledge：只拷贝白名单合同字段；`status=accepted` 才把答案和证据交给 Supervisor，`insufficient` 只保留不确定性。
+- knowledge_worker：只拷贝白名单合同字段；`status=accepted` 才把答案和证据交给 Supervisor，`insufficient` 只保留不确定性。
 - 其他 Worker：把内部结果收成交接摘要，回填原始 handoff `tool_call_id`。
 
 ## 5. 权限、确认与状态

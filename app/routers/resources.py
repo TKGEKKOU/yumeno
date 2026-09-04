@@ -20,8 +20,19 @@ def _guard(request: Request, header: str) -> None:
     if header != "web":
         raise HTTPException(status_code=403, detail="Missing same-origin request header")
 
+def _canonical_provider_id(provider_id: str) -> str:
+    return {
+        "stt": "asr",
+        "local_stt": "asr",
+        "local_embedding": "embedding",
+        "local_rerank": "reranker",
+        "tts": "gpt_sovits",
+        "gsv_tts_local": "gpt_sovits",
+    }.get(provider_id, provider_id)
+
+
 def _resource(request: Request, provider_id: str):
-    provider_id = {"stt": "asr", "local_stt": "asr", "local_embedding": "embedding", "local_rerank": "reranker", "tts": "gpt_sovits", "gsv_tts_local": "gpt_sovits"}.get(provider_id, provider_id)
+    provider_id = _canonical_provider_id(provider_id)
     mapping = {
         "embedding": "embedding_resources", "local_embedding": "embedding_resources",
         "reranker": "reranker_resources", "local_rerank": "reranker_resources",
@@ -40,6 +51,67 @@ def _resource(request: Request, provider_id: str):
 def _status(resource: Any) -> dict[str, Any]:
     value = resource.status() if callable(getattr(resource, "status", None)) else {}
     return value if isinstance(value, dict) else {"value": value}
+
+def _gpt_sovits_status(request: Request) -> dict[str, Any]:
+    """Return one authoritative GPT-SoVITS resource status.
+
+    Installation files and the API service are deliberately owned by different
+    components. ``installed`` means the distribution is present; ``ready``
+    additionally requires a complete installation and a live API service.
+    """
+
+    installation = _status(request.app.state.gpt_sovits_install)
+    adapter = getattr(request.app.state, "gpt_sovits", None)
+    service = _status(adapter) if adapter is not None else {}
+    # The adapter probes the configured installation (which may be external),
+    # while the installer probes only YUMENO's managed directory. If no external
+    # installation is configured, the managed installation remains authoritative.
+    configured = bool(service.get("configured", False)) if adapter is not None else bool(
+        installation.get("external_configured", False)
+    )
+    probe_status = service if adapter is not None and configured else installation
+    missing = list(probe_status.get("missing", []))
+    installed = bool(probe_status.get("installed", False))
+    installation_ready = bool(probe_status.get("installation_ready", False))
+    service_running = bool(service.get("service_running", False))
+    if installation.get("installing"):
+        next_action = "wait"
+    elif not installed:
+        next_action = "install"
+    elif adapter is not None and not configured:
+        # A managed directory can exist before its path is persisted in the
+        # GPT-SoVITS config. It is installed, but not yet selectable by the
+        # service adapter. Keep this distinct from a missing installation.
+        missing = ["安装配置"]
+        next_action = "check"
+    elif missing or not installation_ready:
+        next_action = "check"
+    elif not service_running:
+        next_action = "start_service"
+    else:
+        next_action = "none"
+    return {
+        **installation,
+        **service,
+        "configured": configured,
+        "installed": installed,
+        "installation_ready": installation_ready,
+        "ready": installation_ready and service_running,
+        "service_running": service_running,
+        "missing": missing,
+        "next_action": next_action,
+        "error": installation.get("error") or service.get("error") or "",
+        "installing": bool(installation.get("installing", False)),
+        # A configured external installation is the adapter's source of truth.
+        "install_dir": service.get("install_dir") or installation.get("install_dir"),
+    }
+
+
+def _resource_status(request: Request, provider_id: str) -> dict[str, Any]:
+    if _canonical_provider_id(provider_id) == "gpt_sovits":
+        return _gpt_sovits_status(request)
+    return _status(_resource(request, provider_id))
+
 
 def _task_payload(row: ProviderDownloadTask, status: dict[str, Any] | None = None) -> dict[str, Any]:
     """Serialize a task without replacing terminal history with live provider state.
@@ -60,7 +132,7 @@ def _task_payload(row: ProviderDownloadTask, status: dict[str, Any] | None = Non
     status_name = row.status
     if live and status.get("installing"):
         status_name = "downloading" if status.get("phase") in {"downloading", "download"} else "installing"
-    elif live and (status.get("ready") or status.get("installed")):
+    elif live and status.get("ready"):
         status_name = "ready"
     phase = status.get("phase", row.phase) if live else row.phase
     current_file = status.get("current_file", telemetry.get("current_file", "")) if live else telemetry.get("current_file", "")
@@ -86,7 +158,7 @@ def _task_payload(row: ProviderDownloadTask, status: dict[str, Any] | None = Non
 
 def _sync_task(request: Request, row: ProviderDownloadTask) -> dict[str, Any]:
     try:
-        value = _status(_resource(request, row.provider_id))
+        value = _resource_status(request, row.provider_id)
     except HTTPException:
         value = {}
     if row.status in _ACTIVE:
@@ -133,7 +205,7 @@ def _install(request: Request, provider_id: str, payload: dict[str, Any] | None 
     with request.app.state.session_factory() as session:
         existing = session.scalar(select(ProviderDownloadTask).where(ProviderDownloadTask.provider_id == provider_id, ProviderDownloadTask.status.in_(_ACTIVE)).order_by(ProviderDownloadTask.created_at.desc()))
         if existing:
-            return _task_payload(existing, _status(resource))
+            return _task_payload(existing, _resource_status(request, provider_id))
         payload.setdefault("resource_name", {"rvc": "RVC", "separator": "人声分离"}.get(provider_id, provider_id))
         row = ProviderDownloadTask(id=str(uuid4()), provider_id=provider_id, resource_kind=provider_id, operation="install", status="preparing", phase="preparing", parameters_json=payload)
         session.add(row); session.commit(); session.refresh(row)
@@ -142,7 +214,7 @@ def _install(request: Request, provider_id: str, payload: dict[str, Any] | None 
             current = _status(resource)
             resource.start_install(payload.get("model_id") or current.get("model_id", ""), payload.get("source", current.get("source", "modelscope")), payload.get("device", current.get("device", "auto")))
         elif provider_id == "gpt_sovits":
-            current = _status(resource)
+            current = _resource_status(request, provider_id)
             url = payload.get("url") or current.get("download_url")
             if not url:
                 raise ValueError("GPT-SoVITS 尚未配置下载源")
@@ -245,12 +317,13 @@ def resource_catalog(request: Request, x_yumeno_request: str = Header(default=""
         ("gpt_sovits", "GPT-SoVITS 运行环境"),
         ("ffmpeg", "FFmpeg 音视频处理资源"),
         ("embedding", "Embedding 本地模型"),
+        ("reranker", "Reranker 本地模型"),
     ]
     items = []
     for provider_id, title in definitions:
         try:
             manager = _resource(request, provider_id)
-            status = _status(manager)
+            status = _resource_status(request, provider_id)
         except HTTPException:
             continue
         clean = any(callable(getattr(manager, name, None)) for name in ("remove_managed", "remove_models", "remove_install", "remove_model", "remove"))
@@ -261,26 +334,28 @@ def resource_catalog(request: Request, x_yumeno_request: str = Header(default=""
 @router.get("/{provider_id}/status")
 def resource_status(provider_id: str, request: Request, x_yumeno_request: str = Header(default="")):
     _guard(request, x_yumeno_request)
-    return {"provider_id": provider_id, "resource_kind": provider_id, "status": _status(_resource(request, provider_id))}
+    canonical = _canonical_provider_id(provider_id)
+    return {"provider_id": canonical, "resource_kind": canonical, "status": _resource_status(request, provider_id)}
 
 @router.delete("/{provider_id}/install/cancel", status_code=202)
 def cancel_resource_install(provider_id: str, request: Request, x_yumeno_request: str = Header(default="")):
     _guard(request, x_yumeno_request)
     resource = _resource(request, provider_id)
-    status = _status(resource)
+    status = _resource_status(request, provider_id)
     if not status.get("installing"):
         return {"provider_id": provider_id, "resource_kind": provider_id, "status": status}
     cancel = getattr(resource, "cancel_install", None)
     if not callable(cancel):
         raise HTTPException(status_code=405, detail="该资源不支持停止安装")
     cancel()
-    return {"provider_id": provider_id, "resource_kind": provider_id, "status": _status(resource)}
+    canonical = _canonical_provider_id(provider_id)
+    return {"provider_id": canonical, "resource_kind": canonical, "status": _resource_status(request, provider_id)}
 
 @router.delete("/{provider_id}/install")
 def remove_resource(provider_id: str, request: Request, x_yumeno_request: str = Header(default="")):
     _guard(request, x_yumeno_request)
     resource = _resource(request, provider_id)
-    if _status(resource).get("installing"):
+    if _resource_status(request, provider_id).get("installing"):
         raise HTTPException(status_code=409, detail="资源正在安装，请先停止安装")
     method = getattr(resource, "remove_managed", None) or getattr(resource, "remove_models", None) or getattr(resource, "remove_install", None) or getattr(resource, "remove_model", None) or getattr(resource, "remove", None)
     if not callable(method):

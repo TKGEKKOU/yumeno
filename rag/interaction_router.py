@@ -38,7 +38,7 @@ def route_interaction(question: str, enable_web_search: bool) -> InteractionMode
     analysis = analyze_intents(question)
     if analysis.primary == "web" and enable_web_search:
         return "web"
-    if analysis.primary in {"management", "memory", "knowledge"}:
+    if analysis.primary in {"management", "memory_worker", "knowledge_worker"}:
         return "knowledge"
     if analysis.primary == "capability":
         return "capability"
@@ -52,7 +52,7 @@ def route_interaction_for_tests(question: str, enable_web_search: bool) -> Inter
     analysis = analyze_intents(question)
     if analysis.primary == "web" and enable_web_search:
         return "web"
-    if analysis.primary in {"management", "memory", "knowledge"}:
+    if analysis.primary in {"management", "memory_worker", "knowledge_worker"}:
         return "knowledge"
     if analysis.primary == "capability":
         return "capability"

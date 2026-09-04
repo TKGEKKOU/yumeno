@@ -54,3 +54,12 @@ def test_native_loop_cancel_marks_job_and_stream_emits_terminal_cancel():
 
 def test_native_loop_cancel_unknown_job_is_safe():
     assert NativeAgentLoop(FakeService()).cancel("missing") is False
+
+def test_native_loop_keeps_finished_jobs_queryable():
+    engine = NativeAgentLoop(FakeService())
+    engine.query("hello", "ctx", job_id="job-1")
+    assert engine.active_jobs() == ()
+    finished = engine.get_job("job-1")
+    assert finished is not None
+    assert finished.status == "completed"
+    assert finished.job_id == "job-1"

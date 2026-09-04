@@ -104,6 +104,26 @@ const rvcProvider = computed(() => providers.value.find(p => p.id === "rvc"));
 const separatorProvider = computed(() => providers.value.find(p => p.id === "separator"));
 const ffmpegStatus = ref<Record<string, unknown>>({});
 const selectedProvider = computed(() => providers.value.find(p => p.id === configuring.value));
+const resourceConfigKind = computed(() => {
+  const id = selectedProvider.value?.id;
+  if (id === "local_embedding") return "embedding";
+  if (id === "local_rerank") return "reranker";
+  if (id === "local_stt") return "stt";
+  if (id === "gsv_tts_local") return "gpt_sovits";
+  if (id === "separator") return "separator";
+  return "none";
+});
+function resourceConfigHint() {
+  switch (resourceConfigKind.value) {
+    case "embedding": return "用于知识库向量化；安装前可选择模型来源和运行设备。";
+    case "reranker": return "用于检索结果重排；未安装时仍可使用 RRF 融合，不会阻断检索。";
+    case "stt": return "本地语音识别由系统按固定清单准备，不需要在此重复填写模型参数。";
+    case "gpt_sovits": return "引擎按需启动；安装完成后，声音资产仍在“声音”模块管理。";
+    case "separator": return "人声分离使用应用已验证的固定模型，不需要填写通用模型来源或设备。";
+    default: return "";
+  }
+}
+
 
 const resourceHandlers: Record<string, { status: string; install?: string; cancel?: string; remove?: string; directory?: string; start?: string; stop?: string }> = {
   local_embedding: { status: "/api/embedding/status", install: "/api/embedding/install", cancel: "/api/embedding/install/cancel", remove: "/api/embedding/model", directory: "/api/embedding/model-directory" },
@@ -252,7 +272,7 @@ async function saveConfig() {
   try {
     const response = await fetch("/api/providers/configure", {
       method: "POST", headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" },
-      body: JSON.stringify(configForm.value),
+      body: JSON.stringify(providerConfigPayload()),
     });
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
@@ -265,7 +285,23 @@ async function saveConfig() {
 }
 
 function resourcePayload() {
-  return { model_id: configForm.value.model, source: configForm.value.source || "modelscope", device: configForm.value.device || "auto" };
+  switch (resourceConfigKind.value) {
+    case "embedding":
+    case "reranker":
+      return { model_id: configForm.value.model, source: configForm.value.source || "modelscope", device: configForm.value.device || "auto" };
+    case "gpt_sovits": return { url: installUrl.value.trim() };
+    default: return {};
+  }
+}
+function providerConfigPayload() {
+  const value = { ...configForm.value };
+  if (selectedProvider.value?.mode === "local") {
+    if (!["embedding", "reranker"].includes(resourceConfigKind.value)) {
+      delete value.model; delete value.source; delete value.device;
+    }
+    delete value.api_key; delete value.base_url;
+  }
+  return value;
 }
 
 async function callResource(provider: Provider, action: "install" | "cancel" | "remove" | "directory" | "start" | "stop") {
@@ -275,11 +311,11 @@ async function callResource(provider: Provider, action: "install" | "cancel" | "
   try {
     const method = action === "remove" || action === "cancel" ? "DELETE" : action === "directory" && provider.id === "rvc" ? "GET" : action === "install" || action === "directory" || action === "start" || action === "stop" ? "POST" : "GET";
     let body: string | undefined;
-    if (action === "install") body = provider.id === "gsv_tts_local" ? JSON.stringify({ url: installUrl.value }) : provider.id === "local_stt" ? undefined : JSON.stringify(resourcePayload());
+    if (action === "install") body = provider.id === "gsv_tts_local" ? JSON.stringify({ url: installUrl.value.trim() }) : provider.id === "local_stt" ? undefined : JSON.stringify(resourcePayload());
     let response: Response;
     if (action === "install" && provider.mode === "local") {
       const unifiedUrl = `/api/resources/${encodeURIComponent(provider.id)}/install`;
-      response = await fetch(unifiedUrl, { method: "POST", headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" }, body: JSON.stringify({ parameters: provider.id === "gsv_tts_local" ? { url: installUrl.value } : resourcePayload() }) });
+      response = await fetch(unifiedUrl, { method: "POST", headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" }, body: JSON.stringify({ parameters: provider.id === "gsv_tts_local" ? { url: installUrl.value.trim() } : resourcePayload() }) });
       // 老版本后端没有统一资源路由时，回退到原 Provider 安装接口。
       if (response.status === 404 || response.status === 405) response = await fetch(url, { method, headers: { "Content-Type": "application/json", "X-YUMENO-Request": "web" }, body });
     } else {
@@ -448,7 +484,7 @@ onBeforeUnmount(() => {
         <div class="drawer-body"><div class="drawer-status"><span :class="['status-chip', { on: selectedProvider?.is_active }]">{{ selectedProvider?.is_active ? '当前启用' : selectedProvider?.runtime_supported ? '可用' : '仅保存配置' }}</span><span>{{ selectedProvider?.mode === 'local' ? '本地资源' : 'API 接口' }}</span></div>
           <form @submit.prevent="saveConfig" class="config-form">
             <template v-if="selectedProvider?.mode === 'api'"><label v-if="selectedProvider.requires_api_key" class="field"><span>API Key <span class="required">*</span></span><input type="text" v-model="configForm.api_key" placeholder="输入 API Key" required autocomplete="off" /></label><label class="field"><span>Base URL</span><input type="text" v-model="configForm.base_url" :placeholder="selectedProvider.default_base_url" /></label><label class="field"><span>模型名称</span><input type="text" v-model="configForm.model" :placeholder="selectedProvider.default_model" /></label></template>
-            <template v-else><label v-if="selectedProvider?.id !== 'gsv_tts_local'" class="field"><span>模型 ID</span><input type="text" v-model="configForm.model" :placeholder="selectedProvider?.default_model" /></label><div v-if="selectedProvider?.id !== 'gsv_tts_local'" class="form-row"><label class="field"><span>来源</span><select v-model="configForm.source"><option value="modelscope">ModelScope</option><option value="huggingface">Hugging Face</option></select></label><label class="field"><span>设备</span><select v-model="configForm.device"><option value="auto">自动</option><option value="cuda">CUDA</option><option value="cpu">CPU</option></select></label></div><div v-else class="resource-install-form"><label class="field"><span>GPT-SoVITS 整合包下载地址</span><input type="text" v-model="installUrl" placeholder="https://…/gpt-sovits.zip" /></label><p class="config-hint">引擎安装完成后，声音资产仍在“声音”模块单独管理。</p></div><div class="resource-controls"><div><span class="meta-label">资源状态</span><strong>{{ selectedProvider ? resourceLabel(selectedProvider) : '未知' }}</strong></div><div class="resource-control-actions"><button v-if="resourceInstalling(selectedProvider!)" type="button" class="button button-secondary" @click="callResource(selectedProvider!, 'cancel')" :disabled="resourceAction !== null">取消安装</button><button v-else-if="!resourceReady(selectedProvider!)" type="button" class="button button-primary" @click="callResource(selectedProvider!, 'install')" :disabled="resourceAction !== null || (selectedProvider?.id === 'gsv_tts_local' && !installUrl)"><Download :size="15" /> 安装资源</button><button v-if="resourceReady(selectedProvider!)" type="button" class="button button-secondary" @click="callResource(selectedProvider!, 'remove')" :disabled="resourceAction !== null"><Trash2 :size="15" /> 删除</button><button type="button" class="button button-secondary" @click="callResource(selectedProvider!, 'directory')" :disabled="resourceAction !== null"><FolderOpen :size="15" /> 打开目录</button><button v-if="selectedProvider?.id === 'gsv_tts_local' && selectedProvider.resource_status?.service_running" type="button" class="button button-secondary" @click="callResource(selectedProvider, 'stop')" :disabled="resourceAction !== null">停止服务</button><button v-else-if="selectedProvider?.id === 'gsv_tts_local' && resourceReady(selectedProvider)" type="button" class="button button-primary" @click="callResource(selectedProvider, 'start')" :disabled="resourceAction !== null"><ExternalLink :size="15" /> 启动服务</button></div></div></template>
+            <template v-else><div class="resource-config-intro"><span class="meta-label">资源配置</span><p v-if="resourceConfigHint()" class="config-hint">{{ resourceConfigHint() }}</p></div><template v-if="resourceConfigKind === 'embedding' || resourceConfigKind === 'reranker'"><label class="field"><span>{{ resourceConfigKind === 'embedding' ? '向量模型 ID' : '精排模型 ID' }}</span><input type="text" v-model="configForm.model" :placeholder="selectedProvider?.default_model" /></label><div class="form-row"><label class="field"><span>模型来源</span><select v-model="configForm.source"><option value="modelscope">ModelScope</option><option value="huggingface">Hugging Face</option></select></label><label class="field"><span>运行设备</span><select v-model="configForm.device"><option value="auto">自动（GPU 优先）</option><option value="cuda">CUDA</option><option value="cpu">CPU</option></select></label></div></template><div v-else-if="resourceConfigKind === 'gpt_sovits'" class="resource-install-form"><label class="field"><span>整合包下载地址</span><input type="url" v-model="installUrl" placeholder="https://…/gpt-sovits.zip" /></label></div><div v-else-if="resourceConfigKind === 'stt'" class="resource-config-readonly"><span>固定资源清单</span><strong>Qwen3-ASR-0.6B + FFmpeg</strong></div><div v-else-if="resourceConfigKind === 'separator'" class="resource-config-readonly"><span>固定资源</span><strong>HT-Demucs 人声分离模型 · 约 165 MB</strong></div><div class="resource-controls"><div><span class="meta-label">资源状态</span><strong>{{ selectedProvider ? resourceLabel(selectedProvider) : '未知' }}</strong></div><div class="resource-control-actions"><button v-if="resourceInstalling(selectedProvider!)" type="button" class="button button-secondary" @click="callResource(selectedProvider!, 'cancel')" :disabled="resourceAction !== null">取消安装</button><button v-else-if="!resourceReady(selectedProvider!)" type="button" class="button button-primary" @click="callResource(selectedProvider!, 'install')" :disabled="resourceAction !== null || (selectedProvider?.id === 'gsv_tts_local' && !installUrl)"><Download :size="15" /> 安装资源</button><button v-if="resourceReady(selectedProvider!)" type="button" class="button button-secondary" @click="callResource(selectedProvider!, 'remove')" :disabled="resourceAction !== null"><Trash2 :size="15" /> 删除</button><button type="button" class="button button-secondary" @click="callResource(selectedProvider!, 'directory')" :disabled="resourceAction !== null"><FolderOpen :size="15" /> 打开目录</button><button v-if="selectedProvider?.id === 'gsv_tts_local' && selectedProvider.resource_status?.service_running" type="button" class="button button-secondary" @click="callResource(selectedProvider, 'stop')" :disabled="resourceAction !== null">停止服务</button><button v-else-if="selectedProvider?.id === 'gsv_tts_local' && resourceReady(selectedProvider)" type="button" class="button button-primary" @click="callResource(selectedProvider, 'start')" :disabled="resourceAction !== null"><ExternalLink :size="15" /> 启动服务</button></div></div></template>
             <label class="field checkbox-field"><input type="checkbox" v-model="configForm.enabled" :disabled="!selectedProvider?.runtime_supported" /><span>设为当前激活供应商</span></label><p v-if="selectedProvider && !selectedProvider.runtime_supported" class="config-hint">当前运行时还没有这个 Provider 的适配器，因此这里只保存配置，不会自动调用。</p><div class="modal-actions"><button type="button" class="button button-secondary" @click="closeConfig">取消</button><button type="submit" class="button button-primary" :disabled="loading">{{ loading ? '保存中...' : '保存并应用' }}</button></div><p v-if="saveStatus" class="config-success"><Check :size="16" /> {{ saveStatus }}</p><p v-if="testStatus" :class="['config-message', testStatus.startsWith('连接成功') ? 'success' : 'error']">{{ testStatus }}</p><p v-if="error" class="config-error">{{ error }}</p>
           </form>
         </div>
@@ -507,4 +543,12 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation-duration:.01ms!important; transition-duration:.01ms!important; scroll-behavior:auto!important; } }
 
 .download-center { margin:0 auto 28px; max-width:1180px; }.download-summary { width:100%; display:flex; align-items:center; gap:14px; padding:9px 12px; border:1px solid var(--cyan); background:linear-gradient(100deg,#f0fbfd,#fff 65%); color:var(--ink); text-align:left; cursor:pointer; }.download-summary:hover { box-shadow:0 8px 24px rgba(0,150,190,.10); }.download-summary-icon { display:grid; place-items:center; width:34px; height:34px; color:#0785a3; border:1px solid #8ed8e5; }.download-summary-copy { display:flex; flex-direction:column; gap:3px; min-width:0; flex:1; }.download-summary-copy strong { font-size:13px; }.download-summary-copy span { color:var(--muted); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.download-summary-progress { width:130px; display:flex; align-items:center; gap:8px; font:11px monospace; }.download-summary-progress i,.task-progress { display:block; overflow:hidden; height:5px; flex:1; background:#dff1f4; }.download-summary-progress em,.task-progress i { display:block; height:100%; background:var(--cyan); transition:width .3s ease; }.download-summary-arrow { color:#087a9a; font-size:11px; white-space:nowrap; }.download-drawer { width:min(620px,100%); }.download-list { display:flex; flex-direction:column; gap:12px; }.download-task { padding:15px; border:1px solid var(--line); background:#fbfcfc; }.download-task-head { display:flex; justify-content:space-between; gap:12px; }.download-task-head div { display:flex; flex-direction:column; gap:5px; }.download-task-head span,.download-task-meta { color:var(--muted); font-size:11px; }.download-task-head b { color:#0785a3; font:14px monospace; }.task-progress { margin:12px 0 10px; height:6px; }.download-task-meta { display:flex; flex-wrap:wrap; gap:5px 14px; line-height:1.5; }.task-error { color:var(--danger); flex-basis:100%; }.download-task-actions { display:flex; justify-content:flex-end; margin-top:12px; }.task-ready .download-task-head b { color:var(--ok); }.task-failed { border-color:#ecc2bf; background:#fffafa; }
+</style>
+
+<style>
+.providers-settings .resource-config-intro { margin: 2px 0 14px; padding: 12px 14px; border: 1px solid var(--line); background: var(--paper); }
+.providers-settings .resource-config-intro .config-hint { margin: 5px 0 0; }
+.providers-settings .resource-config-readonly { display: grid; gap: 5px; margin: 4px 0 16px; padding: 13px 14px; border: 1px solid var(--line); background: #fbfdfd; }
+.providers-settings .resource-config-readonly span { color: var(--muted); font-size: 11px; }
+.providers-settings .resource-config-readonly strong { font-size: 13px; font-weight: 650; }
 </style>

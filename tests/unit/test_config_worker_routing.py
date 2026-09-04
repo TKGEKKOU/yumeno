@@ -24,3 +24,9 @@ def test_configuration_advisory_metadata_survives_graph_state_round_trip():
     assert restored.configuration_hint is True
     assert restored.configuration_subject == "rvc"
     assert restored.requested_action == "status"
+
+def test_reranker_configuration_subject_is_advisory():
+    result = analyze_intents("检查 reranker 是否配置完成")
+    assert result.configuration_hint is True
+    assert result.configuration_subject == "reranker"
+    assert result.requested_action == "status"

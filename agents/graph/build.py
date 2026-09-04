@@ -25,12 +25,12 @@ from agents.tools.structured_query import query_structured_data_for_context
 
 
 _DIRECT_STAGE_LABELS = {
-    "memory": "已识别为记忆请求，正在检查记忆…",
-    "document": "已识别为文档请求，正在处理知识文档…",
-    "profile": "已识别为档案请求，正在更新角色档案…",
-    "voice": "已识别为声音系统请求，正在准备处理…",
+    "memory_worker": "已识别为记忆请求，正在检查记忆…",
+    "document_worker": "已识别为文档请求，正在处理知识文档…",
+    "profile_worker": "已识别为档案请求，正在更新角色档案…",
+    "voice_worker": "已识别为声音系统请求，正在准备处理…",
     "rvc_worker": "正在分析请求…",
-    "live2d": "已识别为 Live2D 请求，正在准备处理…",
+    "live2d_worker": "已识别为 Live2D 请求，正在准备处理…",
     "config_worker": "已识别为配置请求，正在检查资源…",
 }
 
@@ -131,7 +131,7 @@ def build_persona_workflow(
     for worker in WORKERS:
         worker_node = worker_node_name(worker)
         finalize_node = f"finalize_{worker}"
-        if worker == "knowledge":
+        if worker == "knowledge_worker":
             builder.add_node(
                 worker_node,
                 _knowledge_subgraph(

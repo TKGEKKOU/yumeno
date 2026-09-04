@@ -112,14 +112,41 @@ class GPTSoVITSInstallManager:
     def status(self) -> dict:
         probe = probe_installation(self.install_dir if self.install_dir.is_dir() else None)
         snapshot = self.state.snapshot()
+        installed = self._has_installation_files(probe.install_dir)
+        installation_ready = probe.ok
+        if snapshot["installing"]:
+            next_action = "wait"
+        elif not installed:
+            next_action = "install"
+        elif not installation_ready:
+            next_action = "check"
+        else:
+            # This manager owns the distribution files, not the API process.
+            # The resource API combines this with the adapter service status.
+            next_action = "start_service"
         return {
             **snapshot,
-            "installed": probe.ok,
+            "installed": installed,
+            "installation_ready": installation_ready,
+            "ready": False,
+            "service_running": False,
+            "missing": list(probe.missing),
+            "next_action": next_action,
+            "error": snapshot["error"] or probe.error,
             "install_dir": str(self.install_dir),
             "patches_dir": str(self.patches_dir) if self.patches_dir.is_dir() else "",
             "external_configured": bool(self.config.values()["install_dir"]),
             "download_url": self.config.values().get("download_url"),
         }
+
+    @staticmethod
+    def _has_installation_files(install_dir: Path | None) -> bool:
+        if not install_dir or not install_dir.is_dir():
+            return False
+        try:
+            return any(install_dir.iterdir())
+        except OSError:
+            return False
 
     def remove_install(self) -> dict:
         """Delete the project-bundled GPT-SoVITS engine and clear the config."""

@@ -11,13 +11,13 @@ from __future__ import annotations
 from agents.graph.state import WORKERS
 
 _WORKER_NODES = {
-    "knowledge": ("K", "knowledge 子图"),
-    "memory": ("M", "memory Worker"),
-    "document": ("D", "document Worker"),
-    "profile": ("P", "profile Worker"),
-    "voice": ("V", "voice Worker"),
+    "knowledge_worker": ("K", "knowledge_worker 子图"),
+    "memory_worker": ("M", "memory_worker"),
+    "document_worker": ("D", "document_worker"),
+    "profile_worker": ("P", "profile_worker"),
+    "voice_worker": ("V", "voice_worker"),
     "rvc_worker": ("RV", "rvc_worker Worker"),
-    "live2d": ("L", "live2d Worker"),
+    "live2d_worker": ("L", "live2d_worker"),
     "config_worker": ("C", "config_worker Worker"),
 }
 

@@ -5,11 +5,21 @@ from typing import Any, Literal, NotRequired, TypedDict
 from langgraph.graph import MessagesState
 
 
-Worker = Literal["knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config_worker"]
-WORKERS: tuple[Worker, ...] = ("knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config_worker")
+Worker = Literal["knowledge_worker", "memory_worker", "document_worker", "profile_worker", "voice_worker", "rvc_worker", "live2d_worker", "config_worker"]
+WORKERS: tuple[Worker, ...] = ("knowledge_worker", "memory_worker", "document_worker", "profile_worker", "voice_worker", "rvc_worker", "live2d_worker", "config_worker")
 
-# 只用于读取旧 checkpoint / 旧客户端状态；新图和新合同永远使用 canonical 名称。
-LEGACY_WORKER_ALIASES = {"voice_clone": "voice", "rvc": "rvc_worker", "config": "config_worker"}
+# 只用于读取旧 checkpoint / 旧客户端状态；新图和新合同永远使用带 _worker 后缀的 canonical 名称。
+LEGACY_WORKER_ALIASES = {
+    "knowledge": "knowledge_worker",
+    "memory": "memory_worker",
+    "document": "document_worker",
+    "profile": "profile_worker",
+    "voice": "voice_worker",
+    "voice_clone": "voice_worker",
+    "live2d": "live2d_worker",
+    "rvc": "rvc_worker",
+    "config": "config_worker",
+}
 
 
 class DispatchRequest(TypedDict, total=False):
@@ -44,8 +54,7 @@ def canonicalize_worker_name(value: str | None) -> str | None:
 def worker_node_name(worker: str) -> str:
     """Return the graph node name for a canonical worker.
 
-    Most historical workers are stored without the ``_worker`` suffix; RVC uses
-    the explicit public name ``rvc_worker``.
+    Canonical names already end with ``_worker``; aliases are normalized first.
     """
     canonical = canonicalize_worker_name(worker) or worker
     return canonical if canonical.endswith("_worker") else f"{canonical}_worker"

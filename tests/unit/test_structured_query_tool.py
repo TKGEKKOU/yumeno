@@ -39,7 +39,7 @@ def test_structured_query_tool_lists_schema_and_returns_standard_contract(tmp_pa
     )
 
     assert tables[0]["physical_name"] == table_name
-    assert result["specialist"] == "knowledge"
+    assert result["specialist"] == "knowledge_worker"
     assert result["status"] == "accepted"
     assert result["rows"][0] == ["b", 2]
     assert result["source"]["knowledge_space_id"] == "space-a"

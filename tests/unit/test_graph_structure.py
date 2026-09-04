@@ -65,7 +65,7 @@ def test_shadow_architecture_modules_are_removed():
 
 
 def test_workers_are_the_single_runtime_set():
-    assert WORKERS == ("knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config_worker")
+    assert WORKERS == ("knowledge_worker", "memory_worker", "document_worker", "profile_worker", "voice_worker", "rvc_worker", "live2d_worker", "config_worker")
     graph = build_persona_workflow(model=None, checkpointer=None)
     node_names = set(graph.get_graph().nodes)
     for worker in WORKERS:
@@ -186,12 +186,12 @@ def test_knowledge_is_not_an_llm_worker():
 
     context = _context()
     try:
-        _worker_prompt("knowledge", context)
+        _worker_prompt("knowledge_worker", context)
         raise AssertionError("knowledge prompt should be rejected")
     except RuntimeError as exc:
         assert "planner subgraph" in str(exc)
     try:
-        _worker_agent("knowledge", model=None)
+        _worker_agent("knowledge_worker", model=None)
         raise AssertionError("knowledge create_agent should be rejected")
     except RuntimeError as exc:
         assert "_knowledge_subgraph" in str(exc)

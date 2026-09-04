@@ -63,7 +63,7 @@ def _parse_knowledge_contract(message) -> dict | None:
         payload = message.content if isinstance(message.content, dict) else json.loads(str(message.content))
     except (json.JSONDecodeError, TypeError, ValueError):
         return None
-    if not isinstance(payload, dict) or payload.get("specialist") != "knowledge":
+    if not isinstance(payload, dict) or payload.get("specialist") != "knowledge_worker":
         return None
     if payload.get("status") not in {"accepted", "insufficient", "failed"}:
         return None
@@ -91,7 +91,7 @@ def _knowledge_specialist_result(messages: list) -> dict:
             if error_code and not error_message:
                 error_message = public_rag_error_message(error_code)
             return {
-                "specialist": "knowledge",
+                "specialist": "knowledge_worker",
                 "status": status,
                 "answer": str(payload.get("answer") or "") if status == "accepted" else "",
                 "evidence": list(payload.get("evidence") or []) if status == "accepted" else [],
@@ -107,7 +107,7 @@ def _knowledge_specialist_result(messages: list) -> dict:
             }
     # 工具没有产生合法合同意味着证据链不完整，必须失败关闭而不是回退到模型总结。
     return {
-        "specialist": "knowledge",
+        "specialist": "knowledge_worker",
         "status": "insufficient",
         "answer": "",
         "evidence": [],
@@ -213,7 +213,7 @@ def _accepted_web_payload(query: str, answer: str, results: list[dict]) -> dict:
         if isinstance(item, dict)
     ]
     return {
-        "specialist": "knowledge",
+        "specialist": "knowledge_worker",
         "status": "accepted",
         "answer": answer,
         "evidence": evidence,
@@ -366,7 +366,7 @@ def _merge_knowledge_updates(state: dict, updates: dict | None) -> dict:
 
 def _contract_payload(payload: dict, *, web_fallback: bool) -> dict:
     data = dict(payload or {})
-    data["specialist"] = "knowledge"
+    data["specialist"] = "knowledge_worker"
     data["web_fallback"] = bool(web_fallback)
     return data
 

@@ -75,7 +75,7 @@ def query_structured_data_for_context(
         all_tables.update(table["physical_name"] for table in tables)
     if not all_tables:
         return {
-            "specialist": "knowledge",
+            "specialist": "knowledge_worker",
             "status": "insufficient",
             "answer": "",
             "rows": [],
@@ -111,7 +111,7 @@ def query_structured_data_for_context(
         ensure_ascii=False,
     )
     return {
-        "specialist": "knowledge",
+        "specialist": "knowledge_worker",
         "answer": evidence_content,
         **data,
         "status": "accepted",

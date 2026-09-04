@@ -139,7 +139,7 @@ def request_config_change(
     runtime: ToolRuntime[PersonaAgentContext]
 ) -> Command:
     """
-    请求修改配置（触发 HITL 确认）。
+    请求调整配置（触发 HITL 确认）。
     
     Args:
         category: 配置类别
@@ -181,7 +181,7 @@ def request_config_change(
             "new_value": new_value,
             "warning": validation.get("warning"),
             "message": (
-                f"确认修改配置？\n"
+                f"确认调整配置？\n"
                 f"类别: {category}\n"
                 f"字段: {field}\n"
                 f"当前值: {current_value}\n"
@@ -200,7 +200,7 @@ def apply_config_change(
     runtime: ToolRuntime[PersonaAgentContext]
 ) -> dict[str, Any]:
     """
-    应用配置修改（用户确认后调用）。
+    应用配置调整（用户确认后调用）。
     
     Args:
         category: 配置类别
@@ -214,8 +214,29 @@ def apply_config_change(
     logger.warning("Blocked in-process config mutation attempt from agent tool")
     return {
         "status": "failed",
-        "reason": "配置修改必须使用设置页持久化，Agent 不能直接写入运行时配置。"
+        "reason": "配置调整必须使用设置页持久化，Agent 不能直接写入运行时配置。"
     }
+
+
+CANONICAL_RESOURCES = ("rvc", "separator", "asr", "gpt_sovits", "ffmpeg", "embedding", "reranker")
+RESOURCE_ALIASES = {
+    "stt": "asr",
+    "local_stt": "asr",
+    "local_embedding": "embedding",
+    "local_rerank": "reranker",
+    "tts": "gpt_sovits",
+    "gsv_tts_local": "gpt_sovits",
+    "vocal_separator": "separator",
+    "local_separator": "separator",
+    "rvc_local": "rvc",
+}
+_REMOVE_METHODS = ("remove_managed", "remove_models", "remove_install", "remove_model", "remove")
+_INSTALL_METHODS = ("start_install", "install")
+
+
+def _canonical_resource_key(resource: str) -> str:
+    key = str(resource or "").strip().lower().replace("-", "_")
+    return RESOURCE_ALIASES.get(key, key)
 
 
 def _resource_managers(runtime: ToolRuntime[PersonaAgentContext]) -> dict[str, Any]:
@@ -232,8 +253,26 @@ def _resource_managers(runtime: ToolRuntime[PersonaAgentContext]) -> dict[str, A
         "ffmpeg": getattr(app_state, "ffmpeg_resources", None),
         "asr": getattr(app_state, "asr_resources", None),
         "embedding": getattr(app_state, "embedding_resources", None),
+        "reranker": getattr(app_state, "reranker_resources", None),
         "gpt_sovits": getattr(app_state, "gpt_sovits_install", None),
         "separator": getattr(app_state, "separator_resources", None),
+    }
+
+
+def _first_callable(manager: Any, names: tuple[str, ...]):
+    for name in names:
+        method = getattr(manager, name, None)
+        if callable(method):
+            return method
+    return None
+
+
+def _resource_capabilities(manager: Any) -> dict[str, bool]:
+    return {
+        "status": callable(getattr(manager, "status", None)),
+        "install": _first_callable(manager, _INSTALL_METHODS) is not None,
+        "cancel": callable(getattr(manager, "cancel_install", None)),
+        "clean": _first_callable(manager, _REMOVE_METHODS) is not None,
     }
 
 
@@ -255,27 +294,89 @@ def _normalized_resource_status(key: str, value: Any) -> dict[str, Any]:
     })
     return raw
 
+
+def _failed_resource(key: str, action: str, error: str) -> dict[str, Any]:
+    return {
+        "status": "failed",
+        "worker": "config_worker",
+        "kind": "resource_setup",
+        "resource": key,
+        "action": action,
+        "error": error,
+    }
+
+
+def _install_arguments(method: Any, status: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """Fill installer arguments from the manager's own status; never accept raw paths."""
+    values = {
+        "url": status.get("download_url") or status.get("url"),
+        "model_id": status.get("model_id"),
+        "source": status.get("source") or "modelscope",
+        "device": status.get("device") or "auto",
+    }
+    kwargs: dict[str, Any] = {}
+    try:
+        parameters = inspect.signature(method).parameters.values()
+    except (TypeError, ValueError):
+        return {}, None
+    for parameter in parameters:
+        if parameter.name == "self" or parameter.kind not in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            continue
+        if parameter.name in values and values[parameter.name] not in (None, ""):
+            kwargs[parameter.name] = values[parameter.name]
+        elif parameter.default is inspect.Parameter.empty:
+            if parameter.name == "url":
+                return None, "该资源需要先提供下载地址"
+            return None, f"该资源缺少安装参数：{parameter.name}"
+    return kwargs, None
+
+
+def _status_payload(key: str, manager: Any) -> dict[str, Any]:
+    install = _normalized_resource_status(key, manager.status())
+    capabilities = _resource_capabilities(manager)
+    return {
+        "status": "ok",
+        "worker": "config_worker",
+        "kind": "resource_setup",
+        "resource": key,
+        "action": "status",
+        "install": install,
+        "capabilities": capabilities,
+        "phase": install.get("phase"),
+        "progress_percent": install.get("progress_percent", install.get("progress", 0)),
+        "missing": install.get("missing", []) if isinstance(install.get("missing"), list) else [],
+    }
+
+
 @tool
 def get_resource_install_status(
     resource: str,
     runtime: ToolRuntime[PersonaAgentContext],
 ) -> dict[str, Any]:
-    """查询应用内受管资源的安装状态。resource 支持 rvc、ffmpeg、asr、embedding、gpt_sovits。"""
-    key = str(resource or "").strip().lower().replace("-", "_")
-    manager = _resource_managers(runtime).get(key)
-    if manager is None or not hasattr(manager, "status"):
-        return {"status": "failed", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": "status", "error": "不支持或不可用的受管资源"}
+    """查询应用内受管资源的安装状态。resource 支持 rvc、separator、asr、gpt_sovits、ffmpeg、embedding、reranker，或 all。"""
+    key = _canonical_resource_key(resource)
+    managers = _resource_managers(runtime)
+    if key in {"", "all", "*"}:
+        items = []
+        for name in CANONICAL_RESOURCES:
+            manager = managers.get(name)
+            if manager is None or not callable(getattr(manager, "status", None)):
+                continue
+            try:
+                items.append(_status_payload(name, manager))
+            except Exception as exc:
+                items.append(_failed_resource(name, "status", str(exc)))
+        return {"status": "ok", "worker": "config_worker", "kind": "resource_setup", "resource": "all", "action": "status", "items": items}
+    manager = managers.get(key)
+    if manager is None or not callable(getattr(manager, "status", None)):
+        return _failed_resource(key, "status", "不支持或不可用的受管资源")
     try:
-        install = _normalized_resource_status(key, manager.status())
-        capabilities = {
-            "status": True,
-            "install": callable(getattr(manager, "start_install", None)) or callable(getattr(manager, "install", None)),
-            "cancel": callable(getattr(manager, "cancel_install", None)),
-            "clean": callable(getattr(manager, "remove_managed", None)) or callable(getattr(manager, "remove_install", None)) or callable(getattr(manager, "remove", None)),
-        }
-        return {"status": "ok", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": "status", "install": install, "capabilities": capabilities, "phase": (install or {}).get("phase") if isinstance(install, dict) else None, "progress_percent": (install or {}).get("progress_percent", (install or {}).get("progress", 0)) if isinstance(install, dict) else 0, "missing": (install or {}).get("missing", []) if isinstance(install, dict) else []}
+        return _status_payload(key, manager)
     except Exception as exc:
-        return {"status": "failed", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": "status", "error": str(exc)}
+        return _failed_resource(key, "status", str(exc))
 
 
 @tool
@@ -285,45 +386,45 @@ def manage_resource_install(
     runtime: ToolRuntime[PersonaAgentContext],
 ) -> dict[str, Any]:
     """启动、取消或清理应用自有资源；不得操作用户模型、附件或任意路径。"""
-    key = str(resource or "").strip().lower().replace("-", "_")
+    key = _canonical_resource_key(resource)
     manager = _resource_managers(runtime).get(key)
     if manager is None:
-        return {"status": "failed", "resource": key, "error": "不支持或不可用的受管资源"}
+        return _failed_resource(key, action, "不支持或不可用的受管资源")
     try:
         if action == "install":
-            method = getattr(manager, "start_install", None) or getattr(manager, "install", None)
+            method = _first_callable(manager, _INSTALL_METHODS)
             if method is None:
-                return {"status": "failed", "resource": key, "error": "该资源没有安装器"}
-            # 不同受管资源的安装器合同不同：RVC/ASR/FFmpeg 无参数，
-            # GPT-SoVITS 需要下载地址。优先复用管理器自身状态中的默认地址，
-            # 避免卡片上的“下载/安装”按钮只能触发一个参数错误。
-            required = [
-                parameter for parameter in inspect.signature(method).parameters.values()
-                if parameter.default is inspect.Parameter.empty
-                and parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            ]
-            if required:
-                current = manager.status() if callable(getattr(manager, "status", None)) else {}
-                url = current.get("download_url") if isinstance(current, dict) else None
-                if not url:
-                    return {"status": "failed", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": action, "error": "该资源需要先提供下载地址"}
-                result = method(url)
-            else:
-                result = method()
+                return _failed_resource(key, action, "该资源没有安装器")
+            current = manager.status() if callable(getattr(manager, "status", None)) else {}
+            kwargs, error = _install_arguments(method, current if isinstance(current, dict) else {})
+            if error:
+                return _failed_resource(key, action, error)
+            result = method(**(kwargs or {}))
         elif action == "cancel":
             method = getattr(manager, "cancel_install", None)
-            if method is None:
-                return {"status": "failed", "resource": key, "error": "该资源不支持取消"}
+            if not callable(method):
+                return _failed_resource(key, action, "该资源不支持取消")
             result = method()
         else:
-            method = getattr(manager, "remove_managed", None) or getattr(manager, "remove_install", None) or getattr(manager, "remove", None)
+            method = _first_callable(manager, _REMOVE_METHODS)
             if method is None:
-                return {"status": "failed", "resource": key, "error": "该资源不支持安全清理"}
+                return _failed_resource(key, action, "该资源不支持安全清理")
             result = method()
-        return {"status": "accepted", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": action, "install": result if isinstance(result, dict) else None, "capabilities": {"status": True, "install": True, "cancel": callable(getattr(manager, "cancel_install", None)), "clean": callable(getattr(manager, "remove_managed", None)) or callable(getattr(manager, "remove_install", None)) or callable(getattr(manager, "remove", None))}, "phase": (result or {}).get("phase") if isinstance(result, dict) else "accepted", "progress_percent": (result or {}).get("progress_percent", (result or {}).get("progress", 0)) if isinstance(result, dict) else 0}
+        payload = result if isinstance(result, dict) else None
+        return {
+            "status": "accepted",
+            "worker": "config_worker",
+            "kind": "resource_setup",
+            "resource": key,
+            "action": action,
+            "install": payload,
+            "capabilities": _resource_capabilities(manager),
+            "phase": (payload or {}).get("phase") if isinstance(payload, dict) else "accepted",
+            "progress_percent": (payload or {}).get("progress_percent", (payload or {}).get("progress", 0)) if isinstance(payload, dict) else 0,
+        }
     except Exception as exc:
         logger.exception("resource action failed: %s/%s", key, action)
-        return {"status": "failed", "worker": "config_worker", "kind": "resource_setup", "resource": key, "action": action, "error": str(exc)}
+        return _failed_resource(key, action, str(exc))
 
 
 def _validate_config_value(

@@ -346,6 +346,43 @@ console.log("ok: chat view lifecycle hook");
   const sandbox = { window: { PL: { modules: {} } }, console, TextDecoder, AbortController };
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync("static/js/chat.js", "utf8"), sandbox);
+  assert.strictEqual(
+    vm.runInContext("hasFormalVoiceHandoff({ worker: 'voice_worker' }, { worker: 'voice_worker' })", sandbox),
+    true,
+    "voice UI requires an explicit worker handoff in the final event",
+  );
+  assert.strictEqual(
+    vm.runInContext("hasFormalVoiceHandoff({ type: 'workflow.update' }, { worker: 'voice_worker' })", sandbox),
+    true,
+    "a structured workflow.update from Supervisor is a formal voice handoff",
+  );
+  assert.strictEqual(
+    vm.runInContext("hasFormalVoiceHandoff({ worker: 'persona_supervisor' }, { worker: 'voice_worker' })", sandbox),
+    false,
+    "an intermediate or mismatched worker must not activate voice",
+  );
+  assert.strictEqual(
+    vm.runInContext("hasFormalVoiceHandoff({}, { worker: 'voice_worker' })", sandbox),
+    false,
+    "a workflow descriptor without the final event worker is not a voice handoff",
+  );
+  assert.strictEqual(
+    vm.runInContext("hasFormalVoiceHandoff({ worker: 'config_worker', worker_results: [{ worker: 'voice_worker' }] }, { worker: 'voice_worker' })", sandbox),
+    false,
+    "historical nested voice results must not activate voice for config requests",
+  );
+  assert.strictEqual(
+    vm.runInContext("hasFormalVoiceHandoff({ worker: 'rvc_worker' }, { worker: 'rvc_worker' })", sandbox),
+    false,
+    "an RVC handoff must not activate the voice workspace",
+  );
+  console.log("ok: voice activation requires formal Agent handoff");
+})();
+
+(() => {
+  const sandbox = { window: { PL: { modules: {} } }, console, TextDecoder, AbortController };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync("static/js/chat.js", "utf8"), sandbox);
   sandbox.state = {
     rvcInline: { agentWorkflow: { worker: "rvc_worker" } },
     pendingInputValues: { action: "session_status" },
@@ -367,7 +404,7 @@ console.log("ok: chat view lifecycle hook");
 const chatSource = fs.readFileSync("static/js/chat.js", "utf8");
 assert.match(
   chatSource,
-  /async function resumeRvcSessionStatus\(\)[\s\S]*?state\.confirmationResponded = false;/,
+  /async function resumeRvcSessionStatus\(\)[\s\S]*?resetConfirmationResponseLock\(\);/,
   "session status resume must release the previous confirmation lock before resuming Agent",
 );
 console.log("ok: RVC session status resume releases the prior confirmation lock");
@@ -400,3 +437,192 @@ assert.match(
 );
 assert.match(chatSource, /resourceSetupDescriptor|descriptor\.ready/, "resource cards must use resource-specific ready descriptions");
 console.log("ok: composer and resource-card regression contracts");
+
+assert.match(
+  chatSource,
+  /if \(step === 0 && !answers\.model_id\) \{\s*question\.textContent = "选择音色";/,
+  "RVC conversion step 0 asks for a voice model",
+);
+const cancelRvc = chatSource.slice(
+  chatSource.indexOf("async function cancelInlineRvc"),
+  chatSource.indexOf("function openInlineRvcUpload"),
+);
+assert.equal(cancelRvc.includes("state.voiceInline = null"), false, "cancelling RVC must not clear the voice workspace");
+const cancelVoice = chatSource.slice(
+  chatSource.indexOf("async function cancelInlineVoice"),
+  chatSource.indexOf("async function resumeVoiceWorkerWithAttachment"),
+);
+assert.equal(cancelVoice.includes("/api/voice-studio/sessions/"), false, "cancelling voice must not delete the studio session");
+assert.match(
+  chatSource,
+  /function hasFormalVoiceHandoff\([\s\S]*?voice_worker/,
+  "voice workspace still requires a formal voice_worker handoff",
+);
+assert.match(
+  chatSource,
+  /inputId === "save_voice"[\s\S]*?rvcButton\("\\u4fdd\\u5b58"/,
+  "voice save step exposes one primary save button",
+);
+console.log("ok: chat card copy and workspace isolation");
+
+(() => {
+  const nodes = {
+    "chat-log": {},
+    "send-question": { disabled: false, classList: { contains: () => false } },
+    "confirm-action": { disabled: false },
+    "cancel-action": { disabled: false },
+    "question-form": { reset() {} },
+    question: { value: "新的正常消息" },
+  };
+  const sandbox = {
+    window: { PL: { modules: {} } }, console, TextDecoder, AbortController, setTimeout, clearTimeout,
+    document: { querySelectorAll: () => [] },
+    state: {
+      activePersona: { id: "persona-a" },
+      conversationId: "conversation-a",
+      realtimeStageEpoch: 1,
+      realtimeCompletionEpoch: 1,
+      realtimeTurnId: "turn-confirm",
+      realtimeBusy: true,
+      realtimeExecutionPending: false,
+      realtimeSubmissionPending: true,
+      agentRequestPending: true,
+      pendingReplyNode: null,
+      realtimeAnswerNode: null,
+      pendingAction: null,
+      pendingInput: null,
+      pendingInputValues: {},
+      confirmationResponded: false,
+    },
+    __nodes: nodes,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync("static/js/chat.js", "utf8"), sandbox);
+  vm.runInContext(
+    `
+    $ = (id) => globalThis.__nodes[id] || null;
+    setText = (id, value) => { globalThis.__lastText = { id, value }; };
+    setRealtimeBusy = (value) => { state.realtimeBusy = value; };
+    updateComposerControls = () => { globalThis.__controlsUpdated = (globalThis.__controlsUpdated || 0) + 1; };
+    renderConfirmation = () => { globalThis.__confirmationRenders = (globalThis.__confirmationRenders || 0) + 1; };
+    renderChatContext = () => {};
+    resetPacing = () => {};
+    resetChatProcess = () => {};
+    finishPendingReplies = () => {};
+    clearStaleReplyLoading = () => {};
+    abortVoiceStream = () => {};
+    sendQuestionText = (text) => { globalThis.__sentQuestion = text; };
+    `,
+    sandbox,
+  );
+  const action = { tool: "manage_resource_install", arguments: { resource: "gpt_sovits" } };
+  vm.runInContext(
+    `handleRealtimeEvent({ type: "confirmation.required", pending_action: ${JSON.stringify(action)}, specialist: "management" });`,
+    sandbox,
+  );
+  sandbox.state.confirmationResponded = true;
+  vm.runInContext(
+    `handleRealtimeEvent({ type: "confirmation.required", pending_action: ${JSON.stringify(action)}, specialist: "management" });`,
+    sandbox,
+  );
+  assert.strictEqual(sandbox.state.pendingAction, null, "a repeated confirmation event must not recreate the old confirmation card");
+  assert.strictEqual(sandbox.state.confirmationResponded, false, "a repeated confirmation event must release the response lock");
+  assert.match(sandbox.__lastText?.value || "", /确认未被服务端接受/);
+  console.log("ok: repeated realtime confirmation fails closed and unlocks");
+})();
+
+(() => {
+  const sandbox = {
+    window: { PL: { modules: {} } }, console, TextDecoder, AbortController, setTimeout, clearTimeout,
+    document: { querySelectorAll: () => [] },
+    state: {
+      activePersona: { id: "persona-a" },
+      conversationId: "conversation-a",
+      pendingAction: { action: { tool: "manage_resource_install", arguments: { resource: "gpt_sovits" } }, specialist: "management" },
+      pendingInput: null,
+      pendingInputValues: {},
+      confirmationResponded: true,
+      confirmationRequestKey: "",
+      pendingReplyNode: null,
+    },
+    __nodes: {
+      "chat-log": {},
+      "send-question": { disabled: false },
+      "confirm-action": { disabled: false },
+      "cancel-action": { disabled: false },
+    },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync("static/js/chat.js", "utf8"), sandbox);
+  vm.runInContext(
+    `
+    $ = (id) => globalThis.__nodes[id] || null;
+    setText = (id, value) => { globalThis.__lastText = { id, value }; };
+    updateComposerControls = () => {};
+    setRealtimeBusy = () => {};
+    renderConfirmation = () => {};
+    renderChatContext = () => {};
+    finishPendingReplies = () => {};
+    replaceReplyLoading = () => null;
+    `,
+    sandbox,
+  );
+  vm.runInContext(
+    `handleAgentResult({ status: "pending_confirmation", answer: "", pending_action: { tool: "manage_resource_install", arguments: { resource: "gpt_sovits" } }, specialist: "management" });`,
+    sandbox,
+  );
+  assert.strictEqual(sandbox.state.pendingAction, null, "an HTTP resume that returns the same confirmation must not leave a dead action pending");
+  assert.strictEqual(sandbox.state.confirmationResponded, false, "an HTTP confirmation failure must release the response lock");
+  assert.match(sandbox.__lastText?.value || "", /确认未被服务端接受/);
+  console.log("ok: repeated HTTP confirmation fails closed and unlocks");
+})();
+
+(() => {
+  const nodes = {
+    "send-question": { disabled: false, classList: { contains: () => false } },
+    "question": { value: "新的正常消息" },
+    "question-form": { reset() {} },
+  };
+  const sandbox = {
+    window: { PL: { modules: {} } }, console, TextDecoder, AbortController, setTimeout, clearTimeout,
+    document: { querySelectorAll: () => [] },
+    __nodes: nodes,
+    state: {
+      activePersona: { id: "persona-a" },
+      pendingAction: { action: { tool: "manage_resource_install" }, specialist: "management" },
+      pendingInput: null,
+      pendingInputValues: {},
+      confirmationResponded: true,
+      realtimeBusy: false,
+      agentRequestPending: false,
+      realtimeSubmissionPending: false,
+      realtimeExecutionPending: false,
+      voiceActive: false,
+      rvcInline: null,
+      voiceInline: null,
+    },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync("static/js/chat.js", "utf8"), sandbox);
+  vm.runInContext(
+    `
+    $ = (id) => globalThis.__nodes[id] || null;
+    setText = () => {};
+    setRealtimeBusy = () => {};
+    updateComposerControls = () => {};
+    renderConfirmation = () => {};
+    renderChatContext = () => {};
+    sendQuestionText = (text) => { globalThis.__sentQuestion = text; };
+    `,
+    sandbox,
+  );
+  vm.runInContext("submitQuestion({ preventDefault() {} });", sandbox);
+  assert.strictEqual(sandbox.state.pendingAction, null, "a stale consumed confirmation must be cleared before a new message");
+  assert.strictEqual(sandbox.__sentQuestion, "新的正常消息", "a new normal message must not remain blocked by stale confirmation state");
+  console.log("ok: new message clears stale consumed confirmation");
+})();
+
+assert.match(chatSource, /function renderResourceConfirmation\([\s\S]*?resource-setup-confirmation[\s\S]*?confirmPendingTaskAction/, "resource confirmations must be rendered inside the resource card");
+assert.match(chatSource, /resourceSetupAction\(resource, operation, \{ confirmed: true \}\)/, "confirmed resource actions must skip a duplicate browser confirmation");
+assert.match(chatSource, /const hasTask = Boolean\(flow\)[\s\S]*?!resourceConfirmation/, "resource confirmations must not create the detached top workspace");
+console.log("ok: resource confirmation stays inside its resource card");

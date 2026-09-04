@@ -91,7 +91,7 @@ class WorkerManifest:
 class SpecialistResult:
     """Worker 与 Supervisor 之间的稳定合同，避免依赖自然语言模板解析。"""
 
-    specialist: Literal["knowledge", "memory", "document", "profile", "voice", "rvc_worker", "live2d", "config_worker"]
+    specialist: Literal["knowledge_worker", "memory_worker", "document_worker", "profile_worker", "voice_worker", "rvc_worker", "live2d_worker", "config_worker"]
     status: SpecialistStatus
     answer: str = ""
     evidence: tuple[dict[str, Any], ...] = ()
@@ -112,7 +112,7 @@ class SpecialistResult:
     @classmethod
     def from_rag_evidence(cls, result: RagEvidenceResult) -> "SpecialistResult":
         return cls(
-            specialist="knowledge",
+            specialist="knowledge_worker",
             status=result.status,
             answer=result.answer,
             evidence=result.evidence,

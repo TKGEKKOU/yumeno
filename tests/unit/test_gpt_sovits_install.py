@@ -240,3 +240,18 @@ def test_installer_7z_popen_failure(tmp_path: Path, monkeypatch):
         assert "退出码" in str(exc)
     else:
         raise AssertionError("expected RuntimeError for failing 7-Zip")
+
+
+def test_install_status_distinguishes_present_files_from_ready_install(tmp_path):
+    manager = GPTSoVITSInstallManager(tmp_path, GPTSoVITSConfig(tmp_path))
+    manager.install_dir.mkdir(parents=True)
+    (manager.install_dir / "partial.txt").write_text("incomplete", encoding="utf-8")
+
+    status = manager.status()
+
+    assert status["installed"] is True
+    assert status["installation_ready"] is False
+    assert status["ready"] is False
+    assert status["service_running"] is False
+    assert status["missing"] == ["Python 运行环境", "API 入口"]
+    assert status["next_action"] == "check"

@@ -23,7 +23,7 @@ def test_app_registers_only_gpt_sovits_tts():
 def test_lightweight_app_does_not_start_embedding_warmup(monkeypatch):
     warmup_started = []
     monkeypatch.setattr(
-        "app.main.warm_managed_embedding",
+        "app.startup.lifespan.warm_managed_embedding",
         lambda settings: warmup_started.append(settings),
     )
 
@@ -53,7 +53,7 @@ def test_app_awaits_mcp_connect_cancellation_before_manager_close(monkeypatch):
         def close(self):
             events.append("manager_closed")
 
-    monkeypatch.setattr("app.main.MCPManager", FakeMCPManager)
+    monkeypatch.setattr("app.startup.lifespan.MCPManager", FakeMCPManager)
 
     with TestClient(create_app(initialize_database=False)):
         assert connect_started.wait(timeout=1)
@@ -71,7 +71,7 @@ def test_app_waits_for_embedding_warmup_thread_before_worker_shutdown(monkeypatc
         release.wait(timeout=2)
         completed.set()
 
-    monkeypatch.setattr("app.main.warm_managed_embedding", blocked_warmup)
+    monkeypatch.setattr("app.startup.lifespan.warm_managed_embedding", blocked_warmup)
     timer = threading.Timer(0.05, release.set)
     timer.start()
     with TestClient(create_app(initialize_database=True)):

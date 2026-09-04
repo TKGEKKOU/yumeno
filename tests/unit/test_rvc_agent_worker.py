@@ -341,3 +341,29 @@ def test_rvc_worker_action_filters_model_tools():
     request.state = {"dispatch_request": {"options": {"action": "session_status"}}}
     middleware.wrap_model_call(request, handler)
     assert seen["names"] == ["get_rvc_session"]
+
+
+def test_voice_worker_action_filters_model_tools():
+    from types import SimpleNamespace
+
+    tools = [SimpleNamespace(name=name) for name in (
+        "analyze_voice_material", "get_voice_studio_session", "cancel_voice_studio_session",
+        "request_training_confirmation", "bind_trained_voice", "synthesize_voice_asset",
+        "transcribe_voice_attachment", "train_voice_from_studio",
+    )]
+    seen = {}
+    middleware = build_worker_action_tool_middleware("voice_worker")
+
+    def handler(request):
+        seen["names"] = [item.name for item in request.tools]
+        seen["tool_choice"] = getattr(request, "tool_choice", None)
+        return request
+
+    request = SimpleNamespace(
+        state={"dispatch_request": {"options": {"action": "session_status"}}},
+        tools=tools,
+        override=lambda **kwargs: SimpleNamespace(**{**request.__dict__, **kwargs}),
+    )
+    middleware.wrap_model_call(request, handler)
+    assert seen["names"] == ["get_voice_studio_session"]
+    assert seen["tool_choice"] == {"type": "function", "function": {"name": "get_voice_studio_session"}}

@@ -153,7 +153,7 @@ def test_web_tools_require_request_authorization():
     assert _web_tool_allowed("web_search", {"intent_decision": {"web_authorized": False}}) is False
     assert _web_tool_allowed("search", {"intent_decision": {"web_authorized": False}}) is False
     assert _web_tool_allowed("research", {"intent_decision": {"web_authorized": True}}) is True
-    assert _web_tool_allowed("delegate_to_knowledge", {}) is True
+    assert _web_tool_allowed("delegate_to_knowledge_worker", {}) is True
 
 
 def test_search_usage_is_counted_from_tool_messages():
@@ -247,7 +247,7 @@ def test_real_graph_pauses_before_rag_fallback_search():
             AIMessage(
                 content="",
                 tool_calls=[{
-                    "name": "delegate_to_knowledge",
+                    "name": "delegate_to_knowledge_worker",
                     "args": {"request": "未知资料"},
                     "id": "handoff-knowledge",
                     "type": "tool_call",
@@ -271,13 +271,13 @@ def test_real_graph_pauses_before_rag_fallback_search():
         model,
         MemorySaver(),
         knowledge_executor=lambda query, context: rag_calls.append(query) or {
-            "specialist": "knowledge", "status": "insufficient", "answer": "", "evidence": [],
+            "specialist": "knowledge_worker", "status": "insufficient", "answer": "", "evidence": [],
         },
         web_search_executor=lambda query, context: calls.append(query) or [
             {"title": "公开来源", "content": "补充事实", "url": "https://example.test"}
         ],
         web_rag_executor=lambda query, context, documents: {
-            "specialist": "knowledge",
+            "specialist": "knowledge_worker",
             "status": "accepted",
             "answer": "根据公开来源，补充事实。",
             "evidence": documents,
@@ -320,9 +320,9 @@ def test_real_graph_pauses_before_rag_fallback_search():
 def test_worker_tools_are_limited_to_registered_owner():
     from agents.workflow import worker_tools
 
-    knowledge_tools = [tool.name for tool in worker_tools("knowledge")]
-    memory_tools = [tool.name for tool in worker_tools("memory")]
-    document_tools = [tool.name for tool in worker_tools("document")]
+    knowledge_tools = [tool.name for tool in worker_tools("knowledge_worker")]
+    memory_tools = [tool.name for tool in worker_tools("memory_worker")]
+    document_tools = [tool.name for tool in worker_tools("document_worker")]
     assert "search_persona_knowledge" in knowledge_tools
     assert "query_structured_data" in knowledge_tools
     assert "web_search" in knowledge_tools
@@ -385,12 +385,12 @@ def test_supervisor_prompt_includes_full_persona_profile_and_fact_first_rules():
         conversation_id="thread-a",
         persona_name="Ames",
         persona_type="character",
-        persona_profile={"voice": "calm and observant", "style": "state conclusions first"},
+        persona_profile={"voice_worker": "calm and observant", "style": "state conclusions first"},
     )
 
     prompt = _supervisor_prompt(context)
 
-    assert '"voice": "calm and observant"' in prompt
+    assert '"voice_worker": "calm and observant"' in prompt
     assert "Answer the user's question directly before offering advice." in prompt
     assert "weather, news, or other factual requests" in prompt
     assert "status=accepted" in prompt
@@ -437,7 +437,7 @@ def test_document_worker_prompt_covers_url_import():
         persona_type="character",
     )
 
-    prompt = _worker_prompt("document", context)
+    prompt = _worker_prompt("document_worker", context)
     assert "URL" in prompt
 
 
@@ -453,7 +453,7 @@ def test_memory_worker_prompt_requires_structured_evidence_handoff():
         persona_type="character",
     )
 
-    prompt = _worker_prompt("memory", context)
+    prompt = _worker_prompt("memory_worker", context)
 
     assert "KEY FACTS" in prompt
     assert "SOURCES" in prompt
@@ -517,7 +517,7 @@ def test_supervisor_handoff_returns_to_persona_response():
                 content="",
                 tool_calls=[
                     {
-                        "name": "delegate_to_memory",
+                        "name": "delegate_to_memory_worker",
                         "args": {"request": "remember this fact"},
                         "id": "handoff-memory",
                         "type": "tool_call",
@@ -545,8 +545,8 @@ def test_supervisor_handoff_returns_to_persona_response():
 
     assert result["active_worker"] is None
     worker_result = result["worker_results"][-1]
-    assert worker_result["worker"] == "memory"
-    assert worker_result["specialist"] == "memory"
+    assert worker_result["worker"] == "memory_worker"
+    assert worker_result["specialist"] == "memory_worker"
     assert worker_result["status"] == "completed"
     assert worker_result["answer"] == "Current public result."
     assert worker_result["summary"] == "Current public result."
@@ -570,7 +570,7 @@ def test_knowledge_handoff_planner_calls_rag_then_supervisor_answers():
                 content="",
                 tool_calls=[
                     {
-                        "name": "delegate_to_knowledge",
+                        "name": "delegate_to_knowledge_worker",
                         "args": {"request": "角色在哪里出生？"},
                         "id": "handoff-knowledge",
                         "type": "tool_call",
@@ -596,7 +596,7 @@ def test_knowledge_handoff_planner_calls_rag_then_supervisor_answers():
     def knowledge_executor(query, context):
         calls.append((query, context.persona_id))
         return {
-            "specialist": "knowledge",
+            "specialist": "knowledge_worker",
             "status": "accepted",
             "answer": "她出生在龙门。",
             "evidence": [{"filename": "设定.md", "content": "出生于龙门"}],
@@ -662,7 +662,7 @@ def test_structured_handoff_executes_validated_sql_and_returns_contract():
                 content="",
                 tool_calls=[
                     {
-                        "name": "delegate_to_knowledge",
+                        "name": "delegate_to_knowledge_worker",
                         "args": {"request": request},
                         "id": "handoff-structured",
                         "type": "tool_call",
@@ -677,7 +677,7 @@ def test_structured_handoff_executes_validated_sql_and_returns_contract():
     def structured_executor(context, sql):
         sql_calls.append(sql)
         return {
-            "specialist": "knowledge",
+            "specialist": "knowledge_worker",
             "status": "accepted",
             "answer": "",
             "columns": ["region", "total"],
@@ -731,7 +731,7 @@ def test_service_reports_supervisor_answer_after_knowledge_contract():
                 content="",
                 tool_calls=[
                     {
-                        "name": "delegate_to_knowledge",
+                        "name": "delegate_to_knowledge_worker",
                         "args": {"request": "角色在哪里出生？"},
                         "id": "handoff-knowledge",
                         "type": "tool_call",
@@ -758,7 +758,7 @@ def test_service_reports_supervisor_answer_after_knowledge_contract():
         model,
         checkpointer,
         knowledge_executor=lambda query, context: {
-            "specialist": "knowledge",
+            "specialist": "knowledge_worker",
             "status": "accepted",
             "answer": "她出生在龙门。",
             "evidence": [{"filename": "设定.md", "content": "出生于龙门"}],
@@ -813,7 +813,7 @@ def test_management_handoff_resumes_in_same_parent_workflow(db_session):
                 content="",
                 tool_calls=[
                     {
-                        "name": "delegate_to_profile",
+                        "name": "delegate_to_profile_worker",
                         "args": {"request": "rename"},
                         "id": "handoff-profile",
                         "type": "tool_call",
@@ -876,14 +876,14 @@ def test_registry_exposes_expected_read_only_tools():
 def test_public_specialist_aliases_current_workers():
     from agents.service import PersonaAgentService
 
-    assert PersonaAgentService._specialist_for_state({"active_worker": "profile"}) == "management"
-    assert PersonaAgentService._specialist_for_state({"active_worker": "document"}) == "management"
+    assert PersonaAgentService._specialist_for_state({"active_worker": "profile_worker"}) == "management"
+    assert PersonaAgentService._specialist_for_state({"active_worker": "document_worker"}) == "management"
     assert PersonaAgentService._specialist_for_state({"active_worker": "config"}) == "management"
     assert PersonaAgentService._specialist_for_state({"active_worker": "voice_clone"}) == "management"
-    assert PersonaAgentService._specialist_for_state({"active_worker": "memory"}) == "memory"
-    assert PersonaAgentService._specialist_for_state({"active_worker": "knowledge"}) == "conversation"
+    assert PersonaAgentService._specialist_for_state({"active_worker": "memory_worker"}) == "memory"
+    assert PersonaAgentService._specialist_for_state({"active_worker": "knowledge_worker"}) == "conversation"
     assert PersonaAgentService._specialist_for_state(
-        {"active_worker": "knowledge"},
+        {"active_worker": "knowledge_worker"},
         {"tool": "web_search_confirmation"},
     ) == "web"
 
@@ -913,9 +913,9 @@ def test_legacy_four_specialist_graph_is_removed():
 
 def test_intent_funnel_is_advisory_not_a_hard_router():
     assert analyze_intents("查一下今天的新闻").primary == "web"
-    assert analyze_intents("记住我喜欢红茶").primary == "memory"
-    assert analyze_intents("列出这个角色的资料").primary == "knowledge"
-    assert analyze_intents("根据资料介绍她的经历").primary == "knowledge"
+    assert analyze_intents("记住我喜欢红茶").primary == "memory_worker"
+    assert analyze_intents("列出这个角色的资料").primary == "knowledge_worker"
+    assert analyze_intents("根据资料介绍她的经历").primary == "knowledge_worker"
     assert analyze_intents("你好").primary == "conversation"
 
 
@@ -927,7 +927,7 @@ def test_supervisor_prompt_receives_persona_type_and_profile():
         conversation_id="thread-a",
         persona_name="爱弥斯",
         persona_type="character",
-        persona_profile={"voice": "活泼", "boundaries": "不伤害用户"},
+        persona_profile={"voice_worker": "活泼", "boundaries": "不伤害用户"},
     )
 
     prompt = _supervisor_prompt(context)
@@ -949,7 +949,7 @@ def test_all_specialists_share_one_conversation_thread():
     )
 
     assert PersonaAgentService.thread_id(context, "conversation") == PersonaAgentService.thread_id(
-        context, "memory"
+        context, "memory_worker"
     )
 
 
@@ -1005,7 +1005,7 @@ def test_knowledge_tool_returns_fail_closed_specialist_result():
 
     result = run_persona_knowledge_search("为什么", context, FakeRagService())
 
-    assert result["specialist"] == "knowledge"
+    assert result["specialist"] == "knowledge_worker"
     assert result["status"] == "insufficient"
     assert result["answer"] == ""
     assert result["evidence"] == []
@@ -1023,7 +1023,7 @@ def test_knowledge_executor_reuses_existing_contract_without_rerunning_rag():
     rag_calls = []
     run = _knowledge_workflow(
         lambda query, ctx: rag_calls.append(query) or {
-            "specialist": "knowledge",
+            "specialist": "knowledge_worker",
             "status": "accepted",
             "answer": "不该再跑 RAG",
             "evidence": [],
@@ -1031,7 +1031,7 @@ def test_knowledge_executor_reuses_existing_contract_without_rerunning_rag():
         lambda ctx, sql: {},
     )
     existing = {
-        "specialist": "knowledge",
+        "specialist": "knowledge_worker",
         "status": "accepted",
         "answer": "她出生在龙门。",
         "evidence": [{"filename": "设定.md", "content": "出生于龙门"}],
@@ -1063,7 +1063,7 @@ def test_knowledge_specialist_result_accepts_web_search_contract():
     from agents.workflow import _knowledge_specialist_result
 
     payload = {
-        "specialist": "knowledge",
+        "specialist": "knowledge_worker",
         "status": "accepted",
         "answer": "公开来源补充事实。",
         "evidence": [{"title": "公开来源", "content": "补充事实"}],
@@ -1095,7 +1095,7 @@ def test_knowledge_finalize_discards_worker_text_when_gate_rejects_evidence():
             content="",
             tool_calls=[
                 {
-                    "name": "delegate_to_knowledge",
+                    "name": "delegate_to_knowledge_worker",
                     "args": {"request": "为什么"},
                     "id": "handoff-knowledge",
                     "type": "tool_call",
@@ -1105,7 +1105,7 @@ def test_knowledge_finalize_discards_worker_text_when_gate_rejects_evidence():
         ToolMessage(
             content=json.dumps(
                 {
-                    "specialist": "knowledge",
+                    "specialist": "knowledge_worker",
                     "status": "insufficient",
                     "answer": "",
                     "evidence": [],
@@ -1121,7 +1121,7 @@ def test_knowledge_finalize_discards_worker_text_when_gate_rejects_evidence():
         AIMessage(content="她可能是为了自由，这句话没有证据。"),
     ]
 
-    updates = _finalize_worker("knowledge")({"messages": messages})
+    updates = _finalize_worker("knowledge_worker")({"messages": messages})
 
     assert updates["worker_results"][0]["status"] == "insufficient"
     handoff = updates["messages"][0].content
@@ -1137,7 +1137,7 @@ def test_knowledge_finalize_only_hands_accepted_answer_to_supervisor():
             content="",
             tool_calls=[
                 {
-                    "name": "delegate_to_knowledge",
+                    "name": "delegate_to_knowledge_worker",
                     "args": {"request": "经历"},
                     "id": "handoff-knowledge",
                     "type": "tool_call",
@@ -1147,7 +1147,7 @@ def test_knowledge_finalize_only_hands_accepted_answer_to_supervisor():
         ToolMessage(
             content=json.dumps(
                 {
-                    "specialist": "knowledge",
+                    "specialist": "knowledge_worker",
                     "status": "accepted",
                     "answer": "她在十八岁时离开故乡。",
                     "evidence": [{"content": "十八岁时离开故乡", "filename": "设定.md"}],
@@ -1163,7 +1163,7 @@ def test_knowledge_finalize_only_hands_accepted_answer_to_supervisor():
         AIMessage(content="自由发挥的 Worker 总结。"),
     ]
 
-    updates = _finalize_worker("knowledge")({"messages": messages})
+    updates = _finalize_worker("knowledge_worker")({"messages": messages})
 
     handoff = updates["messages"][0].content
     assert "她在十八岁时离开故乡" in handoff
@@ -1219,14 +1219,14 @@ def test_capability_question_does_not_match_character_ability_setting():
 
 
 def test_intent_funnel_does_not_hard_route_profile_mutations():
-    assert analyze_intents("修改角色设定").primary == "management"
-    assert analyze_intents("删除资料").primary == "management"
-    assert analyze_intents("记住我喜欢红茶").primary == "memory"
+    assert analyze_intents("修改角色设定").primary == "profile_worker"
+    assert analyze_intents("删除资料").primary == "document_worker"
+    assert analyze_intents("记住我喜欢红茶").primary == "memory_worker"
     # 明确的角色名与设定变更直接进入 profile 管理，减少多余 Supervisor 决策。
-    assert analyze_intents("把你的名字改为 Ameath").primary == "management"
-    assert analyze_intents("给你加上一些设定：电子幽灵").primary == "management"
-    assert analyze_intents("我想给你改名").primary == "management"
-    assert analyze_intents("改名成agent工程师").primary == "management"
+    assert analyze_intents("把你的名字改为 Ameath").primary == "profile_worker"
+    assert analyze_intents("给你加上一些设定：电子幽灵").primary == "profile_worker"
+    assert analyze_intents("我想给你改名").primary == "profile_worker"
+    assert analyze_intents("改名成agent工程师").primary == "profile_worker"
 
 
 class _TransientProviderError(RuntimeError):

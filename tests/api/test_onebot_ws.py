@@ -31,7 +31,7 @@ def _prepare(client, tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        "app.main.onebot_runtime_config",
+        "app.startup.resources.onebot_runtime_config",
         lambda root: integrations_config.onebot_config(
             integrations_config.load_integrations(config_path)
         ),
@@ -132,7 +132,7 @@ def test_disabled_integration_rejects_connection(client, tmp_path, monkeypatch):
     config_path = tmp_path / "integrations.json"
     config_path.write_text('{"onebot11": {"enabled": false}}', encoding="utf-8")
     monkeypatch.setattr(
-        "app.main.onebot_runtime_config",
+        "app.startup.resources.onebot_runtime_config",
         lambda root: integrations_config.onebot_config(
             integrations_config.load_integrations(config_path)
         ),

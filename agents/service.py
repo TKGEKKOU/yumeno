@@ -29,13 +29,13 @@ logger = logging.getLogger(__name__)
 # HTTP/API 仍使用旧的四值 specialist，避免打断 resume 契约。
 # 图内 Worker 名称在对外返回前映射到该集合。
 _PUBLIC_SPECIALIST_BY_WORKER = {
-    "knowledge": "conversation",
-    "memory": "memory",
-    "document": "management",
-    "profile": "management",
-    "voice": "management",
+    "knowledge_worker": "conversation",
+    "memory_worker": "memory",
+    "document_worker": "management",
+    "profile_worker": "management",
+    "voice_worker": "management",
     "rvc_worker": "management",
-    "live2d": "management",
+    "live2d_worker": "management",
     # 读取旧 checkpoint / 旧客户端状态时兼容旧 canonical 名称。
     "voice_clone": "management",
     "config_worker": "management",
@@ -148,7 +148,7 @@ _STAGE_BY_NODE = {
     "live2d_worker": "Live2D · 正在准备处理…",
     # 旧节点只用于读取历史 trace，不再由新图生成。
     "voice_clone_worker": "声音系统 · 正在准备处理…",
-    "config_worker": "配置管理 · 正在修改系统设置…",
+    "config_worker": "配置管理 · 正在检查系统配置…",
     "finalize_knowledge": "知识检索完成，整理结果中…",
     "finalize_memory": "记忆操作完成，整理结果中…",
     "finalize_document": "文档操作完成，整理结果中…",
@@ -156,7 +156,7 @@ _STAGE_BY_NODE = {
     "finalize_voice": "声音任务已完成，整理结果中…",
     "finalize_live2d": "Live2D 任务已完成，整理结果中…",
     "finalize_voice_clone": "声音任务已完成，整理结果中…",
-    "finalize_config": "配置修改完成，整理结果中…",
+    "finalize_config": "配置请求已处理，整理结果中…",
 }
 
 
@@ -184,14 +184,14 @@ def _initial_stage(intent) -> str:
     """
     labels = {
         "web": "已识别为联网查询，正在准备搜索...",
-        "knowledge": "已识别为资料查询，正在准备检索...",
-        "memory": "已识别为记忆请求，正在检查记忆...",
+        "knowledge_worker": "已识别为资料查询，正在准备检索...",
+        "memory_worker": "已识别为记忆请求，正在检查记忆...",
         "management": "已识别为管理请求，正在检查操作权限...",
-        "voice": "已识别为声音系统请求，正在准备会话...",
+        "voice_worker": "已识别为声音系统请求，正在准备会话...",
         # RVC 必须先经过 Core Agent 的 supervisor → worker handoff；
         # 在此之前不向客户端暴露专项识别结果。
         "rvc_worker": "正在分析请求...",
-        "live2d": "已识别为 Live2D 请求，正在准备处理...",
+        "live2d_worker": "已识别为 Live2D 请求，正在准备处理...",
         "voice_clone": "已识别为声音系统请求，正在准备会话...",
     }
     return labels.get(intent.primary, "正在分析请求...")

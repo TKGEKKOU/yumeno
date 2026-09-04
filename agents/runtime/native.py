@@ -32,6 +32,8 @@ class NativeAgentLoop:
     def __init__(self, service: Any) -> None:
         self.service = service
         self._jobs: dict[str, RuntimeJob] = {}
+        self._finished: dict[str, RuntimeJob] = {}
+        self._finished_limit = 128
         self._lock = RLock()
 
     def session(self, session_id: str, **metadata: Any) -> RuntimeSession:
@@ -50,6 +52,15 @@ class NativeAgentLoop:
         with self._lock:
             return tuple(self._jobs.values())
 
+    def get_job(self, job_id: str) -> RuntimeJob | None:
+        """Query a Job without exposing the kernel dictionaries.
+
+        Finished Jobs stay queryable for wait/status, while active_jobs()
+        still only lists in-flight work.
+        """
+        with self._lock:
+            return self._jobs.get(job_id) or self._finished.get(job_id)
+
     def cancel(self, job_id: str) -> bool:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -61,10 +72,14 @@ class NativeAgentLoop:
 
     def finish(self, job_id: str, status: str = "completed") -> None:
         with self._lock:
-            job = self._jobs.get(job_id)
-            if job is not None:
-                job.status = status
-                self._jobs.pop(job_id, None)
+            job = self._jobs.pop(job_id, None)
+            if job is None:
+                return
+            job.status = status
+            self._finished[job_id] = job
+            while len(self._finished) > self._finished_limit:
+                oldest = next(iter(self._finished))
+                self._finished.pop(oldest, None)
 
     def query(self, question: str, context: Any, *, job_id: str) -> Any:
         job = self.begin(job_id, self._session_id(context))
