@@ -2,7 +2,7 @@
 ; 用法：ISCC.exe scripts\YUMENO.iss（先运行 build_windows.ps1 生成 dist\YUMENO）
 
 #define MyAppName "YUMENO"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.3.2"
 #define MyAppExeName "YUMENO.exe"
 #define MyAppId "6B4BDE24-1C3E-4E0A-9A3D-0F0C8C7E5A21"
 

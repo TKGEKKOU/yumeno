@@ -55,5 +55,5 @@ if (-not $iscc) {
   Write-Host "Building Inno Setup installer..."
   & $iscc (Join-Path $projectRoot "scripts\YUMENO.iss")
   if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed." }
-  Write-Host "Installer:" (Join-Path $projectRoot "dist\YUMENO-Setup-0.2.0.exe")
+  Write-Host "Installer:" (Join-Path $projectRoot "dist\YUMENO-Setup-0.3.2.exe")
 }

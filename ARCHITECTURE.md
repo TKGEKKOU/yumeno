@@ -1,6 +1,6 @@
 # YUMENO Multi-Agent 架构
 
-本文描述**当前正在运行的图**，不是历史方案。设计论证、选型比较和四维改进见 [ARCHITECTURE_DESIGN.md](ARCHITECTURE_DESIGN.md)。请求主链路与 RAG/SQL 细节见 [docs/architecture/agent-rag-platform.md](docs/architecture/agent-rag-platform.md)。
+本文描述**当前正在运行的图**，不是历史方案。设计论证、选型比较和四维改进见 [架构设计存档](docs/archive/ARCHITECTURE_DESIGN.md)。请求主链路与 RAG/SQL 细节见 [docs/architecture/agent-rag-platform.md](docs/architecture/agent-rag-platform.md)。
 
 图直接画在 Markdown mermaid 里，不要再看 PNG：
 

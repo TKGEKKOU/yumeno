@@ -14,13 +14,9 @@ DIAGRAM_README = (ROOT / "diagrams" / "README.md").read_text(encoding="utf-8")
 DIAGRAM_STEMS = (
     "yumeno-system-context",
     "yumeno-multi-agent",
-    "yumeno-worker-registry",
-    "yumeno-runtime-lifecycle",
-    "yumeno-knowledge-subgraph",
     "yumeno-rvc-workflow",
-    "yumeno-resource-boundary",
 )
-README_STEMS = DIAGRAM_STEMS[:5]
+README_STEMS = DIAGRAM_STEMS
 
 
 def _mmd(stem: str) -> str:
@@ -40,7 +36,6 @@ def test_parent_mermaid_covers_compiled_nodes():
 
 def test_checked_in_parent_mmd_matches_generator():
     assert parent_graph_mermaid().strip() == _mmd("yumeno-multi-agent")
-    assert knowledge_subgraph_mermaid().strip() == _mmd("yumeno-knowledge-subgraph")
 
 
 def test_readme_and_diagram_index_have_expected_layers():

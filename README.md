@@ -15,52 +15,68 @@
 
 </div>
 
-YUMENO 将**对话本身作为 Agent 控制台**：用户不必离开当前会话去寻找资源管理页或手动拼接 API，只需用自然语言提出需求，Agent 就会识别意图、选择 Worker、检查状态、发起配置或下载、等待必要确认，并把可继续操作的任务卡片直接放回对话中。
+YUMENO 是一个**本地优先的角色 Agent 工作台**。它把角色对话、工具调用、知识检索、语音能力和长任务执行组织在同一条可恢复的 Agent 链路中。
 
-完整主线是：**创建角色 → 配置角色能力 → 与角色对话 → 通过对话完成资源管理、任务执行和结果回收。**
+与“聊天页 + 一组互相独立的设置页”不同，YUMENO 的对话不仅用于回答问题，也可以作为实际操作入口：用户可以直接提出“检查资源”“安装模型”“启动 GPT-SoVITS”“把资料加入知识库”或“用这段音频做 RVC 变声”，系统会根据真实状态完成检查、配置、执行和结果回收，并在对话中展示可继续操作的任务卡片。
+
+核心使用主线：
+
+```text
+创建角色
+  → 配置角色的知识、声音与能力
+  → 与角色对话
+  → Agent 按需调用 Worker
+  → 在对话中完成资源准备、服务启动与长任务
+  → 返回结果、状态和下一步操作
+```
 
 ## 项目简介
 
 ### 对话即控制台
 
-这是 YUMENO 区别于传统“聊天页 + 多个设置页”应用的核心交互方式。资源、服务和长任务不再只是后台接口或孤立的配置表单，而是可以被角色 Agent 通过对话统一调度：
+对话是 YUMENO 的主要工作区，设置页用于查看状态和精细配置，但不是完成任务的唯一入口。资源、服务和文件任务都可以由角色 Agent 统一调度：
 
-| 用户在对话中提出 | Agent 的处理方式 | 对话中的结果 |
+| 对话请求 | 负责执行的 Worker | 用户得到的结果 |
 | --- | --- | --- |
-| “检查一下 RVC 和人声分离资源” | `config_worker` 检查受管资源、安装状态和当前任务 | 资源状态卡片、容量、阶段和下一步操作 |
-| “帮我安装人声分离模型” | 校验资源边界，创建可取消的下载任务 | 下载进度卡片、停止按钮、真实错误和重试入口 |
-| “启动 GPT-SoVITS 服务” | `voice_worker` 检查运行环境并按需启动服务 | 服务状态、启动进度和声音页快捷入口 |
-| “把这个视频转换成目标音色” | `rvc_worker` 串联附件、音频准备、分离、确认和转换 | 多步骤任务卡片、等待输入、进度和结果音频 |
-| “把这些资料加入当前角色知识库” | `document_worker` 导入文档，`knowledge_worker` 负责后续检索 | 文档/索引状态和可恢复任务 |
-| “配置联网搜索” | 根据服务类型展示语义化配置并保留人工确认 | 配置结果和当前启用状态 |
+| 检查或安装 RVC、Separator 等资源 | `config_worker` | 资源状态、容量、阶段、进度和下一步操作 |
+| 启动 GPT-SoVITS 服务 | `voice_worker` | 按需启动状态、就绪结果和快捷入口 |
+| 用音频或视频进行 RVC 变声 | `rvc_worker` | 上传、分离、确认、转换和结果音频 |
+| 将资料加入当前角色知识库 | `document_worker` / `knowledge_worker` | 文档处理状态、索引状态和检索结果 |
+| 配置联网搜索或其它服务 | 对应 Worker 与服务配置 | 语义化配置结果和启用状态 |
 
-对话不是简单的命令转发。每次操作都经过 Core Agent → Supervisor → Worker 的结构化交接，并由 Runtime 记录 Session、Job、事件、恢复、取消和终态。这样既保留自然语言的低门槛，也保留资源管理和长任务所需要的可见状态、权限边界与失败恢复。
+任务不会被伪装成“已完成”。系统明确区分未配置、未安装、未启动、检查中、运行中、等待输入、失败、取消和已完成；长任务可以在卡片中确认、补充输入、停止、恢复或重试。
 
+### 核心分工
 
-YUMENO 定位为一个面向本地部署的角色 Agent 工作台。用户从对话进入后，由 Core Agent 理解请求，Supervisor 负责任务编排和交接，领域 Worker 执行具体业务，Native Runtime 负责运行生命周期、事件、恢复、取消和终态记录。
+```text
+Core Agent       理解自然语言、识别意图和所需输入
+Supervisor       选择 Worker、维护工作流、收口状态与用户回复
+领域 Worker      执行知识、文档、声音、RVC、资源等具体业务
+Native Runtime   管理 Session、Run/Job、事件、Resume、Cancel 和 Finish
+```
 
-GPT-SoVITS、RVC、RAG、文档、记忆、Live2D、Skill、MCP、QQ 和 B站都是角色可以按需使用的能力，而不是互相割裂的产品入口。
+GPT-SoVITS、RVC、RAG、文档、记忆、Live2D、Skill、MCP、QQ 和 B站不是彼此割裂的产品入口，而是角色 Agent 可以按需使用的能力。
 
 ### 设计目标
 
-- **对话优先**：配置和长任务尽量回到对话内，以结构化卡片展示真实状态。
-- **编排清晰**：Core Agent、Supervisor 和 Worker 分工明确，分别负责理解、决策收口和领域执行。
-- **状态真实**：明确区分未配置、未安装、未启动、检查中、运行中、等待输入、失败和已完成。
-- **本地优先**：默认使用本地文件、SQLite 和 Milvus Lite，不把 Docker 或独立服务作为普通用户的启动前置条件。
-- **边界安全**：任务合同只传递引用和结构化选项，不传递本地路径、Shell 或可执行命令。
+- **对话优先**：尽量在当前会话完成配置和长任务，避免用户手动拼接接口或切换多个页面。
+- **状态真实**：界面展示后端真实状态，并为每种非就绪状态提供明确的下一步。
+- **职责清晰**：Core Agent 负责理解，Supervisor 负责编排，Worker 负责领域执行，Runtime 负责生命周期。
+- **本地优先**：默认使用本地文件、SQLite 和 Milvus Lite，不要求 Docker 或独立服务作为普通用户的启动前置条件。
+- **边界安全**：任务合同只传递稳定引用和结构化选项，不把本地路径、Shell 或可执行命令交给前端或模型。
 
 ## 核心能力
 
 | 能力 | 说明 |
 | --- | --- |
-| 角色 Agent 对话 | 角色资料、记忆、知识和能力策略共同参与对话；流式输出可被中断和停止。 |
-| Supervisor 编排 | 统一处理任务识别、Worker 委派、缺失输入、人工确认、恢复和结果收口。 |
-| 文件型长任务 | RVC 以 attachment/session/task 引用串联准备、分离、确认、转换和结果回收。 |
-| GPT-SoVITS | 支持语音服务、TTS/ASR、音色资产、训练流程和服务按需启动；已安装不等于已启动。 |
-| RAG 知识链路 | 文档导入、分块、Embedding、Milvus Lite 向量检索、重排、质量门和评测。 |
-| 对话式资源与配置管理 | 通过自然语言在对话中检查、下载、启动、停止和配置受管资源；任务卡片提供进度、确认、取消和重试，不会把用户模型、附件和历史结果当成可卸载资源。 |
-| 扩展接入 | Skill、MCP、QQ/OneBot、B站等能力通过统一的角色和系统边界接入。 |
-| Native Runtime | 进程内管理 Session、Run/Job、事件流、Resume、Cancel 和 Finish，并持久化安全摘要。 |
+| 角色 Agent 对话 | 角色资料、记忆、知识和能力策略共同参与对话，支持流式输出、中断和停止。 |
+| Supervisor 编排 | 处理 Worker 委派、缺失输入、人工确认、恢复、取消和结果收口。 |
+| 对话式资源管理 | 通过自然语言检查、下载、启动、停止和配置受管资源；任务卡片提供进度、操作和真实错误。 |
+| RVC 文件型任务 | 以 `attachment_id`、RVC session 和 conversion task 串联准备、分离、确认、转换和结果回收。 |
+| GPT-SoVITS | 支持服务按需启动、TTS/ASR、Voice Asset、素材分析、训练和角色绑定。 |
+| RAG 知识链路 | 支持文档导入、分块、Embedding、Milvus Lite 检索、重排、质量门和评测。 |
+| 扩展能力 | 通过 Skill、MCP、QQ/OneBot、B站等扩展角色的工具和接入范围。 |
+| Native Runtime | 在进程内管理运行记录、Job、事件流、Resume、Cancel 和 Finish。 |
 
 ## 快速开始
 
@@ -96,7 +112,7 @@ Copy-Item .env.example .env
 
 ### 第一次使用
 
-配置完成 LLM 后，可以直接在对话中继续完成其它能力的准备，不需要记忆接口路径或手动执行脚本。例如：
+只需先配置一个可用的 LLM Provider。创建或选择角色后，直接在对话中提出需求即可：
 
 ```text
 检查所有运行资源
@@ -106,21 +122,23 @@ Copy-Item .env.example .env
 用刚上传的音频开始 RVC 变声
 ```
 
-每一项都会根据真实状态决定下一步：未配置、未安装、未启动、检查中、运行中、等待确认、失败和已完成不会被混为一谈。
-
-
-1. 在 `.env` 或供应商配置页配置一个可用的 LLM Provider。
-2. 创建或选择一个角色。
-3. 直接在对话页发送请求。
-4. 需要知识、语音、RVC 或其它能力时，再根据对话卡片提示完成资源准备。
-
-Embedding、Reranker、GPT-SoVITS、RVC、FFmpeg 等属于按需能力；未安装或未启动不是系统错误，界面应给出下一步操作。
-
+Embedding、Reranker、GPT-SoVITS、RVC、FFmpeg 等能力按需准备；未安装或未启动不等于系统错误，系统会在任务卡片中提示可执行的下一步。
 ## 系统架构
 
-当前采用 **Supervisor-centric Agent Architecture** 作为实际控制主线：面向用户的 `persona_supervisor` 统筹多个领域 Worker；Worker 返回结构化事实、状态和结果引用，再由 Supervisor 组织最终的用户可见回复。
+YUMENO 的核心不是把多个功能页堆在一起，而是让**角色 Agent 成为统一入口**：用户从对话提出目标，Core Agent 负责理解，Supervisor 负责调度，领域 Worker 负责执行，Runtime 负责把长任务变成可观察、可恢复、可停止的运行过程。
 
-### 系统上下文
+从产品主线看，系统围绕这一条闭环展开：
+
+```text
+创建角色
+  → 为角色绑定知识、声音和能力
+  → 与角色对话
+  → Agent 按需调用 Worker
+  → 在对话中完成资源准备、服务启动和长任务
+  → 返回可继续操作的结果
+```
+
+### 系统边界
 
 ```mermaid
 %% YUMENO 系统上下文：多入口进入同一套角色 Agent 服务
@@ -142,7 +160,7 @@ flowchart LR
 LLM / TTS / 搜索 / 接入]
 ```
 
-### Agent 编排主流程
+### Agent 主流程
 
 ```mermaid
 %% YUMENO Supervisor-centric 父图（与 build_persona_workflow 对齐）
@@ -184,88 +202,33 @@ Core + Supervisor]
   IR -.-> S
 ```
 
-> `intent_route` 在当前实现中是兼容性意图线索节点，不是工作流主入口；真实入口由 `build_persona_workflow()` 构建为 `START → persona_supervisor`。
+`START → persona_supervisor` 是当前真实入口。普通对话由 Supervisor 直接收口；需要执行动作时，Supervisor 生成结构化委派请求，Worker 返回状态、事实或结果引用，再由 Supervisor 组织用户可见回复。`intent_route` 仅作为兼容性意图线索和安全门禁，不是另一条主入口。
 
-### Worker 注册与最小权限
+### 以 RVC 为例：对话如何完成一个真实文件任务
+
+RVC 是当前最完整的文件型 Worker 样板，也最能体现 YUMENO 与普通“聊天 + 独立工具页”的区别：文件、资源、确认、长任务和结果都在同一个对话任务里闭环完成。
 
 ```mermaid
-%% Worker 注册表、manifest 与最小权限工具集合
+%% RVC 文件型长任务：引用 ID 在各阶段传递，不暴露本地路径
 flowchart LR
-  REG[agents/registry.py
-canonical names + aliases] --> MAN[Worker manifest]
-  MAN --> SPEC[ToolSpec 过滤]
-  SPEC --> K[knowledge_worker
-最小工具集]
-  SPEC --> M[memory_worker
-最小工具集]
-  SPEC --> D[document_worker
-最小工具集]
-  SPEC --> V[voice_worker
-最小工具集]
-  SPEC --> R[rvc_worker
-最小工具集]
-  SPEC --> C[config_worker
-最小工具集]
-  SPEC --> O[其它领域 Worker]
-  MCP[MCP 服务] -. 外部扩展工具 .-> SCOPE[运行时权限边界]
-  K --> SCOPE
-  M --> SCOPE
-  D --> SCOPE
-  V --> SCOPE
-  R --> SCOPE
-  C --> SCOPE
+  MSG[对话请求] --> SUP[persona_supervisor]
+  SUP --> W[rvc_worker]
+  ATT[attachment_id] --> PRE[音频标准化 / 视频音轨提取]
+  W --> PRE
+  PRE --> SEP[人声与伴奏分离]
+  SEP --> APPROVE{用户确认音轨}
+  APPROVE -->|resume| MODEL[选择模型 / Index / 参数]
+  MODEL --> TASK[创建 conversion task]
+  TASK --> EVENT[任务事件与进度]
+  EVENT --> RESULT[成功：结果引用
+失败/取消：真实状态]
+  RESULT --> SUP
+  CFG[config_worker] -.安装并检查 Separator.-> SEP
 ```
 
-### Native Runtime 生命周期
+GPT-SoVITS 遵循同一套 Agent 控制链路，但业务重点不同：`voice_worker` 先检查运行环境和服务状态；服务未启动时按需启动，已安装但未启动不视为错误。语音合成会读取角色绑定的 Voice Asset，完成文本分段和语言校验后生成音频；音色创建和训练则经过参考音频上传、素材分析、用户确认、训练进度和角色绑定。运行资源由 `config_worker` 管理，语音业务由 `voice_worker` 管理，二者不混淆。
 
-```mermaid
-%% Native Runtime 是进程内生命周期内核，不是独立分布式调度服务
-flowchart TD
-  SESSION[Session
-会话作用域] --> RUN[AgentRun
-持久化运行记录]
-  RUN --> JOB[Native Runtime Job
-进程内控制句柄]
-  JOB --> Q[queued]
-  Q --> R[running]
-  R --> WAIT[waiting_approval / paused]
-  WAIT -->|resume| R
-  R --> DONE[completed]
-  R --> FAIL[failed]
-  R --> CANCEL[cancelled]
-  JOB -.事件流 / 进度 / 取消.-> STORE[RunStore]
-  STORE --> SQL[(SQLite
-运行摘要与事件)]
-```
-
-项目内部实现了 Native Runtime 进程内生命周期内核，参考 Harness 风格的 Session、Job、事件和恢复抽象；它不是外部 Harness 源码的直接封装，也不是独立的分布式调度服务。
-
-### RAG 控制面与数据面
-
-```mermaid
-%% knowledge_worker 是 Planner + 确定性检索子图
-flowchart TD
-  START([子图 START]) --> P[knowledge_planner
-选择 RAG / SQL / 回退]
-  P --> R[knowledge_retrieve
-作用域检索管线]
-  R --> F[knowledge_fallback
-证据不足时策略处理]
-  F --> END([子图 END])
-  R --> VEC[(Milvus Lite
-Dense / Sparse 向量)]
-  R --> SQL[(SQLite
-元数据与查询记录)]
-  F -.-> WEB[联网搜索 / HITL / 拒答]
-  END --> FINAL[finalize_knowledge_worker]
-  FINAL --> SUP[persona_supervisor]
-```
-
-详细的 RVC 文件任务和资源管理边界见：
-
-- [完整架构图索引](diagrams/README.md)
-- [RVC 文件型任务图](diagrams/yumeno-rvc-workflow.mmd)
-- [资源管理边界图](diagrams/yumeno-resource-boundary.mmd)
+这三张图分别回答三个问题：系统接收什么、Agent 如何调度、一个真实长任务如何落地。其它 Worker 沿用相同的委派和任务协议，不在 README 中为每个能力重复绘图。
 
 ## Worker 注册表
 
@@ -293,48 +256,19 @@ rvc / live2d / config
 
 ## 典型任务链路
 
-### 对话式配置与任务控制
+所有可执行能力都遵循同一条主链路：
 
 ```text
-自然语言请求
-  → Core Agent 识别意图和所需输入
-  → Supervisor 选择 Worker 并校验权限
-  → Worker 检查资源、执行配置或创建长任务
-  → Runtime 持续发送状态、进度和等待输入事件
-  → 对话任务卡片提供确认 / 补充 / 停止 / 重试
-  → 结果引用和真实终态回到当前对话
+用户请求
+  → Core Agent 理解意图
+  → Supervisor 生成结构化委派
+  → Worker 检查输入与资源并执行
+  → Runtime 记录事件、进度和运行状态
+  → 对话卡片等待确认、补充输入或停止
+  → Supervisor 收口为回复、结果或下一步操作
 ```
 
-与传统设置页的区别在于：设置页仍可用于查看和精细调整，但资源下载、服务启动、文档导入、RVC 处理等动作可以在对话里完成；对话卡片是统一的操作入口，而不是事后展示日志。
-
-### 普通对话与领域委派
-
-```text
-用户消息
-  → persona_supervisor 理解请求
-  → 直接回答，或生成结构化 dispatch_request
-  → 领域 Worker 执行
-  → finalize_worker 校验结果
-  → supervisor_collect / persona_supervisor
-  → 用户可见回复
-```
-
-### RVC 文件任务
-
-```text
-对话请求
-  → attachment_id
-  → rvc_worker 创建并恢复 RVC session
-  → 音频标准化 / 视频音轨提取
-  → 人声与伴奏分离
-  → 用户确认音轨
-  → 选择模型、Index 和参数
-  → 创建异步转换任务
-  → 通过事件流展示进度
-  → 成功返回结果引用，失败或取消返回真实状态
-```
-
-前端只提交结构化用户操作，不自行创建 RVC session、不执行 `/extract` 或 `/separate`，也不使用浏览器临时路径伪装后端结果。
+RVC 是文件型长任务示例：附件通过 `attachment_id` 进入 `rvc_worker`，经过音频准备、分离、用户确认、模型参数选择和异步转换后返回结果引用。GPT-SoVITS 是按需服务示例：`voice_worker` 检查服务状态，必要时启动 GPT-SoVITS，再执行语音合成、音色素材分析或训练流程。前端只提交结构化操作，不直接创建 session、执行处理接口或依赖浏览器临时路径。
 
 ## 数据与资源边界
 

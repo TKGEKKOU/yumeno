@@ -12,7 +12,7 @@ YUMENO 是本地优先的角色对话应用。本文件描述 Agent、Workflow�
 - Milvus 保留为向量数据库；复杂 CSV/XLSX 不把整张表硬塞进向量库，而是进入工作区隔离的 SQLite。
 - 运行详情只在当前轮内存返回，不新增运行轨迹数据库。
 
-现行 LangGraph 总图与同构规则见仓库根目录 [ARCHITECTURE.md](../../ARCHITECTURE.md) 和 [ARCHITECTURE_DESIGN.md](../../ARCHITECTURE_DESIGN.md)。
+现行 LangGraph 总图与同构规则见仓库根目录 [ARCHITECTURE.md](../../ARCHITECTURE.md) 和 [架构设计存档](../archive/ARCHITECTURE_DESIGN.md)。
 
 四个层面的选型已经锁死：拓扑是 State Graph（通信约束为 Supervisor 中心辐射），协作是层级验证，记忆是分层记忆且工作记忆落在持久化状态图，训练范式声明无需 CTDE/MARL。
 
