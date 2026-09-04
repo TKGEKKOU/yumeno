@@ -23,10 +23,10 @@ YUMENO 是一个**本地优先的角色 Agent 工作台**。它把角色对话�
 
 YUMENO 将角色对话、资源管理与长任务控制放在同一个工作区中。
 
-![对话工作台](docs/images/yumeno-conversation-workbench.png)
+![向导角色对话工作台](docs/images/yumeno-conversation-demo.png)
 
 <details>
-<summary>查看 RVC 任务与系统状态</summary>
+<summary>查看 RVC 任务、系统状态与工作台总览</summary>
 
 ![RVC 任务卡片](docs/images/yumeno-rvc-task.png)
 
