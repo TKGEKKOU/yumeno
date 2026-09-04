@@ -21,18 +21,28 @@ YUMENO 是一个**本地优先的角色 Agent 工作台**。它把角色对话�
 
 ## 界面预览
 
-YUMENO 将角色对话、资源管理与长任务控制放在同一个工作区中。
+YUMENO 将角色对话、资源管理与长任务控制放在同一个工作区中。下面的素材均来自真实页面截图；GIF 用于连续展示关键交互阶段。
+
+### 对话与资源管理
 
 ![向导角色对话工作台](docs/images/yumeno-conversation-demo.png)
 
-<details>
-<summary>查看 RVC 任务、系统状态与工作台总览</summary>
+![运行资源检查与结果](docs/images/yumeno-agent-status-workflow.gif)
+
+### RVC 变声工作流
+
+从素材上传、音频准备、人声与伴奏分离，到参数配置和最终音频生成：
+
+![RVC 完整任务过程](docs/images/yumeno-rvc-workflow-full.gif)
 
 ![RVC 对话任务完成](docs/images/yumeno-rvc-conversation-demo.png)
 
+### 系统状态与工作台
+
 ![系统状态](docs/images/yumeno-system-status.png)
 
-</details>
+![角色对话工作台](docs/images/yumeno-conversation-workbench.png)
+
 核心使用主线：
 
 ```text
