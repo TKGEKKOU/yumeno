@@ -28,7 +28,7 @@ YUMENO 将角色对话、资源管理与长任务控制放在同一个工作区�
 <details>
 <summary>查看 RVC 任务、系统状态与工作台总览</summary>
 
-![RVC 任务卡片](docs/images/yumeno-rvc-task.png)
+![RVC 对话任务完成](docs/images/yumeno-rvc-conversation-demo.png)
 
 ![系统状态](docs/images/yumeno-system-status.png)
 
