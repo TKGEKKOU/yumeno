@@ -194,6 +194,8 @@ def _sync_task(request: Request, row: ProviderDownloadTask) -> dict[str, Any]:
     return _task_payload(row, value)
 
 def _install(request: Request, provider_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    # 所有入口先归一化 Provider 别名，避免任务记录、分支和管理器使用不同 ID。
+    provider_id = _canonical_provider_id(provider_id)
     payload = dict(payload or {})
     # New clients send {parameters: {...}} while early clients sent the
     # parameters directly. Accept both so the unified endpoint is stable.

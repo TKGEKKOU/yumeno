@@ -277,12 +277,12 @@ VOICE_CONVERSION_PROVIDERS = {
 WEB_SEARCH_PROVIDERS = {
     "tavily": ProviderMetadata(
         id="tavily", name="Tavily Search", type=ProviderType.WEB_SEARCH,
-        description="AI 优化的联网搜索 API", default_base_url="https://api.tavily.com",
-        default_model="tavily-search", icon="search"
+        description="为 Agent 提供实时互联网检索能力（官方服务地址）", default_base_url="https://api.tavily.com",
+        default_model="", icon="search"
     ),
     "bocha": ProviderMetadata(
         id="bocha", name="Bocha Search", type=ProviderType.WEB_SEARCH,
-        description="博查联网搜索 API", default_base_url="https://api.bocha.cn/v1/web-search",
+        description="为 Agent 提供实时互联网检索能力（官方服务地址）", default_base_url="https://api.bocha.cn/v1/web-search",
         default_model="", icon="globe"
     ),
     "custom_search": ProviderMetadata(

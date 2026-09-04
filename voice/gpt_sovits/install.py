@@ -20,7 +20,7 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from voice.gpt_sovits.config import GPTSoVITSConfig, probe_installation
+from voice.gpt_sovits.config import DEFAULT_DOWNLOAD_URL, GPTSoVITSConfig, probe_installation
 
 
 # Content inside the integrated package that the project never uses. The
@@ -159,13 +159,13 @@ class GPTSoVITSInstallManager:
             self.config.save(install_dir=None)
         return self.status()
 
-    def start_install(self, url: str | None) -> bool:
+    def start_install(self, url: str | None = None) -> bool:
         with self._lock:
             if self.state.installing:
                 return False
-            url = (url or "").strip()
-            if not url:
-                raise ValueError("请提供整合包下载地址（zip）")
+            url = DEFAULT_DOWNLOAD_URL
+            # 下载源由固定 manifest 提供；参数仅为兼容旧客户端。
+            self.config.save(download_url=DEFAULT_DOWNLOAD_URL)
             self.state.installing = True
             self.state.cancel_requested.clear()
             self.state.error = ""

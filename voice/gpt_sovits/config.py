@@ -13,6 +13,8 @@ from pathlib import Path
 
 
 DEFAULT_API_PORT = 17005
+# 固定的 Windows GPT-SoVITS v3lora 整合包下载源。普通用户无需填写 URL。
+DEFAULT_DOWNLOAD_URL = "https://huggingface.co/lj1995/GPT-SoVITS-windows-package/resolve/main/GPT-SoVITS-v3lora-20250228.7z?download=true"
 COMMON_INSTALL_HINTS = (
     "GPT_SOVITS_HOME",
     "GPT_SOVITS_DIR",
@@ -122,7 +124,7 @@ class GPTSoVITSConfig:
         self.config_path = self.project_root / "data" / "gpt_sovits" / "config.json"
 
     def values(self) -> dict:
-        defaults = {"install_dir": None, "api_port": DEFAULT_API_PORT, "download_url": None}
+        defaults = {"install_dir": None, "api_port": DEFAULT_API_PORT, "download_url": DEFAULT_DOWNLOAD_URL}
         if not self.config_path.is_file():
             return defaults
         try:
@@ -134,7 +136,7 @@ class GPTSoVITSConfig:
         return {
             "install_dir": str(install_dir) if install_dir else None,
             "api_port": int(data.get("api_port") or DEFAULT_API_PORT),
-            "download_url": str(download_url) if download_url else None,
+            "download_url": DEFAULT_DOWNLOAD_URL,
         }
 
     def save(
@@ -149,7 +151,8 @@ class GPTSoVITSConfig:
         if api_port is not None:
             values["api_port"] = int(api_port)
         if download_url is not None:
-            values["download_url"] = download_url.strip() or None
+            # 下载源由应用 manifest 固定，忽略旧版/客户端自定义地址。
+            values["download_url"] = DEFAULT_DOWNLOAD_URL
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.config_path.with_suffix(".json.tmp")
         temporary.write_text(json.dumps(values, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -72,7 +72,8 @@ class GPTSoVITSConfigUpdate(BaseModel):
 
 
 class GPTSoVITSInstallRequest(BaseModel):
-    url: str
+    # 兼容旧客户端；新客户端不需要提交下载地址。
+    url: str | None = None
 
 
 def protected(request: Request, header: str) -> None:

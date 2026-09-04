@@ -84,14 +84,11 @@ def test_installer_slims_unused_content_and_removes_archive(tmp_path: Path, monk
     assert (manager.install_dir / "api_v2.py").is_file()
 
 
-def test_installer_reports_missing_url(tmp_path: Path):
+def test_installer_uses_fixed_default_url(tmp_path: Path, monkeypatch):
     manager = GPTSoVITSInstallManager(tmp_path, GPTSoVITSConfig(tmp_path))
-    try:
-        manager.start_install("")
-    except ValueError as exc:
-        assert "下载地址" in str(exc)
-    else:
-        raise AssertionError("expected ValueError for empty url")
+    monkeypatch.setattr(manager, "_install", lambda url: None)
+    assert manager.start_install("") is True
+    assert manager.config.values()["download_url"].startswith("https://huggingface.co/lj1995/")
 
 
 def test_installer_extracts_7z_with_seven_zip(tmp_path: Path, monkeypatch):
